@@ -448,6 +448,7 @@ pub const TelegramChannel = struct {
     proxy: ?[]const u8,
 
     bot_username: ?[]const u8 = null,
+    bot_user_id: ?i64 = null,
     require_mention: bool = false,
 
     // Pending media group messages (buffered across poll cycles until group is complete)
@@ -644,6 +645,7 @@ pub const TelegramChannel = struct {
         entities_key: []const u8,
         text_key: []const u8,
         bot_name: []const u8,
+        bot_user_id: ?i64,
     ) bool {
         const entities_val = message.object.get(entities_key) orelse return false;
         if (entities_val != .array) return false;
@@ -682,10 +684,17 @@ pub const TelegramChannel = struct {
             if (std.mem.eql(u8, entity_type, "text_mention")) {
                 const user_val = entity.object.get("user") orelse continue;
                 if (user_val != .object) continue;
-                const username_val = user_val.object.get("username") orelse continue;
-                if (username_val != .string) continue;
-                if (std.ascii.eqlIgnoreCase(username_val.string, bot_name)) {
-                    return true;
+                if (user_val.object.get("username")) |username_val| {
+                    if (username_val == .string and std.ascii.eqlIgnoreCase(username_val.string, bot_name)) {
+                        return true;
+                    }
+                }
+                if (bot_user_id) |bot_id| {
+                    if (user_val.object.get("id")) |id_val| {
+                        if (id_val == .integer and id_val.integer == bot_id) {
+                            return true;
+                        }
+                    }
                 }
             }
         }
@@ -704,6 +713,11 @@ pub const TelegramChannel = struct {
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, resp, .{}) catch return;
         defer parsed.deinit();
         if (parsed.value.object.get("result")) |result| {
+            if (result.object.get("id")) |id_val| {
+                if (id_val == .integer) {
+                    self.bot_user_id = id_val.integer;
+                }
+            }
             if (result.object.get("username")) |username_val| {
                 if (username_val == .string) {
                     self.bot_username = self.allocator.dupe(u8, username_val.string) catch null;
@@ -737,8 +751,8 @@ pub const TelegramChannel = struct {
         // Fail closed: if username is unavailable, do not bypass require_mention.
         const bot_name = self.bot_username orelse return false;
 
-        return containsMentionInEntitySet(message, "entities", "text", bot_name) or
-            containsMentionInEntitySet(message, "caption_entities", "caption", bot_name);
+        return containsMentionInEntitySet(message, "entities", "text", bot_name, self.bot_user_id) or
+            containsMentionInEntitySet(message, "caption_entities", "caption", bot_name, self.bot_user_id);
     }
 
     /// Register bot commands with Telegram so they appear in the "/" menu.
@@ -2323,6 +2337,7 @@ pub const TelegramChannel = struct {
             self.allocator.free(name);
             self.bot_username = null;
         }
+        self.bot_user_id = null;
     }
 
     fn vtableSend(ptr: *anyopaque, target: []const u8, message: []const u8, _: []const []const u8) anyerror!void {
@@ -4276,6 +4291,24 @@ test "telegram shouldProcessMessage accepts text_mention entity by username" {
 
     const json =
         \\{"chat":{"type":"group"},"text":"ping","entities":[{"type":"text_mention","offset":0,"length":4,"user":{"id":123,"is_bot":true,"first_name":"Bot","username":"MyBot"}}]}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+
+    try std.testing.expect(ch.shouldProcessMessage(parsed.value));
+}
+
+test "telegram shouldProcessMessage accepts text_mention entity by bot user id" {
+    const allocator = std.testing.allocator;
+    var ch = TelegramChannel.init(allocator, "tok", &.{}, &.{}, "allowlist");
+    defer ch.deinitPendingInteractions();
+    ch.require_mention = true;
+    ch.bot_username = try allocator.dupe(u8, "MyBot");
+    ch.bot_user_id = 4242;
+    defer if (ch.bot_username) |name| allocator.free(name);
+
+    const json =
+        \\{"chat":{"type":"group"},"text":"ping","entities":[{"type":"text_mention","offset":0,"length":4,"user":{"id":4242,"is_bot":true,"first_name":"Bot"}}]}
     ;
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
     defer parsed.deinit();
