@@ -18,7 +18,11 @@ const WizardAnswers = struct {
     tunnel: ?[]const u8 = null,
     autonomy: ?[]const u8 = null,
     gateway_port: ?u16 = null,
-    channels: ?[]const []const u8 = null,
+    /// Comma-separated channel keys (e.g. "cli,web,telegram").
+    channels: ?[]const u8 = null,
+    /// Override config/workspace directory (used by nullhub for instance isolation).
+    /// Falls back to NULLCLAW_HOME env, then ~/.nullclaw/.
+    home: ?[]const u8 = null,
 };
 
 const AutonomySelectionError = error{InvalidAutonomyLevel};
@@ -57,31 +61,24 @@ fn applyAutonomySelection(cfg: *Config, autonomy: []const u8) AutonomySelectionE
     return error.InvalidAutonomyLevel;
 }
 
-fn applyChannelsSelection(cfg: *Config, channels: []const []const u8) ChannelSelectionError!void {
+fn applyChannelsFromString(cfg: *Config, channels_csv: []const u8) ChannelSelectionError!void {
     var webhook_selected = false;
 
-    for (channels) |channel_key| {
+    var it = std.mem.splitScalar(u8, channels_csv, ',');
+    while (it.next()) |raw_key| {
+        const channel_key = std.mem.trim(u8, raw_key, " ");
+        if (channel_key.len == 0) continue;
+
         const meta = channel_catalog.findByKey(channel_key) orelse {
-            if (!builtin.is_test) std.debug.print("error: unknown channel '{s}'\n", .{channel_key});
-            return error.UnknownChannel;
+            // Unknown channels from wizard are silently ignored (future channels).
+            continue;
         };
-        if (!channel_catalog.isBuildEnabled(meta.id)) {
-            if (!builtin.is_test) std.debug.print("error: channel '{s}' is disabled in this build\n", .{channel_key});
-            return error.ChannelDisabledInBuild;
-        }
+        if (!channel_catalog.isBuildEnabled(meta.id)) continue;
 
         switch (meta.id) {
             .webhook => webhook_selected = true,
-            .cli => {}, // CLI is always enabled by default.
-            else => {
-                if (!builtin.is_test) {
-                    std.debug.print(
-                        "error: channel '{s}' requires interactive/manual setup; --from-json currently supports only 'webhook'\n",
-                        .{channel_key},
-                    );
-                }
-                return error.UnsupportedChannelInFromJson;
-            },
+            .cli, .web => {}, // Always enabled by default, no config needed.
+            else => {}, // Other channels need manual config; silently skip.
         }
     }
 
@@ -107,9 +104,18 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     defer parsed.deinit();
     const answers = parsed.value;
 
-    // Load existing config or create fresh
+    // Resolve home directory: JSON home > NULLCLAW_HOME env > default (~/.nullclaw/)
+    const custom_home: ?[]const u8 = answers.home orelse
+        if (std.posix.getenv("NULLCLAW_HOME")) |env| env else null;
+
+    // Load existing config or create fresh, then override paths if custom home
     var cfg = Config.load(allocator) catch try onboard.initFreshConfig(allocator);
     defer cfg.deinit();
+
+    if (custom_home) |home_dir| {
+        cfg.config_path = try cfg.allocator.dupe(u8, try std.fs.path.join(cfg.allocator, &.{ home_dir, "config.json" }));
+        cfg.workspace_dir = try cfg.allocator.dupe(u8, try std.fs.path.join(cfg.allocator, &.{ home_dir, "workspace" }));
+    }
 
     // Apply provider and API key
     if (answers.provider) |p| {
@@ -188,12 +194,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
         cfg.gateway.port = port;
     }
 
-    // Apply channels selection (currently supports webhook only).
-    // We fail-fast on unsupported channel keys to avoid silent no-op behavior.
-    if (answers.channels) |channels| {
-        _ = applyChannelsSelection(&cfg, channels) catch {
-            std.process.exit(1);
-        };
+    // Apply channels (comma-separated string, e.g. "cli,web,webhook").
+    // Unknown or unsupported channels are silently skipped.
+    if (answers.channels) |channels_csv| {
+        _ = applyChannelsFromString(&cfg, channels_csv) catch {};
     }
 
     // Ensure a valid default model exists even when omitted in JSON payload.
@@ -253,17 +257,26 @@ test "applyAutonomySelection rejects invalid value" {
     try std.testing.expectError(error.InvalidAutonomyLevel, applyAutonomySelection(&cfg, "danger-mode"));
 }
 
-test "applyChannelsSelection supports webhook and rejects unsupported channels" {
+test "applyChannelsFromString enables webhook from csv" {
     var cfg = Config{
         .workspace_dir = "/tmp",
         .config_path = "/tmp/config.json",
         .allocator = std.testing.allocator,
     };
 
-    try applyChannelsSelection(&cfg, &.{"webhook"});
+    try applyChannelsFromString(&cfg, "cli,webhook,web");
     try std.testing.expect(cfg.channels.webhook != null);
     try std.testing.expectEqual(@as(u16, 3000), cfg.channels.webhook.?.port);
+}
 
-    try std.testing.expectError(error.UnsupportedChannelInFromJson, applyChannelsSelection(&cfg, &.{"telegram"}));
-    try std.testing.expectError(error.UnknownChannel, applyChannelsSelection(&cfg, &.{"not-a-channel"}));
+test "applyChannelsFromString ignores unknown channels" {
+    var cfg = Config{
+        .workspace_dir = "/tmp",
+        .config_path = "/tmp/config.json",
+        .allocator = std.testing.allocator,
+    };
+
+    // Unknown channels are silently skipped (future-proofing)
+    try applyChannelsFromString(&cfg, "cli,web,future-channel,telegram");
+    try std.testing.expect(cfg.channels.webhook == null);
 }
