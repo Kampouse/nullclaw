@@ -764,6 +764,7 @@ pub const MemorySearchConfig = struct {
     model: []const u8 = "text-embedding-3-small",
     dimensions: u32 = 1536,
     fallback_provider: []const u8 = "none",
+    base_url: ?[]const u8 = null,
     store: MemoryVectorStoreConfig = .{},
     chunking: MemoryChunkingConfig = .{},
     sync: MemorySyncConfig = .{},

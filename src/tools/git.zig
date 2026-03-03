@@ -12,9 +12,9 @@ pub const GitTool = struct {
     allowed_paths: []const []const u8 = &.{},
 
     pub const tool_name = "git_operations";
-    pub const tool_description = "Perform structured Git operations (status, diff, log, branch, commit, add, checkout, stash).";
+    pub const tool_description = "Perform structured Git operations (status, diff, log, branch, commit, add, checkout, stash, push).";
     pub const tool_params =
-        \\{"type":"object","properties":{"operation":{"type":"string","enum":["status","diff","log","branch","commit","add","checkout","stash"],"description":"Git operation to perform"},"message":{"type":"string","description":"Commit message (for commit)"},"paths":{"type":"string","description":"File paths (for add)"},"branch":{"type":"string","description":"Branch name (for checkout)"},"files":{"type":"string","description":"Files to diff"},"cached":{"type":"boolean","description":"Show staged changes (diff)"},"limit":{"type":"integer","description":"Log entry count (default: 10)"},"cwd":{"type":"string","description":"Repository directory (absolute path within allowed paths; defaults to workspace)"}},"required":["operation"]}
+        \\{"type":"object","properties":{"operation":{"type":"string","enum":["status","diff","log","branch","commit","add","checkout","stash","push"],"description":"Git operation to perform"},"message":{"type":"string","description":"Commit message (for commit)"},"paths":{"type":"string","description":"File paths (for add)"},"branch":{"type":"string","description":"Branch name (for checkout/push)"},"remote":{"type":"string","description":"Remote name (for push, default: origin)"},"files":{"type":"string","description":"Files to diff"},"cached":{"type":"boolean","description":"Show staged changes (diff)"},"limit":{"type":"integer","description":"Log entry count (default: 10)"},"cwd":{"type":"string","description":"Repository directory (absolute path within allowed paths; defaults to workspace)"}},"required":["operation"]}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -105,7 +105,7 @@ pub const GitTool = struct {
             return ToolResult.fail("Missing 'operation' parameter");
 
         // Sanitize all string arguments before execution
-        const fields_to_check = [_][]const u8{ "message", "paths", "branch", "files", "action" };
+        const fields_to_check = [_][]const u8{ "message", "paths", "branch", "remote", "files", "action" };
         for (fields_to_check) |field| {
             if (root.getString(args, field)) |val| {
                 if (!sanitizeGitArgs(val))
@@ -131,7 +131,7 @@ pub const GitTool = struct {
             break :blk cwd;
         } else self.workspace_dir;
 
-        const GitOp = enum { status, diff, log, branch, commit, add, checkout, stash };
+        const GitOp = enum { status, diff, log, branch, commit, add, checkout, stash, push };
         const op_map = std.StaticStringMap(GitOp).initComptime(.{
             .{ "status", .status },
             .{ "diff", .diff },
@@ -141,6 +141,7 @@ pub const GitTool = struct {
             .{ "add", .add },
             .{ "checkout", .checkout },
             .{ "stash", .stash },
+            .{ "push", .push },
         });
 
         if (op_map.get(operation)) |op| return switch (op) {
@@ -152,6 +153,7 @@ pub const GitTool = struct {
             .add => self.gitAdd(allocator, effective_cwd, args),
             .checkout => self.gitCheckout(allocator, effective_cwd, args),
             .stash => self.gitStash(allocator, effective_cwd, args),
+            .push => self.gitPush(allocator, effective_cwd, args),
         };
 
         const msg = try std.fmt.allocPrint(allocator, "Unknown operation: {s}", .{operation});
@@ -332,6 +334,50 @@ pub const GitTool = struct {
         const msg = try std.fmt.allocPrint(allocator, "Unknown stash action: {s}", .{action});
         return ToolResult{ .success = false, .output = "", .error_msg = msg };
     }
+
+    fn gitPush(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
+        const remote = root.getString(args, "remote") orelse "origin";
+        const branch = root.getString(args, "branch");
+
+        // Sanitize remote and branch names
+        if (std.mem.indexOfScalar(u8, remote, ';') != null or
+            std.mem.indexOfScalar(u8, remote, '|') != null or
+            std.mem.indexOfScalar(u8, remote, '`') != null or
+            std.mem.indexOf(u8, remote, "$(") != null)
+        {
+            return ToolResult.fail("Remote name contains invalid characters");
+        }
+
+        var argv_buf: [8][]const u8 = undefined;
+        var argc: usize = 0;
+        argv_buf[argc] = "push";
+        argc += 1;
+        argv_buf[argc] = remote;
+        argc += 1;
+        if (branch) |b| {
+            if (std.mem.indexOfScalar(u8, b, ';') != null or
+                std.mem.indexOfScalar(u8, b, '|') != null or
+                std.mem.indexOfScalar(u8, b, '`') != null or
+                std.mem.indexOf(u8, b, "$(") != null)
+            {
+                return ToolResult.fail("Branch name contains invalid characters");
+            }
+            argv_buf[argc] = b;
+            argc += 1;
+        }
+
+        const result = try self.runGit(allocator, git_cwd, argv_buf[0..argc]);
+        defer allocator.free(result.stderr);
+        defer allocator.free(result.stdout);
+        if (!result.success) {
+            const msg = try std.fmt.allocPrint(allocator, "Push failed: {s}", .{result.stderr});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        }
+
+        const branch_str = branch orelse "current branch";
+        const out = try std.fmt.allocPrint(allocator, "Pushed {s} to {s}", .{ branch_str, remote });
+        return ToolResult{ .success = true, .output = out };
+    }
 };
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -362,12 +408,26 @@ test "git rejects missing operation" {
 test "git rejects unknown operation" {
     var gt = GitTool{ .workspace_dir = "/tmp" };
     const t = gt.tool();
-    const parsed = try root.parseTestArgs("{\"operation\": \"push\"}");
+    const parsed = try root.parseTestArgs("{\"operation\": \"foobar\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     defer if (result.error_msg) |e| std.testing.allocator.free(e);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
+}
+
+test "git push operation exists" {
+    var gt = GitTool{ .workspace_dir = "/tmp" };
+    const t = gt.tool();
+    const parsed = try root.parseTestArgs("{\"operation\": \"push\"}");
+    defer parsed.deinit();
+    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    // Push will fail without a real git repo, but it should be recognized as a valid operation
+    // (error should not be "Unknown operation")
+    if (!result.success) {
+        try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") == null);
+    }
 }
 
 test "git cwd inside workspace works without allowed_paths" {
@@ -589,6 +649,28 @@ test "git execute blocks unsafe args in paths" {
     var gt = GitTool{ .workspace_dir = "/tmp" };
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"add\", \"paths\": \"file.txt; rm -rf /\"}");
+    defer parsed.deinit();
+    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    try std.testing.expect(!result.success);
+    try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
+}
+
+test "git push blocks injection in remote" {
+    var gt = GitTool{ .workspace_dir = "/tmp" };
+    const t = gt.tool();
+    // "remote" is now in fields_to_check, so sanitizeGitArgs catches it
+    const parsed = try root.parseTestArgs("{\"operation\": \"push\", \"remote\": \"origin; rm -rf /\"}");
+    defer parsed.deinit();
+    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    try std.testing.expect(!result.success);
+    try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
+}
+
+test "git push blocks injection in branch" {
+    var gt = GitTool{ .workspace_dir = "/tmp" };
+    const t = gt.tool();
+    // "branch" IS in fields_to_check, so sanitizeGitArgs catches it first
+    const parsed = try root.parseTestArgs("{\"operation\": \"push\", \"branch\": \"main|cat /etc/passwd\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     try std.testing.expect(!result.success);

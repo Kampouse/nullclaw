@@ -805,6 +805,7 @@ pub fn initRuntime(
             primary_api_key,
             config.search.model,
             config.search.dimensions,
+            config.search.base_url,
         ) catch break :vec_plane;
 
         embed_provider = primary_ep;
@@ -822,6 +823,7 @@ pub fn initRuntime(
                 fallback_api_key,
                 config.search.model,
                 config.search.dimensions,
+                config.search.base_url,
             ) catch {
                 log.warn("fallback embedding provider '{s}' init failed, using primary only", .{config.search.fallback_provider});
                 break :wrap_router;

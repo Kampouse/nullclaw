@@ -56,6 +56,7 @@ pub const file_write = @import("file_write.zig");
 pub const file_edit = @import("file_edit.zig");
 pub const http_request = @import("http_request.zig");
 pub const git = @import("git.zig");
+pub const cargo = @import("cargo.zig");
 pub const memory_store = @import("memory_store.zig");
 pub const memory_recall = @import("memory_recall.zig");
 pub const memory_list = @import("memory_list.zig");
@@ -322,6 +323,10 @@ pub fn allTools(
     const gt = try allocator.create(git.GitTool);
     gt.* = .{ .workspace_dir = workspace_dir };
     try list.append(allocator, gt.tool());
+
+    const cargo_tool = try allocator.create(cargo.CargoTool);
+    cargo_tool.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
+    try list.append(allocator, cargo_tool.tool());
 
     // Tools without workspace_dir
     const it = try allocator.create(image.ImageInfoTool);
@@ -675,21 +680,21 @@ test "all tools includes extras when enabled" {
     });
     defer deinitTools(std.testing.allocator, tools);
 
-    // Order: shell, file_read, file_write, file_edit, git, image_info,
+    // Order: shell, file_read, file_write, file_edit, git, cargo, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
     //        delegate, schedule, spawn, http_request, web_search, web_fetch,
-    //        browser = 17
-    try std.testing.expectEqual(@as(usize, 17), tools.len);
+    //        browser = 18
+    try std.testing.expectEqual(@as(usize, 18), tools.len);
 }
 
 test "all tools excludes extras when disabled" {
     const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{});
     defer deinitTools(std.testing.allocator, tools);
 
-    // Order: shell, file_read, file_write, file_edit, git, image_info,
+    // Order: shell, file_read, file_write, file_edit, git, cargo, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        delegate, schedule, spawn = 13
-    try std.testing.expectEqual(@as(usize, 13), tools.len);
+    //        delegate, schedule, spawn = 14
+    try std.testing.expectEqual(@as(usize, 14), tools.len);
 }
 
 test "all tools wires http and web_search config into tool instances" {

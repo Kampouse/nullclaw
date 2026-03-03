@@ -14,6 +14,7 @@ const core_tool_names = [_][]const u8{
     "file_write",
     "file_edit",
     "git",
+    "cargo_operations",
     "image_info",
     "memory_store",
     "memory_recall",

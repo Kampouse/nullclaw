@@ -458,6 +458,7 @@ pub fn createEmbeddingProvider(
     api_key: ?[]const u8,
     model: []const u8,
     dims: u32,
+    base_url: ?[]const u8,
 ) !EmbeddingProvider {
     if (std.mem.eql(u8, provider_name, "openai")) {
         var impl_ = try OpenAiEmbedding.init(
@@ -496,17 +497,17 @@ pub fn createEmbeddingProvider(
         var impl_ = try OllamaEmbedding.init(
             allocator,
             if (model.len > 0) model else null,
-            null,
+            base_url,
             if (dims > 0) dims else null,
         );
         return impl_.provider();
     }
 
     if (std.mem.startsWith(u8, provider_name, "custom:")) {
-        const base_url = provider_name[7..];
+        const custom_url = provider_name[7..];
         var impl_ = try OpenAiEmbedding.init(
             allocator,
-            base_url,
+            custom_url,
             api_key orelse "",
             model,
             dims,
@@ -653,7 +654,7 @@ test "OpenAiEmbedding embeddingsUrl already has embeddings" {
 // Regression test: createEmbeddingProvider("none") must heap-allocate NoopEmbedding
 // so the returned EmbeddingProvider vtable pointer remains valid after the factory returns.
 test "createEmbeddingProvider noop is heap allocated and deinit frees memory" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "none", null, "", 0);
+    const p = try createEmbeddingProvider(std.testing.allocator, "none", null, "", 0, null);
     // Use the provider — pointer must still be valid here (no dangling ptr).
     try std.testing.expectEqualStrings("none", p.getName());
     try std.testing.expectEqual(@as(u32, 0), p.getDimensions());
@@ -665,7 +666,7 @@ test "createEmbeddingProvider noop is heap allocated and deinit frees memory" {
 }
 
 test "createEmbeddingProvider openai is heap allocated and deinit frees memory" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "openai", "test-key", "text-embedding-3-small", 1536);
+    const p = try createEmbeddingProvider(std.testing.allocator, "openai", "test-key", "text-embedding-3-small", 1536, null);
     try std.testing.expectEqualStrings("openai", p.getName());
     try std.testing.expectEqual(@as(u32, 1536), p.getDimensions());
     // deinit must free all allocations without crashing.
@@ -673,44 +674,51 @@ test "createEmbeddingProvider openai is heap allocated and deinit frees memory" 
 }
 
 test "createEmbeddingProvider gemini" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "gemini", "test-key", "", 0);
+    const p = try createEmbeddingProvider(std.testing.allocator, "gemini", "test-key", "", 0, null);
     try std.testing.expectEqualStrings("gemini", p.getName());
     try std.testing.expectEqual(@as(u32, 768), p.getDimensions());
     p.deinit();
 }
 
 test "createEmbeddingProvider gemini with custom model" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "gemini", "test-key", "gemini-embedding-001", 1024);
+    const p = try createEmbeddingProvider(std.testing.allocator, "gemini", "test-key", "gemini-embedding-001", 1024, null);
     try std.testing.expectEqualStrings("gemini", p.getName());
     try std.testing.expectEqual(@as(u32, 1024), p.getDimensions());
     p.deinit();
 }
 
 test "createEmbeddingProvider voyage" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "voyage", "test-key", "", 0);
+    const p = try createEmbeddingProvider(std.testing.allocator, "voyage", "test-key", "", 0, null);
     try std.testing.expectEqualStrings("voyage", p.getName());
     try std.testing.expectEqual(@as(u32, 512), p.getDimensions());
     p.deinit();
 }
 
 test "createEmbeddingProvider voyage with custom model" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "voyage", "test-key", "voyage-3", 1024);
+    const p = try createEmbeddingProvider(std.testing.allocator, "voyage", "test-key", "voyage-3", 1024, null);
     try std.testing.expectEqualStrings("voyage", p.getName());
     try std.testing.expectEqual(@as(u32, 1024), p.getDimensions());
     p.deinit();
 }
 
 test "createEmbeddingProvider ollama" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "ollama", null, "", 0);
+    const p = try createEmbeddingProvider(std.testing.allocator, "ollama", null, "", 0, null);
     try std.testing.expectEqualStrings("ollama", p.getName());
     try std.testing.expectEqual(@as(u32, 768), p.getDimensions());
     p.deinit();
 }
 
 test "createEmbeddingProvider ollama with custom model" {
-    const p = try createEmbeddingProvider(std.testing.allocator, "ollama", null, "mxbai-embed-large", 1024);
+    const p = try createEmbeddingProvider(std.testing.allocator, "ollama", null, "mxbai-embed-large", 1024, null);
     try std.testing.expectEqualStrings("ollama", p.getName());
     try std.testing.expectEqual(@as(u32, 1024), p.getDimensions());
+    p.deinit();
+}
+
+test "createEmbeddingProvider ollama with custom base_url" {
+    const p = try createEmbeddingProvider(std.testing.allocator, "ollama", null, "", 0, "https://ollama.com");
+    try std.testing.expectEqualStrings("ollama", p.getName());
+    try std.testing.expectEqual(@as(u32, 768), p.getDimensions());
     p.deinit();
 }
 
@@ -721,6 +729,7 @@ test "createEmbeddingProvider custom rejects insecure remote http url" {
         "test-key",
         "text-embedding-3-small",
         1536,
+        null,
     );
     try std.testing.expectError(error.InsecureEmbeddingApiUrl, provider);
 }

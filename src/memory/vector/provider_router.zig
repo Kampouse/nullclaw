@@ -201,10 +201,11 @@ pub fn buildAutoChain(
     model: []const u8,
     dims: u32,
     fallback_name: ?[]const u8,
+    base_url: ?[]const u8,
 ) !EmbeddingProvider {
     // If provider is not "auto", just create the single provider
     if (!std.mem.eql(u8, primary_name, "auto")) {
-        return embeddings.createEmbeddingProvider(allocator, primary_name, api_key, model, dims);
+        return embeddings.createEmbeddingProvider(allocator, primary_name, api_key, model, dims, base_url);
     }
 
     // Build auto chain: try to create primary as openai, fallback to noop
@@ -213,7 +214,7 @@ pub fn buildAutoChain(
 
     // Determine primary from fallback_name or default to openai
     const effective_primary = fallback_name orelse "openai";
-    const primary = try embeddings.createEmbeddingProvider(allocator, effective_primary, api_key, model, dims);
+    const primary = try embeddings.createEmbeddingProvider(allocator, effective_primary, api_key, model, dims, base_url);
     errdefer primary.deinit();
 
     // Add noop as final fallback (always available)
@@ -390,13 +391,13 @@ test "ProviderRouter metrics tracking" {
 }
 
 test "buildAutoChain non-auto returns single provider" {
-    const p = try buildAutoChain(std.testing.allocator, "none", null, "", 0, null);
+    const p = try buildAutoChain(std.testing.allocator, "none", null, "", 0, null, null);
     try std.testing.expectEqualStrings("none", p.getName());
     p.deinit();
 }
 
 test "buildAutoChain auto creates router with fallback" {
-    const p = try buildAutoChain(std.testing.allocator, "auto", null, "", 0, null);
+    const p = try buildAutoChain(std.testing.allocator, "auto", null, "", 0, null, null);
     try std.testing.expectEqualStrings("auto", p.getName());
     p.deinit();
 }
