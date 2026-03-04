@@ -87,6 +87,7 @@ pub const i2c = @import("i2c.zig");
 pub const spi = @import("spi.zig");
 pub const path_security = @import("path_security.zig");
 pub const process_util = @import("process_util.zig");
+pub const gork = @import("gork.zig");
 
 // ── Core types ──────────────────────────────────────────────────────
 
@@ -285,6 +286,7 @@ pub fn allTools(
         allowed_paths: []const []const u8 = &.{},
         tools_config: @import("../config.zig").ToolsConfig = .{},
         policy: ?*const @import("../security/policy.zig").SecurityPolicy = null,
+        gork_config: ?@import("../config_types.zig").GorkConfig = null,
     },
 ) ![]Tool {
     var list: std.ArrayList(Tool) = .{};
@@ -432,6 +434,25 @@ pub fn allTools(
     if (opts.mcp_tools) |mt| {
         for (mt) |t| {
             try list.append(allocator, t);
+        }
+    }
+
+    // Gork P2P agent collaboration tool
+    if (opts.gork_config) |gc| {
+        if (gc.enabled) {
+            const gork_config = @import("../gork_hybrid.zig").Config{
+                .binary_path = gc.binary_path,
+                .account_id = gc.account_id orelse "default",
+                .relay = gc.relay,
+                .daemon_port = gc.daemon_port,
+                .poll_interval_secs = gc.poll_interval_secs,
+                .enable_fallback = gc.enable_fallback,
+            };
+
+            const gork_tool = try gork.GorkTool.init(allocator, gork_config);
+            errdefer allocator.destroy(gork_tool); // Free if start() fails
+            try gork_tool.start();
+            try list.append(allocator, gork_tool.tool());
         }
     }
 

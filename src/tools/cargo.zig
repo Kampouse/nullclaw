@@ -153,7 +153,10 @@ pub const CargoTool = struct {
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Cargo operation failed");
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         }
-        return ToolResult{ .success = true, .output = result.stdout };
+        // Duplicate stdout for the caller (transfers ownership)
+        const output = try allocator.dupe(u8, result.stdout);
+        allocator.free(result.stdout);
+        return ToolResult{ .success = true, .output = output };
     }
 
     fn cargoBuild(self: *CargoTool, allocator: std.mem.Allocator, cargo_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -212,7 +215,8 @@ pub const CargoTool = struct {
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Cargo new failed");
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         }
-        defer allocator.free(result.stdout);
+        // Free stdout before creating output message
+        allocator.free(result.stdout);
         const out = try std.fmt.allocPrint(allocator, "Created new Rust project: {s}", .{package_name});
         return ToolResult{ .success = true, .output = out };
     }

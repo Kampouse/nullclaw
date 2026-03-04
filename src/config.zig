@@ -94,6 +94,7 @@ pub const DmScope = config_types.DmScope;
 pub const IdentityLink = config_types.IdentityLink;
 pub const SessionConfig = config_types.SessionConfig;
 pub const NostrConfig = config_types.NostrConfig;
+pub const GorkConfig = config_types.GorkConfig;
 
 // ── Top-level Config ────────────────────────────────────────────
 
@@ -142,6 +143,7 @@ pub const Config = struct {
     hardware: HardwareConfig = .{},
     security: SecurityConfig = .{},
     tools: ToolsConfig = .{},
+    gork: GorkConfig = .{},
     session: SessionConfig = .{},
 
     // Convenience aliases for backward-compat flat access used by other modules.
@@ -816,6 +818,11 @@ pub const Config = struct {
         InvalidWebRelayPairingCodeTtl,
         InvalidWebRelayUiTokenTtl,
         InvalidWebRelayTokenTtl,
+        // Gork-specific errors
+        MissingGorkBinaryPath,
+        MissingGorkAccountId,
+        GorkTimeoutTooLarge,
+        InvalidReputationThreshold,
     };
 
     pub fn validate(self: *const Config) ValidationError!void {
@@ -905,6 +912,32 @@ pub const Config = struct {
                 }
             }
         }
+
+        // Validate Gork configuration
+        if (self.gork.enabled) {
+            if (self.gork.binary_path.len == 0) {
+                return ValidationError.MissingGorkBinaryPath;
+            }
+            if (self.gork.account_id == null) {
+                return ValidationError.MissingGorkAccountId;
+            }
+            if (self.gork.max_process_timeout_secs > 300) {
+                return ValidationError.GorkTimeoutTooLarge;
+            }
+            if (self.gork.min_reputation > 100) {
+                return ValidationError.InvalidReputationThreshold;
+            }
+            if (self.gork.block_below_reputation > 100) {
+                return ValidationError.InvalidReputationThreshold;
+            }
+            if (self.gork.auto_accept_threshold > 100) {
+                return ValidationError.InvalidReputationThreshold;
+            }
+            // Check that min_reputation <= auto_accept_threshold
+            if (self.gork.min_reputation > self.gork.auto_accept_threshold) {
+                return ValidationError.InvalidReputationThreshold;
+            }
+        }
     }
 
     /// Print a human-readable validation error to stderr.
@@ -945,6 +978,10 @@ pub const Config = struct {
             ValidationError.InvalidWebRelayPairingCodeTtl => std.debug.print("Config error: channels.web.accounts.<id>.relay_pairing_code_ttl_secs must be in [60, 300].\n", .{}),
             ValidationError.InvalidWebRelayUiTokenTtl => std.debug.print("Config error: channels.web.accounts.<id>.relay_ui_token_ttl_secs must be in [300, 2592000].\n", .{}),
             ValidationError.InvalidWebRelayTokenTtl => std.debug.print("Config error: channels.web.accounts.<id>.relay_token_ttl_secs must be in [3600, 31536000].\n", .{}),
+            ValidationError.MissingGorkBinaryPath => std.debug.print("Config error: gork.binary_path must be set when gork.enabled=true.\n", .{}),
+            ValidationError.MissingGorkAccountId => std.debug.print("Config error: gork.account_id must be set when gork.enabled=true.\n", .{}),
+            ValidationError.GorkTimeoutTooLarge => std.debug.print("Config error: gork.max_process_timeout_secs must be <= 300 seconds.\n", .{}),
+            ValidationError.InvalidReputationThreshold => std.debug.print("Config error: gork reputation thresholds must be 0-100 and min_reputation <= auto_accept_threshold.\n", .{}),
         }
     }
 

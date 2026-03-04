@@ -149,6 +149,67 @@ pub const ToolsConfig = struct {
     web_fetch_max_chars: u32 = 100_000,
 };
 
+/// Gork P2P agent collaboration configuration
+pub const GorkConfig = struct {
+    /// Enable Gork hybrid system (daemon + polling fallback)
+    enabled: bool = false,
+
+    /// Path to gork-agent binary
+    binary_path: []const u8 = "gork-agent",
+
+    /// NEAR account ID for this agent
+    account_id: ?[]const u8 = null,
+
+    /// Relay domain for automatic discovery (e.g., "relay.jemartel.near")
+    relay: ?[]const u8 = null,
+
+    /// Daemon port
+    daemon_port: u16 = 4001,
+
+    /// Polling interval in seconds (fallback when daemon unavailable)
+    poll_interval_secs: u32 = 60,
+
+    /// Enable polling fallback when daemon dies
+    enable_fallback: bool = true,
+
+    /// Minimum reputation for accepting incoming requests (0-100)
+    min_reputation: u32 = 50,
+
+    /// Auto-accept tasks from agents with reputation >= this threshold
+    auto_accept_threshold: u32 = 80,
+
+    /// Skills we advertise to the P2P network
+    advertised_skills: []const []const u8 = &.{},
+
+    /// Daemon log path
+    daemon_log_path: []const u8 = "~/.gork-agent/daemon.log",
+
+    // ── Resource Limits ────────────────────────────────────────────────
+
+    /// Maximum memory usage in MB for daemon logs and event buffers
+    max_memory_mb: u32 = 100,
+
+    /// Maximum daemon uptime in seconds before auto-restart (0 = unlimited)
+    max_daemon_uptime_secs: u32 = 86400, // 24 hours
+
+    /// Maximum message queue size before rejecting incoming messages
+    max_message_queue_size: u32 = 1000,
+
+    /// Maximum process execution time in seconds (0 = unlimited)
+    max_process_timeout_secs: u32 = 30,
+
+    // ── Security Settings ──────────────────────────────────────────────
+
+    /// Enable audit logging for security events
+    enable_audit_logging: bool = true,
+
+    /// Require minimum reputation for incoming connections
+    require_min_reputation: bool = true,
+
+    /// Block agents with reputation below this threshold
+    block_below_reputation: u32 = 25,
+};
+
 pub const ModelRouteConfig = struct {
     hint: []const u8,
     provider: []const u8,
