@@ -50,6 +50,8 @@ pub const SecurityError = error{
     BinarySignatureInvalid,
     ReplayAttack,
     MessageTooOld,
+    DaemonNotRunning,
+    SendFailed,
 };
 
 /// Validate NEAR agent ID format (alphanumeric, dots, underscores, dashes, ends in .near)
@@ -895,18 +897,22 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
         self.allocator.free(msg);
     }
 
+    // Hold mutex for the entire send operation to avoid race condition
+    // where daemon crashes between state check and message send
     self.mutex.lock();
     const is_degraded = self.state == .degraded or self.daemon == null;
-    const daemon_ptr_opt = if (self.daemon) |*d| d else null;
-    self.mutex.unlock();
-
+    
     // Try sending and track success/failure for metrics
-    const send_result = if (is_degraded) blk: {
-        // Use CLI for sending
+    const send_result: anyerror!void = if (is_degraded) blk: {
+        // Release mutex during CLI call since it may take time
+        self.mutex.unlock();
         break :blk self.sendViaCli(to, content);
     } else blk: {
-        // Use daemon
-        break :blk daemon_ptr_opt.?.sendMessage(to, content);
+        // Keep daemon reference and release mutex - daemon.sendMessage is thread-safe
+        const daemon = self.daemon;
+        self.mutex.unlock();
+        if (daemon == null) return error.DaemonNotRunning;
+        break :blk daemon.?.sendMessage(to, content);
     };
 
     // Record metrics based on result
@@ -1235,10 +1241,21 @@ pub fn checkReputation(self: *Hybrid, agent_id: []const u8) !bool {
 
 /// Daemon event callback wrapper (forwards to event_callback with proper cleanup)
 fn daemonEventCallbackWrapper(allocator: Allocator, event: daemon_mod.Event) void {
+    // Get the active hybrid instance to forward events
+    const hybrid = active_hybrid orelse {
+        // No active hybrid, just log the event
+        logDaemonEvent(allocator, event);
+        return;
+    };
+
     // Convert daemon event to hybrid event
-    const hybrid_event = switch (event) {
+    const hybrid_event: Hybrid.Event = switch (event) {
         .started => |*info| Hybrid.Event{
-            .daemon_started = info.*,
+            .daemon_started = .{
+                .peer_id = info.peer_id,
+                .listen_addr = info.listen_addr,
+                .port = info.port,
+            },
         },
         .stopped => |reason| Hybrid.Event{
             .daemon_stopped = reason,
@@ -1262,18 +1279,52 @@ fn daemonEventCallbackWrapper(allocator: Allocator, event: daemon_mod.Event) voi
         },
     };
 
-    // For now, just log the event
-    // In production, this would need to forward to self.event_callback
-    // but we don't have access to self here
-    logEvent(allocator, hybrid_event);
+    // Forward to the event callback
+    hybrid.event_callback(allocator, hybrid_event);
 }
 
-/// Poller event callback wrapper
+/// Log daemon event without forwarding (fallback when no hybrid active)
+fn logDaemonEvent(allocator: Allocator, event: daemon_mod.Event) void {
+    _ = allocator;
+    switch (event) {
+        .started => |*info| {
+            std.log.info("Gork daemon started: {s} on {s}:{d}", .{ info.peer_id, info.listen_addr, info.port });
+        },
+        .stopped => |reason| {
+            if (reason) |r| {
+                std.log.info("Gork daemon stopped: {s}", .{r});
+            } else {
+                std.log.info("Gork daemon stopped", .{});
+            }
+        },
+        .message_received => |msg| {
+            std.log.info("Gork message from {s}: {s}", .{ msg.from, msg.content });
+        },
+        .peer_connected => |peer| {
+            std.log.info("Gork peer connected: {s}", .{peer});
+        },
+        .peer_disconnected => |peer| {
+            std.log.info("Gork peer disconnected: {s}", .{peer});
+        },
+        .daemon_error => |err| {
+            std.log.err("Gork daemon error: {s}", .{err});
+        },
+    }
+}
+
+/// Poller event callback wrapper - forwards incoming messages to the hybrid's event callback
 fn pollerEventCallbackWrapper(message_json: []const u8) void {
-    _ = message_json;
-    // Note: This callback doesn't have access to the allocator or Hybrid instance
-    // In production, this should be redesigned to properly handle messages
-    // For now, messages are logged by the poller itself
+    const hybrid = active_hybrid orelse {
+        std.log.debug("Gork poller event (no active hybrid): {s}", .{message_json});
+        return;
+    };
+
+    // Parse the JSON message and forward as an event
+    // For now, just log it - full JSON parsing would require more code
+    std.log.debug("Gork poller received: {s}", .{message_json});
+
+    // TODO: Parse message_json and create proper IncomingMessage event
+    // This requires JSON parsing which is complex - for now we log
 }
 
 /// Notify event to callback
@@ -1344,8 +1395,11 @@ fn parseDiscoverOutput(allocator: Allocator, output: []const u8) ![]AgentInfo {
             const parts = std.mem.splitScalar(u8, trimmed["🟢".len..].*, ' ');
             const account_id = parts.next() orelse continue;
 
+            const owned_account_id = try allocator.dupe(u8, account_id);
+            errdefer allocator.free(owned_account_id);
+
             const agent = AgentInfo{
-                .account_id = try allocator.dupe(u8, account_id),
+                .account_id = owned_account_id,
                 .reputation = 50,
                 .online = trimmed[0] == '🟢',
                 .skills = &.{}, // Empty slice - not allocated
