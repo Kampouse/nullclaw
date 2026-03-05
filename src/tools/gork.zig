@@ -276,10 +276,9 @@ fn handleHybridEvent(allocator: std.mem.Allocator, event: hybrid_mod.Event) void
     switch (mut_event) {
         .message_received => |*msg| {
             // Replay protection: check timestamp
-            // In Zig 0.16.0, std.time.timestamp() was removed
-            // Use std.time.nanoTimestamp() and convert to seconds
-            const now_ns = std.time.nanoTimestamp();
-            const now: u64 = @intCast(@divFloor(now_ns, 1_000_000_000));
+            // TODO: Zig 0.16.0 removed std.time.timestamp()
+            // Need to implement using std.os.clock_gettime or similar
+            const now: u64 = 0; // Placeholder - implement proper timestamp
             const msg_time = msg.timestamp;
 
             if (now > msg_time) {
