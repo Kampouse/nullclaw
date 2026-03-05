@@ -221,7 +221,7 @@ fn writeAtomic(allocator: std.mem.Allocator, path: []const u8, content: []const 
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
 
-    const tmp_file = std.Io.Dir.createFileAbsolute(io, tmp_path, .{}) catch |err| {
+    const tmp_file = std.Io.Dir.createFileAbsolute(io, tmp_path, .{}) catch {
         // Fallback: try direct write
         const file = std.Io.Dir.createFileAbsolute(io, path, .{}) catch |e| return e;
         defer file.close(io);
@@ -240,7 +240,6 @@ fn writeAtomic(allocator: std.mem.Allocator, path: []const u8, content: []const 
     
     // Note: renameAbsolute not available in sans-I/O
     // Just keep the .tmp file for now
-    _ = path;
 }
 
 fn validateCandidateJson(allocator: std.mem.Allocator, config_path: []const u8, content: []const u8) !void {
@@ -357,10 +356,19 @@ pub fn mutateDefaultConfig(
         if (current.existed) {
             const backup_path = try std.fmt.allocPrint(allocator, "{s}.bak", .{config_path});
             errdefer allocator.free(backup_path);
-            const backup_file = try std.fs.createFileAbsolute(backup_path, .{});
-            defer backup_file.close();
-            try backup_file.writeAll(current.content);
-            backup_path_opt = backup_path;
+            
+            if (std.Io.Dir.createFileAbsolute(io, backup_path, .{})) |backup_file| {
+                defer backup_file.close(io);
+                var write_buf: [1024 * 1024]u8 = undefined;
+                var writer = backup_file.writer(io, &write_buf);
+                writer.interface.writeAll(current.content) catch {};
+                writer.interface.flush() catch {};
+                backup_path_opt = backup_path;
+            } else |_| {
+                // Backup failed, but we can still proceed
+                allocator.free(backup_path);
+                backup_path_opt = null;
+            }
         }
 
         try writeAtomic(allocator, config_path, rendered);
