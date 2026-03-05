@@ -167,24 +167,11 @@ pub fn sendMessage(self: *DaemonProcess, to: []const u8, content: []const u8) !v
     try argv.append(self.allocator, to);
     try argv.append(self.allocator, content);
 
-    var child = std.process.Child.init(argv.items, self.allocator);
-    child.stderr_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-
-    try child.spawn();
-
-    const term = child.wait() catch {
-        return error.SendFailed;
-    };
-
-    const exit_code = switch (term) {
-        .Exited => |code| code,
-        else => 1,
-    };
-
-    if (exit_code != 0) {
-        return error.SendFailed;
-    }
+    // TODO: Zig 0.16.0 - rewrite using new process API
+    // std.process.Child.init() was removed
+    // For now, return error to indicate this needs implementation
+    argv.deinit(self.allocator);
+    return error.SendFailed;
 }
 
 pub const StartConfig = struct {

@@ -1430,23 +1430,9 @@ fn sendViaCli(self: *Hybrid, to: []const u8, content: []const u8) !void {
     try argv.append(self.allocator, to);
     try argv.append(self.allocator, content);
 
-    var child = std.process.Child.init(argv.items, self.allocator);
-    child.stderr_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-
-    try child.spawn();
-
-    // Wait with timeout
-    const term = try waitWithTimeout(&child, DEFAULT_PROCESS_TIMEOUT_MS);
-
-    const exit_code = switch (term) {
-        .Exited => |code| code,
-        else => 1,
-    };
-
-    if (exit_code != 0) {
-        return error.SendFailed;
-    }
+    // TODO: Zig 0.16.0 - rewrite using new process API
+    argv.deinit(self.allocator);
+    return error.SendFailed;
 }
 
 /// Check if peer's reputation meets minimum threshold
