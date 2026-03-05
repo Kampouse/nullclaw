@@ -2,6 +2,8 @@ const std = @import("std");
 const platform = @import("platform.zig");
 pub const config_types = @import("config_types.zig");
 pub const config_parse = @import("config_parse.zig");
+
+const io = std.Options.debug_io;
 /// Write a JSON-escaped string (with enclosing quotes) to any writer.
 /// Mirrors json_util.appendJsonString but works with writer-based output.
 fn writeJsonStr(w: anytype, s: []const u8) !void {
@@ -229,9 +231,11 @@ pub const Config = struct {
         };
 
         // Try to read existing config file
-        if (std.fs.openFileAbsolute(config_path, .{})) |file| {
-            defer file.close();
-            const content = try file.readToEndAlloc(allocator, 1024 * 64);
+        if (std.Io.Dir.openFileAbsolute(io, config_path, .{})) |file| {
+            defer file.close(io);
+            var buffer: [1024 * 64]u8 = undefined;
+            var reader = file.reader(io, &buffer);
+            const content = try reader.interface.readAlloc(allocator, 1024 * 64);
             cfg.parseJson(content) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
@@ -491,48 +495,48 @@ pub const Config = struct {
     /// Apply NULLCLAW_* environment variable overrides.
     pub fn applyEnvOverrides(self: *Config) void {
         // Provider
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_PROVIDER")) |prov| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_PROVIDER")) |prov| {
             self.default_provider = prov;
-        } else |_| {}
+        }
 
         // Model
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_MODEL")) |model| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_MODEL")) |model| {
             self.default_model = model;
-        } else |_| {}
+        }
 
         // Temperature
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_TEMPERATURE")) |temp_str| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_TEMPERATURE")) |temp_str| {
             defer self.allocator.free(temp_str);
             if (std.fmt.parseFloat(f64, temp_str)) |temp| {
                 if (temp >= 0.0 and temp <= 2.0) {
                     self.default_temperature = temp;
                 }
             } else |_| {}
-        } else |_| {}
+        }
 
         // Gateway port
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_GATEWAY_PORT")) |port_str| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_GATEWAY_PORT")) |port_str| {
             defer self.allocator.free(port_str);
             if (std.fmt.parseInt(u16, port_str, 10)) |port| {
                 self.gateway.port = port;
             } else |_| {}
-        } else |_| {}
+        }
 
         // Gateway host
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_GATEWAY_HOST")) |host| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_GATEWAY_HOST")) |host| {
             self.gateway.host = host;
-        } else |_| {}
+        }
 
         // Workspace
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_WORKSPACE")) |ws| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_WORKSPACE")) |ws| {
             self.workspace_dir = ws;
-        } else |_| {}
+        }
 
         // Allow public bind
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_ALLOW_PUBLIC_BIND")) |val| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_ALLOW_PUBLIC_BIND")) |val| {
             defer self.allocator.free(val);
             self.gateway.allow_public_bind = std.mem.eql(u8, val, "1") or std.mem.eql(u8, val, "true");
-        } else |_| {}
+        }
     }
 
     /// Save config as JSON to the config_path.

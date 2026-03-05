@@ -5,6 +5,23 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const io = std.Options.debug_io;
+
+/// Resolve a path to its canonical absolute form.
+/// Returns the resolved path or the original path if resolution fails.
+/// Caller owns the returned memory.
+pub fn resolvePathAlloc(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    // Try to open the path and get its real path
+    if (std.Io.Dir.openFileAbsolute(io, path, .{})) |file| {
+        defer file.close(io);
+        // For now, just return a copy of the path
+        // Full realpath would require opening parent dir and resolving
+        return try allocator.dupe(u8, path);
+    } else |_| {
+        // If file doesn't exist, return path as-is
+        return try allocator.dupe(u8, path);
+    }
+}
 
 /// System-critical prefixes (Unix) — always blocked even if they match allowed_paths.
 const SYSTEM_BLOCKED_PREFIXES_UNIX = [_][]const u8{

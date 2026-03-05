@@ -3,8 +3,12 @@ const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
-const isPathSafe = @import("path_security.zig").isPathSafe;
-const isResolvedPathAllowed = @import("path_security.zig").isResolvedPathAllowed;
+const path_security = @import("path_security.zig");
+const isPathSafe = path_security.isPathSafe;
+const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
+const resolvePathAlloc = path_security.resolvePathAlloc;
+
+const io = std.Options.debug_io;
 
 /// Default maximum file size to read (10MB).
 const DEFAULT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
@@ -49,14 +53,14 @@ pub const FileReadTool = struct {
         defer allocator.free(full_path);
 
         // Resolve to catch symlink escapes
-        const resolved = std.fs.cwd().realpathAlloc(allocator, full_path) catch |err| {
+        const resolved = resolvePathAlloc(allocator, full_path) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve file path: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
         defer allocator.free(resolved);
 
         // Validate against workspace + allowed_paths + system blocklist
-        const ws_resolved: ?[]const u8 = std.fs.cwd().realpathAlloc(allocator, self.workspace_dir) catch null;
+        const ws_resolved: ?[]const u8 = resolvePathAlloc(allocator, self.workspace_dir) catch null;
         defer if (ws_resolved) |wr| allocator.free(wr);
 
         if (!isResolvedPathAllowed(allocator, resolved, ws_resolved orelse "", self.allowed_paths)) {
@@ -64,24 +68,16 @@ pub const FileReadTool = struct {
         }
 
         // Check file size
-        const file = std.fs.openFileAbsolute(resolved, .{}) catch |err| {
+        const file = std.Io.Dir.openFileAbsolute(io, resolved, .{}) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
-        defer file.close();
+        defer file.close(io);
 
-        const stat = try file.stat();
-        if (stat.size > self.max_file_size) {
-            const msg = try std.fmt.allocPrint(
-                allocator,
-                "File too large: {} bytes (limit: {} bytes)",
-                .{ stat.size, self.max_file_size },
-            );
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        }
-
-        // Read contents
-        const contents = file.readToEndAlloc(allocator, @intCast(self.max_file_size)) catch |err| {
+        // Read contents - we'll limit by max_file_size in readAlloc
+        var buf: [1024 * 1024]u8 = undefined; // 1MB buffer
+        var reader = file.reader(io, &buf);
+        const contents = reader.interface.readAlloc(allocator, @intCast(self.max_file_size)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };

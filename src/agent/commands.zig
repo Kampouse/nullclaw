@@ -678,33 +678,42 @@ fn resetRuntimeCommandState(self: anytype) void {
 fn formatStatus(self: anytype) ![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
+    const allocator = self.allocator;
 
-    try w.print("Model: {s}\n", .{self.model_name});
-    try w.print("History: {d} messages\n", .{self.history.items.len});
-    try w.print("Tokens used: {d}\n", .{self.total_tokens});
-    try w.print("Tools: {d} available\n", .{self.tools.len});
-    try w.print("Thinking: {s}\n", .{self.reasoning_effort orelse "off"});
-    try w.print("Verbose: {s}\n", .{self.verbose_level.toSlice()});
-    try w.print("Reasoning: {s}\n", .{self.reasoning_mode.toSlice()});
-    try w.print("Usage: {s}\n", .{self.usage_mode.toSlice()});
-    try w.print(
-        "Exec: host={s} security={s} ask={s}",
-        .{ self.exec_host.toSlice(), self.exec_security.toSlice(), self.exec_ask.toSlice() },
-    );
-    if (self.exec_node_id) |id| try w.print(" node={s}", .{id});
-    try w.writeAll("\n");
-    try w.print(
-        "Queue: mode={s} debounce={d}ms cap={d} drop={s}\n",
-        .{ self.queue_mode.toSlice(), self.queue_debounce_ms, self.queue_cap, self.queue_drop.toSlice() },
-    );
-    try w.print("TTS: mode={s} provider={s}\n", .{ self.tts_mode.toSlice(), self.tts_provider orelse "default" });
-    try w.print("Activation: {s}\n", .{self.activation_mode.toSlice()});
-    try w.print("Send: {s}\n", .{self.send_mode.toSlice()});
+    try out.appendSlice(allocator, "Model: ");
+    try out.appendSlice(allocator, self.model_name);
+    try out.appendSlice(allocator, "\n");
+    
+    var buf: [128]u8 = undefined;
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "History: {d} messages\n", .{self.history.items.len}));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Tokens used: {d}\n", .{self.total_tokens}));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Tools: {d} available\n", .{self.tools.len}));
+    try out.appendSlice(allocator, "Thinking: ");
+    try out.appendSlice(allocator, self.reasoning_effort orelse "off");
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, "Verbose: ");
+    try out.appendSlice(allocator, self.verbose_level.toSlice());
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, "Reasoning: ");
+    try out.appendSlice(allocator, self.reasoning_mode.toSlice());
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, "Usage: ");
+    try out.appendSlice(allocator, self.usage_mode.toSlice());
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Exec: host={s} security={s} ask={s}", .{ self.exec_host.toSlice(), self.exec_security.toSlice(), self.exec_ask.toSlice() }));
+    if (self.exec_node_id) |id| {
+        try out.appendSlice(allocator, " node=");
+        try out.appendSlice(allocator, id);
+    }
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Queue: mode={s} debounce={d}ms cap={d} drop={s}\n", .{ self.queue_mode.toSlice(), self.queue_debounce_ms, self.queue_cap, self.queue_drop.toSlice() }));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "TTS: mode={s} provider={s}\n", .{ self.tts_mode.toSlice(), self.tts_provider orelse "default" }));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Activation: {s}\n", .{self.activation_mode.toSlice()}));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Send: {s}\n", .{self.send_mode.toSlice()}));
     if (self.session_ttl_secs) |ttl| {
-        try w.print("Session TTL: {d}s\n", .{ttl});
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Session TTL: {d}s\n", .{ttl}));
     } else {
-        try w.writeAll("Session TTL: off\n");
+        try out.appendSlice(allocator, "Session TTL: off\n");
     }
     return try out.toOwnedSlice(self.allocator);
 }

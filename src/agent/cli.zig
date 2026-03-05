@@ -31,8 +31,9 @@ const CliStreamCtx = struct {
 
 fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
     if (event.stage != .chunk or event.text.len == 0) return;
+    const stdout_io = std.Options.debug_io;
     var buf: [4096]u8 = undefined;
-    var bw = std.Io.File.stdout().writer(&buf);
+    var bw = std.Io.File.stdout().writer(stdout_io, &buf);
     const wr = &bw.interface;
     wr.print("{s}", .{event.text}) catch {};
     wr.flush() catch {};
