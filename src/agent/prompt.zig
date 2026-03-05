@@ -59,9 +59,9 @@ fn openWorkspaceFileWithGuards(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
     filename: []const u8,
-    io_param: std.Io,
+    io_arg: std.Io,
 ) ?GuardedWorkspaceFileOpen {
-    _ = io_param; // TODO: Use for file operations
+    _ = io_arg; // TODO: Use for file operations
     if (!isWorkspaceBootstrapFilenameSafe(filename)) return null;
 
     // TODO: Zig 0.16.0 - realpathAlloc not available
@@ -172,12 +172,9 @@ pub fn workspacePromptFingerprint(
             hasher.update("nodev");
         }
 
-        const inode_id = stat.inode;
-        const mtime_ns: i128 = stat.mtime;
-        const size_bytes: u64 = @intCast(stat.size);
-        hasher.update(std.mem.asBytes(&inode_id));
-        hasher.update(std.mem.asBytes(&mtime_ns));
-        hasher.update(std.mem.asBytes(&size_bytes));
+        // TODO: Zig 0.16.0 - stat not available
+        // Just hash the canonical path instead
+        hasher.update(guarded.canonical_path);
     }
 
     return hasher.final();
