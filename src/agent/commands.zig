@@ -1392,8 +1392,9 @@ fn handleAgentsCommand(self: anytype) ![]const u8 {
     const manager = findSubagentManager(self) orelse
         return try self.allocator.dupe(u8, "Active agents: 1 (current session). Subagents are not enabled.");
 
-    manager.mutex.lock();
-    defer manager.mutex.unlock();
+    const mutex_io = std.Options.debug_io;
+    manager.mutex.lock(mutex_io) catch {};
+    defer manager.mutex.unlock(mutex_io);
     var tracked: u32 = 0;
     var running: u32 = 0;
 
