@@ -36,7 +36,7 @@ pub const ImageInfoTool = struct {
                 const msg = try std.fmt.allocPrint(allocator, "File not found: {s} ({s})", .{ path, @errorName(err) });
                 return ToolResult{ .success = false, .output = "", .error_msg = msg };
             }
-        else blk: {
+        else {
             // For relative paths, we need to resolve from workspace
             // For now, just try as absolute - TODO: implement relative path support
             const msg = try std.fmt.allocPrint(allocator, "Relative paths not yet supported in Zig 0.16.0: {s}", .{path});
@@ -51,10 +51,11 @@ pub const ImageInfoTool = struct {
         // Read file contents for format detection and dimensions
         var header_buf: [128]u8 = undefined;
         var reader = file.reader(io, &header_buf);
-        const bytes = reader.interface.readSlice(&header_buf, 128) catch |err| {
+        const bytes = reader.interface.readAlloc(allocator, 128) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
+        defer allocator.free(bytes);
 
         const format = detectFormat(bytes);
         const dimensions = extractDimensions(bytes, format);
