@@ -498,8 +498,8 @@ pub fn listSkills(allocator: std.mem.Allocator, workspace_dir: []const u8) ![]Sk
     var dir_mut = dir;
     defer dir_mut.close(io);
 
-    var it = dir_mut.iterate(io);
-    while (try it.next()) |entry| {
+    var it = dir_mut.iterate();
+    while (try it.next(io)) |entry| {
         if (entry.kind != .directory) continue;
 
         const sub_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ skills_dir_path, entry.name });
