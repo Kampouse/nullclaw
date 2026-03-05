@@ -42,7 +42,7 @@ pub fn run(
     });
 
     return switch (result.term) {
-        .Exited => |code| .{
+        .exited => |code| .{
             .stdout = result.stdout,
             .stderr = result.stderr,
             .success = code == 0,
