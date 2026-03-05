@@ -759,13 +759,19 @@ fn handleExecCommand(self: anytype, arg: []const u8) ![]const u8 {
     if (arg.len == 0 or std.ascii.eqlIgnoreCase(arg, "status")) {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print(
-            "Exec: host={s} security={s} ask={s}",
-            .{ self.exec_host.toSlice(), self.exec_security.toSlice(), self.exec_ask.toSlice() },
-        );
+        const allocator = self.allocator;
+        var buf: [256]u8 = undefined;
+
+        try out.appendSlice(allocator, "Exec: host=");
+        try out.appendSlice(allocator, self.exec_host.toSlice());
+        try out.appendSlice(allocator, " security=");
+        try out.appendSlice(allocator, self.exec_security.toSlice());
+        try out.appendSlice(allocator, " ask=");
+        try out.appendSlice(allocator, self.exec_ask.toSlice());
+
         if (self.exec_node_id) |id| {
-            try w.print(" node={s}", .{id});
+            try out.appendSlice(allocator, " node=");
+            try out.appendSlice(allocator, id);
         }
         return try out.toOwnedSlice(self.allocator);
     }
