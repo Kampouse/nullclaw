@@ -37,7 +37,7 @@ pub fn curlGet(
     if (builtin.is_test) return error.RequestFailed;
 
     return http_util.curlGet(allocator, url, headers, "30") catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.HttpUtilStubbed => return error.RequestFailed,
         else => return error.RequestFailed,
     };
 }
@@ -53,7 +53,7 @@ pub fn curlPostJson(
     if (builtin.is_test) return error.RequestFailed;
 
     return http_util.curlPostWithProxy(allocator, url, body, headers, null, null) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.HttpUtilStubbed => return error.RequestFailed,
         else => return error.RequestFailed,
     };
 }
