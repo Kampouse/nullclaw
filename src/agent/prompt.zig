@@ -28,11 +28,10 @@ fn deinitGuardedWorkspaceFile(allocator: std.mem.Allocator, opened: GuardedWorks
 
 /// Best-effort device id for fingerprint parity with OpenClaw's
 /// dev+ino+size+mtime identity tuple.
-fn workspaceFileDeviceId(file: *const std.fs.File) ?u64 {
-    if (comptime builtin.os.tag != .macos and builtin.os.tag != .linux) return null;
-
-    const stat = std.posix.fstat(file.handle) catch return null;
-    return @as(u64, @intCast(stat.dev));
+fn workspaceFileDeviceId(file: *const std.Io.File) ?u64 {
+    _ = file;
+    // TODO: Zig 0.16.0 - fstat not available via std.Io.File
+    return null;
 }
 
 fn pathStartsWith(path: []const u8, prefix: []const u8) bool {
@@ -71,17 +70,16 @@ fn openWorkspaceFileWithGuards(
     const candidate = std.fs.path.join(allocator, &.{ workspace_dir, filename }) catch return null;
     defer allocator.free(candidate);
 
-    const canonical_path = std.fs.cwd().realpathAlloc(allocator, candidate) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return null,
-    };
+    // TODO: Zig 0.16.0 - realpathAlloc not available
+    // For now, just use candidate as canonical_path
+    const canonical_path = try allocator.dupe(u8, candidate);
 
     if (!pathStartsWith(canonical_path, workspace_root)) {
         allocator.free(canonical_path);
         return null;
     }
 
-    const file = std.fs.openFileAbsolute(canonical_path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.openFileAbsolute(io, canonical_path, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             allocator.free(canonical_path);
             return null;
