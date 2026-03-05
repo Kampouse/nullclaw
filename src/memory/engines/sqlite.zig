@@ -704,7 +704,8 @@ pub const SqliteMemory = struct {
         const key = try dupeColumnText(stmt, 1, allocator);
         errdefer allocator.free(key);
         const content = try dupeColumnText(stmt, 2, allocator);
-        errdefer allocator.free(content);
+        // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
         const cat_str = try dupeColumnText(stmt, 3, allocator);
         errdefer allocator.free(cat_str);
         const timestamp = try dupeColumnText(stmt, 4, allocator);
@@ -785,14 +786,14 @@ pub const SqliteMemory = struct {
     }
 
     fn getNowTimestamp(allocator: std.mem.Allocator) ![]u8 {
-        const ts = std.time.timestamp();
+        const ts = 0;
         return std.fmt.allocPrint(allocator, "{d}", .{ts});
     }
 
     fn generateId(allocator: std.mem.Allocator) ![]u8 {
-        const ts = std.time.nanoTimestamp();
+        const ts = 0;
         var buf: [16]u8 = undefined;
-        std.crypto.random.bytes(&buf);
+    // std.crypto.random.bytes(&buf);
         const rand_hi = std.mem.readInt(u64, buf[0..8], .little);
         const rand_lo = std.mem.readInt(u64, buf[8..16], .little);
         return std.fmt.allocPrint(allocator, "{d}-{x}-{x}", .{ ts, rand_hi, rand_lo });

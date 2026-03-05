@@ -4,6 +4,7 @@
 //! for `nullclaw agent`) and the streaming stdout callback.
 
 const std = @import("std");
+const io = std.Options.debug_io; // For Zig 0.16.0 I/O
 const log = std.log.scoped(.agent);
 const Config = @import("../config.zig").Config;
 const providers = @import("../providers/root.zig");
@@ -31,7 +32,7 @@ const CliStreamCtx = struct {
 fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
     if (event.stage != .chunk or event.text.len == 0) return;
     var buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&buf);
+    var bw = std.Io.File.stdout().writer(&buf);
     const wr = &bw.interface;
     wr.print("{s}", .{event.text}) catch {};
     wr.flush() catch {};
@@ -156,7 +157,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
     try onboard.scaffoldWorkspace(allocator, cfg.workspace_dir, &onboard.ProjectContext{});
 
     var out_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&out_buf);
+    var bw = std.Io.File.stdout().writer(io, &out_buf);
     const w = &bw.interface;
 
     const message_arg = parsed_args.message_arg;
@@ -370,7 +371,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
         agent.stream_ctx = @ptrCast(&stream_ctx);
     }
 
-    const stdin = std.fs.File.stdin();
+    const stdin = std.Io.File.stdin();
     var line_buf: [4096]u8 = undefined;
 
     while (true) {

@@ -53,7 +53,7 @@ pub fn exportSnapshot(allocator: std.mem.Allocator, mem: Memory, workspace_dir: 
     const snapshot_path = try std.fs.path.join(allocator, &.{ workspace_dir, SNAPSHOT_FILENAME });
     defer allocator.free(snapshot_path);
 
-    const file = try std.fs.cwd().createFile(snapshot_path, .{});
+    const file = try std.Io.Dir.cwd().createFile(snapshot_path, .{});
     defer file.close();
 
     try file.writeAll(json_buf.items);
@@ -77,8 +77,9 @@ pub fn hydrateFromSnapshot(allocator: std.mem.Allocator, mem: Memory, workspace_
     defer allocator.free(snapshot_path);
 
     // Read snapshot file
-    const content = std.fs.cwd().readFileAlloc(allocator, snapshot_path, 10 * 1024 * 1024) catch return 0;
-    defer allocator.free(content);
+    const content = std.Io.Dir.cwd().readFileAlloc(allocator, snapshot_path, 10 * 1024 * 1024) catch return 0;
+    // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
 
     if (content.len == 0) return 0;
 
@@ -142,7 +143,7 @@ pub fn shouldHydrate(allocator: std.mem.Allocator, mem: ?Memory, workspace_dir: 
     const snapshot_path = std.fs.path.join(allocator, &.{ workspace_dir, SNAPSHOT_FILENAME }) catch return false;
     defer allocator.free(snapshot_path);
 
-    std.fs.cwd().access(snapshot_path, .{}) catch return false;
+    std.Io.Dir.cwd().access(snapshot_path, .{}) catch return false;
     return true;
 }
 

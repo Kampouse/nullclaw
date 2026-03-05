@@ -266,9 +266,9 @@ pub fn BoundedQueue(comptime T: type, comptime capacity: usize) type {
         tail: usize = 0,
         len: usize = 0,
         closed: bool = false,
-        mutex: std.Thread.Mutex = .{},
-        not_empty: std.Thread.Condition = .{},
-        not_full: std.Thread.Condition = .{},
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
+        not_empty: std.Io.Condition = .{ .state = .init(.{ .waiters = 0, .signals = 0 }), .epoch = .init(0) },
+        not_full: std.Io.Condition = .{ .state = .init(.{ .waiters = 0, .signals = 0 }), .epoch = .init(0) },
 
         pub fn init() Self {
             return .{};
@@ -276,11 +276,14 @@ pub fn BoundedQueue(comptime T: type, comptime capacity: usize) type {
 
         /// Blocks if the queue is full. Returns error.Closed if the bus is closed.
         pub fn publish(self: *Self, item: T) error{Closed}!void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            // TODO: Zig 0.16.0 - needs io
+            // self.mutex.lock();
+            // TODO: Zig 0.16.0 - needs io
+            // defer self.mutex.unlock();
 
             while (self.len == capacity and !self.closed) {
-                self.not_full.wait(&self.mutex);
+                // TODO: Zig 0.16.0 - needs io
+                // self.not_full.wait(io, &self.mutex);
             }
             if (self.closed) return error.Closed;
 
@@ -288,13 +291,16 @@ pub fn BoundedQueue(comptime T: type, comptime capacity: usize) type {
             self.tail = (self.tail + 1) % capacity;
             self.len += 1;
 
-            self.not_empty.signal();
+            // TODO: Zig 0.16.0 - needs io
+            // self.not_empty.signal();
         }
 
         /// Blocks if the queue is empty. Returns null if closed and the queue is empty.
         pub fn consume(self: *Self) ?T {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            // TODO: Zig 0.16.0 - needs io
+            // self.mutex.lock();
+            // TODO: Zig 0.16.0 - needs io
+            // defer self.mutex.unlock();
 
             while (self.len == 0 and !self.closed) {
                 self.not_empty.wait(&self.mutex);
@@ -311,8 +317,10 @@ pub fn BoundedQueue(comptime T: type, comptime capacity: usize) type {
 
         /// Closes the queue, waking all waiting threads.
         pub fn close(self: *Self) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            // TODO: Zig 0.16.0 - needs io
+            // self.mutex.lock();
+            // TODO: Zig 0.16.0 - needs io
+            // defer self.mutex.unlock();
             self.closed = true;
             self.not_empty.broadcast();
             self.not_full.broadcast();
@@ -320,8 +328,10 @@ pub fn BoundedQueue(comptime T: type, comptime capacity: usize) type {
 
         /// Current queue depth (for metrics).
         pub fn depth(self: *Self) usize {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            // TODO: Zig 0.16.0 - needs io
+            // self.mutex.lock();
+            // TODO: Zig 0.16.0 - needs io
+            // defer self.mutex.unlock();
             return self.len;
         }
     };

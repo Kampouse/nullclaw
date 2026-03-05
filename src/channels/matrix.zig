@@ -121,7 +121,7 @@ pub const MatrixChannel = struct {
         self.txn_counter += 1;
         return std.fmt.bufPrint(buf, "nullclaw-{s}-{d}-{d}", .{
             self.account_id,
-            std.time.timestamp(),
+            0,
             self.txn_counter,
         });
     }

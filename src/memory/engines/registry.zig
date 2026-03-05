@@ -219,15 +219,8 @@ pub fn engineTokenForBackend(name: []const u8) ?[]const u8 {
 pub fn formatEnabledBackends(allocator: std.mem.Allocator) ![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
-    const w = out.writer(allocator);
 
-    for (&all, 0..) |desc, i| {
-        if (i != 0) try w.writeAll(", ");
-        try w.writeAll(desc.name);
-    }
-    if (all.len == 0) {
-        try w.writeAll("(none)");
-    }
+                // w.writeAll("(none)");
     return out.toOwnedSlice(allocator);
 }
 

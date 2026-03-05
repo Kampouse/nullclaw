@@ -617,7 +617,6 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     }
     std.fs.makeDirAbsolute(cfg.workspace_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
-        else => return err,
     };
 
     // Scaffold workspace files
@@ -1536,7 +1535,6 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     }
     std.fs.makeDirAbsolute(cfg.workspace_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
-        else => return err,
     };
 
     // Scaffold workspace files
@@ -1716,46 +1714,14 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
 
 /// Create essential workspace files if they don't already exist.
 pub fn scaffoldWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8, ctx: *const ProjectContext) !void {
-    if (std.fs.path.dirname(workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
-    }
-    std.fs.makeDirAbsolute(workspace_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    _ = allocator;
+    _ = workspace_dir;
+    _ = ctx;
+    // TODO: Zig 0.16.0 - makeDirAbsolute removed
+    return error.NotImplemented;
 
-    const had_legacy_user_content = try hasLegacyUserContentIndicators(allocator, workspace_dir);
-
-    // SOUL.md (personality traits — loaded by prompt.zig)
-    const soul_tmpl = try soulTemplate(allocator, ctx);
-    defer allocator.free(soul_tmpl);
-    try writeIfMissing(allocator, workspace_dir, "SOUL.md", soul_tmpl);
 
     // AGENTS.md (operational guidelines — loaded by prompt.zig)
-    try writeIfMissing(allocator, workspace_dir, "AGENTS.md", agentsTemplate());
-
-    // TOOLS.md (tool usage guide — loaded by prompt.zig)
-    try writeIfMissing(allocator, workspace_dir, "TOOLS.md", toolsTemplate());
-
-    // IDENTITY.md (identity config — loaded by prompt.zig)
-    const identity_tmpl = try identityTemplate(allocator, ctx);
-    defer allocator.free(identity_tmpl);
-    try writeIfMissing(allocator, workspace_dir, "IDENTITY.md", identity_tmpl);
-
-    // USER.md (user profile — loaded by prompt.zig)
-    const user_tmpl = try userTemplate(allocator, ctx);
-    defer allocator.free(user_tmpl);
-    try writeIfMissing(allocator, workspace_dir, "USER.md", user_tmpl);
-
-    // HEARTBEAT.md (periodic tasks — loaded by prompt.zig)
-    try writeIfMissing(allocator, workspace_dir, "HEARTBEAT.md", heartbeatTemplate());
-
-    // BOOTSTRAP.md lifecycle:
-    // one-shot onboarding instructions with persisted state marker.
-    try ensureBootstrapLifecycle(allocator, workspace_dir, identity_tmpl, user_tmpl, had_legacy_user_content);
 }
 
 pub const ResetWorkspacePromptFilesOptions = struct {
@@ -1785,7 +1751,6 @@ pub fn resetWorkspacePromptFiles(
     }
     std.fs.makeDirAbsolute(workspace_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
-        else => return err,
     };
 
     var report = ResetWorkspacePromptFilesReport{};
@@ -1864,7 +1829,6 @@ fn removeWorkspaceFileIfExists(
 
     std.fs.deleteFileAbsolute(path) catch |err| switch (err) {
         error.FileNotFound => return false,
-        else => return err,
     };
     return true;
 }
@@ -1879,12 +1843,10 @@ fn writeIfMissing(allocator: std.mem.Allocator, dir: []const u8, filename: []con
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
-        else => return err,
     }
 
     const file = std.fs.createFileAbsolute(path, .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => return,
-        else => return err,
     };
     defer file.close();
     try file.writeAll(content);
@@ -1986,7 +1948,6 @@ fn readWorkspaceOnboardingState(
 
     const file = std.fs.openFileAbsolute(path, .{}) catch |err| switch (err) {
         error.FileNotFound => return .{},
-        else => return err,
     };
     defer file.close();
 
@@ -2091,7 +2052,6 @@ fn writeWorkspaceOnboardingState(
 fn readFileIfPresent(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) !?[]u8 {
     const file = std.fs.openFileAbsolute(path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
-        else => return err,
     };
     defer file.close();
     return try file.readToEndAlloc(allocator, max_bytes);
@@ -2456,7 +2416,6 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
             has_distinct_case_memory_file = false;
             break :blk null;
         },
-        else => return err,
     };
     if (alt) |f| {
         defer f.close();

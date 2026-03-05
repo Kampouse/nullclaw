@@ -274,7 +274,7 @@ fn handleMessage(self: *WebSocketClient, raw_message: []const u8) void {
     const message = Message{
         .type = type_copy,
         .data = data_copy,
-        .timestamp = std.time.nanoTimestamp(),
+        .timestamp = 0,
     };
 
     // Add to queue

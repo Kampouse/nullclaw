@@ -9,7 +9,12 @@ const builtin = @import("builtin");
 /// propagating OOM would require changing every call-site to handle errors.
 /// In practice, env var allocation (< 4 KB) does not OOM.
 pub fn getEnvOrNull(allocator: std.mem.Allocator, name: []const u8) ?[]const u8 {
-    return std.process.getEnvVarOwned(allocator, name) catch return null;
+    // Use C library getenv for compatibility
+    const name_z = allocator.dupeZ(u8, name) catch return null;
+    defer allocator.free(name_z);
+    const env_ptr = std.c.getenv(name_z) orelse return null;
+    const env_val = std.mem.span(env_ptr);
+    return allocator.dupe(u8, env_val) catch return null;
 }
 
 /// Returns the user's home directory. Tries:
@@ -25,7 +30,9 @@ pub fn getHomeDir(allocator: std.mem.Allocator) ![]const u8 {
         defer allocator.free(path);
         return std.fmt.allocPrint(allocator, "{s}{s}", .{ drive, path });
     } else {
-        return std.process.getEnvVarOwned(allocator, "HOME") catch return error.HomeDirNotFound;
+        const home_ptr = std.c.getenv("HOME") orelse return error.HomeDirNotFound;
+        const home = std.mem.span(home_ptr);
+        return allocator.dupe(u8, home);
     }
 }
 

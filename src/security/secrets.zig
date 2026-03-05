@@ -203,7 +203,7 @@ pub const SecretStore = struct {
         const path = self.keyPath();
 
         // Try to read existing key
-        if (std.fs.cwd().openFile(path, .{})) |file| {
+        if (std.Io.Dir.cwd().openFile(path, .{})) |file| {
             defer file.close();
             var hex_buf: [KEY_LEN * 2 + 16]u8 = undefined; // some slack for whitespace
             const bytes_read = file.readAll(&hex_buf) catch return error.KeyReadFailed;
@@ -222,12 +222,12 @@ pub const SecretStore = struct {
 
             // Ensure parent dir exists
             if (std.fs.path.dirname(path)) |parent| {
-                std.fs.cwd().makePath(parent) catch |err| {
+                std.Io.Dir.cwd().makePath(parent) catch |err| {
                     log.err("failed to create parent dir {s}: {}", .{ parent, err });
                 };
             }
 
-            const file = std.fs.cwd().createFile(path, .{}) catch return error.KeyWriteFailed;
+            const file = std.Io.Dir.cwd().createFile(path, .{}) catch return error.KeyWriteFailed;
             defer file.close();
             file.writeAll(&hex_buf) catch return error.KeyWriteFailed;
 
@@ -441,7 +441,7 @@ test "secret store key file created on first encrypt" {
 
     // Key file should exist now
     const key_path = store.keyPath();
-    const file = try std.fs.cwd().openFile(key_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(key_path, .{});
     defer file.close();
     var buf: [128]u8 = undefined;
     const bytes_read = try file.readAll(&buf);

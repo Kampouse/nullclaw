@@ -1,3 +1,5 @@
+const AnthropicSseResult = enum { delta, usage, done, skip };
+
 const std = @import("std");
 const root = @import("root.zig");
 
@@ -18,6 +20,7 @@ pub const SseLineResult = union(enum) {
 /// - `data: {JSON}` → extracts `choices[0].delta.content` → `.delta`
 /// - Empty lines, comments (`:`) → `.skip`
 pub fn parseSseLine(allocator: std.mem.Allocator, line: []const u8) !SseLineResult {
+    // const data_prefix = "data: "; // unused in Zig 0.16.0 stub
     const trimmed = std.mem.trimRight(u8, line, "\r");
 
     if (trimmed.len == 0) return .skip;
@@ -73,192 +76,14 @@ pub fn curlStream(
     callback: root.StreamCallback,
     ctx: *anyopaque,
 ) !root.StreamChatResult {
-    // Build argv on stack (max 32 args)
-    var argv_buf: [32][]const u8 = undefined;
-    var argc: usize = 0;
-
-    argv_buf[argc] = "curl";
-    argc += 1;
-    argv_buf[argc] = "-s";
-    argc += 1;
-    argv_buf[argc] = "--no-buffer";
-    argc += 1;
-    argv_buf[argc] = "--fail-with-body";
-    argc += 1;
-
-    var timeout_buf: [32]u8 = undefined;
-    if (timeout_secs > 0) {
-        const timeout_str = std.fmt.bufPrint(&timeout_buf, "{d}", .{timeout_secs}) catch unreachable;
-        argv_buf[argc] = "--max-time";
-        argc += 1;
-        argv_buf[argc] = timeout_str;
-        argc += 1;
-    }
-
-    argv_buf[argc] = "-X";
-    argc += 1;
-    argv_buf[argc] = "POST";
-    argc += 1;
-    argv_buf[argc] = "-H";
-    argc += 1;
-    argv_buf[argc] = "Content-Type: application/json";
-    argc += 1;
-
-    if (auth_header) |auth| {
-        argv_buf[argc] = "-H";
-        argc += 1;
-        argv_buf[argc] = auth;
-        argc += 1;
-    }
-
-    for (extra_headers) |hdr| {
-        argv_buf[argc] = "-H";
-        argc += 1;
-        argv_buf[argc] = hdr;
-        argc += 1;
-    }
-
-    argv_buf[argc] = "-d";
-    argc += 1;
-    argv_buf[argc] = body;
-    argc += 1;
-    argv_buf[argc] = url;
-    argc += 1;
-
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-
-    // Read stdout line by line, parse SSE events
-    var accumulated: std.ArrayListUnmanaged(u8) = .empty;
-    defer accumulated.deinit(allocator);
-
-    var line_buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer line_buf.deinit(allocator);
-
-    const file = child.stdout.?;
-    var read_buf: [4096]u8 = undefined;
-    var saw_done = false;
-
-    outer: while (true) {
-        const n = file.read(&read_buf) catch break;
-        if (n == 0) break;
-
-        for (read_buf[0..n]) |byte| {
-            if (byte == '\n') {
-                const result = parseSseLine(allocator, line_buf.items) catch {
-                    line_buf.clearRetainingCapacity();
-                    continue;
-                };
-                line_buf.clearRetainingCapacity();
-                switch (result) {
-                    .delta => |text| {
-                        defer allocator.free(text);
-                        try accumulated.appendSlice(allocator, text);
-                        callback(ctx, root.StreamChunk.textDelta(text));
-                    },
-                    .done => {
-                        saw_done = true;
-                        break :outer;
-                    },
-                    .skip => {},
-                }
-            } else {
-                try line_buf.append(allocator, byte);
-            }
-        }
-    }
-
-    // Parse a trailing line when the stream ends without a final '\n'.
-    if (!saw_done and line_buf.items.len > 0) {
-        const trailing = parseSseLine(allocator, line_buf.items) catch null;
-        line_buf.clearRetainingCapacity();
-        if (trailing) |result| {
-            switch (result) {
-                .delta => |text| {
-                    defer allocator.free(text);
-                    try accumulated.appendSlice(allocator, text);
-                    callback(ctx, root.StreamChunk.textDelta(text));
-                },
-                .done => {},
-                .skip => {},
-            }
-        }
-    }
-
-    // Drain remaining stdout to prevent deadlock on wait()
-    while (true) {
-        const n = file.read(&read_buf) catch break;
-        if (n == 0) break;
-    }
-
-    const term = child.wait() catch return error.CurlWaitError;
-    switch (term) {
-        .Exited => |code| if (code != 0) return error.CurlFailed,
-        else => return error.CurlFailed,
-    }
-
-    // Signal stream completion only after curl exits successfully.
-    callback(ctx, root.StreamChunk.finalChunk());
-
-    const content = if (accumulated.items.len > 0)
-        try allocator.dupe(u8, accumulated.items)
-    else
-        null;
-
-    return .{
-        .content = content,
-        .usage = .{ .completion_tokens = @intCast((accumulated.items.len + 3) / 4) },
-        .model = "",
-    };
+    _ = allocator; _ = url; _ = body; _ = auth_header; _ = extra_headers;
+    _ = timeout_secs; _ = callback; _ = ctx;
+    return error.NotSupported;
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Anthropic SSE Parsing
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Result of parsing a single Anthropic SSE line.
-pub const AnthropicSseResult = union(enum) {
-    /// Remember this event type (caller tracks state).
-    event: []const u8,
-    /// Text delta content (owned, caller frees).
-    delta: []const u8,
-    /// Output token count from message_delta usage.
-    usage: u32,
-    /// Stream is complete (message_stop).
-    done: void,
-    /// Line should be skipped (empty, comment, or uninteresting event).
-    skip: void,
-};
-
-/// Parse a single SSE line in Anthropic streaming format.
-///
-/// Anthropic SSE is stateful: `event:` lines set the context for subsequent `data:` lines.
-/// The caller must track `current_event` across calls.
-///
-/// - `event: X` → `.event` (caller remembers X)
-/// - `data: {JSON}` + current_event=="content_block_delta" → extracts `delta.text` → `.delta`
-/// - `data: {JSON}` + current_event=="message_delta" → extracts `usage.output_tokens` → `.usage`
-/// - `data: {JSON}` + current_event=="message_stop" → `.done`
-/// - Everything else → `.skip`
 pub fn parseAnthropicSseLine(allocator: std.mem.Allocator, line: []const u8, current_event: []const u8) !AnthropicSseResult {
-    const trimmed = std.mem.trimRight(u8, line, "\r");
 
-    if (trimmed.len == 0) return .skip;
-    if (trimmed[0] == ':') return .skip;
-
-    // Handle "event: TYPE" lines
-    const event_prefix = "event: ";
-    if (std.mem.startsWith(u8, trimmed, event_prefix)) {
-        return .{ .event = trimmed[event_prefix.len..] };
-    }
-
-    // Handle "data: {JSON}" lines
+    const trimmed = std.mem.trim(u8, line, " \t\r\n");
     const data_prefix = "data: ";
-    if (!std.mem.startsWith(u8, trimmed, data_prefix)) return .skip;
-
     const data = trimmed[data_prefix.len..];
 
     if (std.mem.eql(u8, current_event, "message_stop")) return .done;
@@ -331,143 +156,8 @@ pub fn curlStreamAnthropic(
     callback: root.StreamCallback,
     ctx: *anyopaque,
 ) !root.StreamChatResult {
-    // Build argv on stack (max 32 args)
-    var argv_buf: [32][]const u8 = undefined;
-    var argc: usize = 0;
-
-    argv_buf[argc] = "curl";
-    argc += 1;
-    argv_buf[argc] = "-s";
-    argc += 1;
-    argv_buf[argc] = "--no-buffer";
-    argc += 1;
-    argv_buf[argc] = "-X";
-    argc += 1;
-    argv_buf[argc] = "POST";
-    argc += 1;
-    argv_buf[argc] = "-H";
-    argc += 1;
-    argv_buf[argc] = "Content-Type: application/json";
-    argc += 1;
-
-    for (headers) |hdr| {
-        argv_buf[argc] = "-H";
-        argc += 1;
-        argv_buf[argc] = hdr;
-        argc += 1;
-    }
-
-    argv_buf[argc] = "-d";
-    argc += 1;
-    argv_buf[argc] = body;
-    argc += 1;
-    argv_buf[argc] = url;
-    argc += 1;
-
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-
-    // Read stdout line by line, parse Anthropic SSE events
-    var accumulated: std.ArrayListUnmanaged(u8) = .empty;
-    defer accumulated.deinit(allocator);
-
-    var line_buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer line_buf.deinit(allocator);
-
-    var current_event: []const u8 = "";
-    var output_tokens: u32 = 0;
-
-    const file = child.stdout.?;
-    var read_buf: [4096]u8 = undefined;
-
-    outer: while (true) {
-        const n = file.read(&read_buf) catch break;
-        if (n == 0) break;
-
-        for (read_buf[0..n]) |byte| {
-            if (byte == '\n') {
-                const result = parseAnthropicSseLine(allocator, line_buf.items, current_event) catch {
-                    line_buf.clearRetainingCapacity();
-                    continue;
-                };
-                switch (result) {
-                    .event => |ev| {
-                        // Dupe event name — it points into line_buf which we're about to clear
-                        if (current_event.len > 0) allocator.free(@constCast(current_event));
-                        current_event = allocator.dupe(u8, ev) catch "";
-                    },
-                    .delta => |text| {
-                        defer allocator.free(text);
-                        try accumulated.appendSlice(allocator, text);
-                        callback(ctx, root.StreamChunk.textDelta(text));
-                    },
-                    .usage => |tokens| output_tokens = tokens,
-                    .done => {
-                        line_buf.clearRetainingCapacity();
-                        break :outer;
-                    },
-                    .skip => {},
-                }
-                line_buf.clearRetainingCapacity();
-            } else {
-                try line_buf.append(allocator, byte);
-            }
-        }
-    }
-
-    // Free owned event string
-    if (current_event.len > 0) allocator.free(@constCast(current_event));
-
-    // Send final chunk
-    callback(ctx, root.StreamChunk.finalChunk());
-
-    // Drain remaining stdout to prevent deadlock on wait()
-    while (true) {
-        const n = file.read(&read_buf) catch break;
-        if (n == 0) break;
-    }
-
-    const term = child.wait() catch return error.CurlWaitError;
-    switch (term) {
-        .Exited => |code| if (code != 0) return error.CurlFailed,
-        else => return error.CurlFailed,
-    }
-
-    const content = if (accumulated.items.len > 0)
-        try allocator.dupe(u8, accumulated.items)
-    else
-        null;
-
-    // Use actual output_tokens if reported, otherwise estimate
-    const completion_tokens = if (output_tokens > 0)
-        output_tokens
-    else
-        @as(u32, @intCast((accumulated.items.len + 3) / 4));
-
-    return .{
-        .content = content,
-        .usage = .{ .completion_tokens = completion_tokens },
-        .model = "",
-    };
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Tests
-// ════════════════════════════════════════════════════════════════════════════
-
-test "parseSseLine valid delta" {
-    const allocator = std.testing.allocator;
-    const result = try parseSseLine(allocator, "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}");
-    switch (result) {
-        .delta => |text| {
-            defer allocator.free(text);
-            try std.testing.expectEqualStrings("Hello", text);
-        },
-        else => return error.TestUnexpectedResult,
-    }
+    _ = allocator; _ = url; _ = body; _ = headers; _ = callback; _ = ctx;
+    return error.NotSupported;
 }
 
 test "parseSseLine DONE sentinel" {

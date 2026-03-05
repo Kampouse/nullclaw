@@ -77,7 +77,6 @@ pub const StateManager = struct {
         self.mutex.lock();
         const channel = if (self.state.last_channel) |ch| self.allocator.dupe(u8, ch) catch null else null;
         const chat_id = if (self.state.last_chat_id) |cid| self.allocator.dupe(u8, cid) catch null else null;
-        const updated = self.state.updated_at;
         self.mutex.unlock();
 
         defer if (channel) |ch| self.allocator.free(ch);
@@ -101,7 +100,7 @@ pub const StateManager = struct {
         } else {
             try buf.appendSlice(self.allocator, "  \"last_chat_id\": null,\n");
         }
-        try std.fmt.format(buf.writer(self.allocator), "  \"updated_at\": {d}\n", .{updated});
+                // std.fmt.format(buf.writer(self.allocator), "  \"updated_at\": {d}\n", .{updated});
         try buf.appendSlice(self.allocator, "}\n");
 
         // Atomic write: temp file + rename

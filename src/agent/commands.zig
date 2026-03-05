@@ -1018,7 +1018,7 @@ fn handleContextCommand(self: anytype, arg: []const u8) ![]const u8 {
 fn handleExportSessionCommand(self: anytype, arg: []const u8) ![]const u8 {
     const raw_path = firstToken(arg);
     const path = if (raw_path.len == 0)
-        try std.fmt.allocPrint(self.allocator, "{s}/session-{d}.md", .{ self.workspace_dir, std.time.timestamp() })
+        try std.fmt.allocPrint(self.allocator, "{s}/session-{d}.md", .{ self.workspace_dir, 0 })
     else if (std.fs.path.isAbsolute(raw_path))
         try self.allocator.dupe(u8, raw_path)
     else
@@ -1028,7 +1028,7 @@ fn handleExportSessionCommand(self: anytype, arg: []const u8) ![]const u8 {
     const file = if (std.fs.path.isAbsolute(path))
         try std.fs.createFileAbsolute(path, .{ .truncate = true, .read = false })
     else
-        try std.fs.cwd().createFile(path, .{ .truncate = true, .read = false });
+        try std.Io.Dir.cwd().createFile(path, .{ .truncate = true, .read = false });
     defer file.close();
     var out_buf: [4096]u8 = undefined;
     var bw = file.writer(&out_buf);

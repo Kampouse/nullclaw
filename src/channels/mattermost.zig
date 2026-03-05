@@ -724,7 +724,7 @@ pub const MattermostChannel = struct {
         const path = std.fmt.allocPrint(
             self.allocator,
             "{s}/nullclaw_mattermost_{d}_{d}.bin",
-            .{ tmp_dir, std.time.timestamp(), counter },
+            .{ tmp_dir, 0, counter },
         ) catch return null;
         errdefer self.allocator.free(path);
 

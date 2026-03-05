@@ -74,7 +74,7 @@ pub const AuditEvent = struct {
     pub fn init(event_type: AuditEventType) AuditEvent {
         const id = @atomicRmw(u64, &next_id, .Add, 1, .monotonic);
         return .{
-            .timestamp_s = std.time.timestamp(),
+            .timestamp_s = 0,
             .event_id = id,
             .event_type = event_type,
         };
@@ -217,7 +217,7 @@ pub const AuditLogger = struct {
         try self.rotateIfNeeded();
 
         // Write JSON line to file
-        const file = try std.fs.cwd().createFile(self.log_path, .{
+        const file = try std.Io.Dir.cwd().createFile(self.log_path, .{
             .truncate = false,
         });
         defer file.close();
@@ -241,7 +241,7 @@ pub const AuditLogger = struct {
 
     /// Rotate log if it exceeds max size
     fn rotateIfNeeded(self: *const AuditLogger) !void {
-        const stat = std.fs.cwd().statFile(self.log_path) catch return;
+        const stat = std.Io.Dir.cwd().statFile(self.log_path) catch return;
         const size_mb = stat.size / (1024 * 1024);
         if (size_mb >= self.config.max_size_mb) {
             try self.rotate();
@@ -258,7 +258,7 @@ pub const AuditLogger = struct {
         while (i >= 1) : (i -= 1) {
             const old_name = std.fmt.bufPrint(&buf_old, "{s}.{d}.log", .{ self.log_path, i }) catch continue;
             const new_name = std.fmt.bufPrint(&buf_new, "{s}.{d}.log", .{ self.log_path, i + 1 }) catch continue;
-            std.fs.cwd().rename(old_name, new_name) catch |err| {
+            std.Io.Dir.cwd().rename(old_name, new_name) catch |err| {
                 // Not an error if old rotation file doesn't exist yet
                 if (err != error.FileNotFound) {
                     audit_log.err("audit log rotation rename {s} -> {s}: {}", .{ old_name, new_name, err });
@@ -268,7 +268,7 @@ pub const AuditLogger = struct {
 
         // Rename current log to .1
         const rotated = std.fmt.bufPrint(&buf_old, "{s}.1.log", .{self.log_path}) catch return;
-        std.fs.cwd().rename(self.log_path, rotated) catch |err| {
+        std.Io.Dir.cwd().rename(self.log_path, rotated) catch |err| {
             audit_log.err("audit log rotation failed to rename {s} -> {s}: {}", .{ self.log_path, rotated, err });
         };
     }

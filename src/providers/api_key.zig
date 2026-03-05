@@ -1,6 +1,17 @@
 const std = @import("std");
 const config_mod = @import("../config_types.zig");
 
+/// Helper for Zig 0.16.0 - get env var
+fn getEnvVarOwned(allocator: std.mem.Allocator, key: []const u8) ![]const u8 {
+    // Need null-terminated string for C getenv
+    const key_z = try allocator.dupeZ(u8, key);
+    defer allocator.free(key_z);
+    
+    const val_c = std.c.getenv(key_z) orelse return error.EnvironmentVariableNotFound;
+    const val_str = std.mem.span(val_c);
+    return allocator.dupe(u8, val_str);
+}
+
 /// Resolve API key for a provider from config and environment variables.
 ///
 /// Resolution order:
@@ -24,7 +35,7 @@ pub fn resolveApiKey(
     const env_candidates = providerEnvCandidates(provider_name);
     for (env_candidates) |env_var| {
         if (env_var.len == 0) break;
-        if (std.process.getEnvVarOwned(allocator, env_var)) |value| {
+        if (getEnvVarOwned(allocator, env_var)) |value| {
             const trimmed = std.mem.trim(u8, value, " \t\r\n");
             if (trimmed.len > 0) {
                 if (trimmed.ptr != value.ptr or trimmed.len != value.len) {
@@ -32,16 +43,16 @@ pub fn resolveApiKey(
                     allocator.free(value);
                     return duped;
                 }
-                return value;
-            }
-            allocator.free(value);
+                // Return mutable copy
+                    return try allocator.dupe(u8, value);
+                }
         } else |_| {}
     }
 
     // 3. Generic fallbacks
     const fallbacks = [_][]const u8{ "NULLCLAW_API_KEY", "API_KEY" };
     for (fallbacks) |env_var| {
-        if (std.process.getEnvVarOwned(allocator, env_var)) |value| {
+        if (getEnvVarOwned(allocator, env_var)) |value| {
             const trimmed = std.mem.trim(u8, value, " \t\r\n");
             if (trimmed.len > 0) {
                 if (trimmed.ptr != value.ptr or trimmed.len != value.len) {
@@ -49,7 +60,10 @@ pub fn resolveApiKey(
                     allocator.free(value);
                     return duped;
                 }
-                return value;
+                // Return mutable copy (value is []const u8, but we need []u8)
+                const mutable = try allocator.dupe(u8, value);
+                allocator.free(value);
+                return mutable;
             }
             allocator.free(value);
         } else |_| {}

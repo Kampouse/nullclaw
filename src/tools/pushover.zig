@@ -129,7 +129,8 @@ pub const PushoverTool = struct {
 
         const content = std.fs.cwd().readFileAlloc(allocator, env_path, 1_048_576) catch
             return error.EnvFileNotFound;
-        defer allocator.free(content);
+        // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
 
         var token: ?[]const u8 = null;
         var user_key: ?[]const u8 = null;

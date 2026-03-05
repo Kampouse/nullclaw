@@ -13,7 +13,10 @@ pub fn formatBytes(bytes: u64) struct { value: f64, unit: []const u8 } {
 
 /// Get current timestamp as ISO 8601 string
 pub fn timestamp(buf: []u8) []const u8 {
-    const epoch = std.time.timestamp();
+    // Use C library time in Zig 0.16.0
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const epoch = tv.sec;
     const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = @intCast(epoch) };
     const day = epoch_seconds.getEpochDay();
     const year_day = day.calculateYearDay();

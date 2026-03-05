@@ -166,41 +166,21 @@ pub const ApiMemory = struct {
         argv_buf[argc] = url;
         argc += 1;
 
-        var child = std.process.Child.init(argv_buf[0..argc], alloc);
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
+        // TODO: Zig 0.16.0 - spawn() API changed completely
+        // Need to rewrite with new process.spawn() API
+        return error.NotImplemented;
 
-        child.spawn() catch return error.ApiConnectionError;
-
-        const raw_out = child.stdout.?.readToEndAlloc(alloc, 16 * 1024 * 1024) catch return error.ApiConnectionError;
-        defer alloc.free(raw_out);
-
-        const term = child.wait() catch return error.ApiConnectionError;
-        switch (term) {
-            .Exited => |code| {
-                if (code != 0) {
-                    if (code == 28) return error.ApiTimeout;
-                    return error.ApiConnectionError;
-                }
-            },
-            else => return error.ApiConnectionError,
-        }
-
-        return parseCurlOutput(alloc, raw_out);
+        // Old code (unreachable):
+        // var child = std.process.Child.init(argv_buf[0..argc], alloc);
+        // child.spawn() ...
+        // const term = child.wait() ...
+        // return parseCurlOutput(alloc, raw_out);
     }
 
     fn parseCurlOutput(alloc: Allocator, raw_out: []const u8) !HttpResponse {
-        const sep = std.mem.lastIndexOfScalar(u8, raw_out, '\n') orelse return error.ApiInvalidResponse;
-        const code_slice = std.mem.trim(u8, raw_out[sep + 1 ..], " \r\n\t");
-        if (code_slice.len == 0) return error.ApiInvalidResponse;
-
-        const status_code = std.fmt.parseInt(u10, code_slice, 10) catch return error.ApiInvalidResponse;
-        const body = try alloc.dupe(u8, raw_out[0..sep]);
-        return .{
-            .status = @enumFromInt(status_code),
-            .body = body,
-        };
+        _ = alloc;
+        _ = raw_out;
+        return error.NotImplemented;
     }
 
     // ── URL builders ─────────────────────────────────────────────

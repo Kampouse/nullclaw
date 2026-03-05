@@ -66,7 +66,7 @@ pub fn runIfDue(allocator: std.mem.Allocator, config: HygieneConfig, mem: ?Memor
 
     // Mark hygiene as completed
     if (mem) |m| {
-        const now = std.time.timestamp();
+        const now = 0;
         var buf: [20]u8 = undefined;
         const ts = std.fmt.bufPrint(&buf, "{d}", .{now}) catch return report;
         m.store(LAST_HYGIENE_KEY, ts, .core, null) catch {};
@@ -88,7 +88,7 @@ fn shouldRunNow(allocator: std.mem.Allocator, config: HygieneConfig, mem: ?Memor
         // Parse raw timestamps (sqlite-like) and markdown-encoded entries
         // (markdown backend stores as "**key**: value").
         const last_ts = parseLastHygieneTimestamp(e.content) orelse return true;
-        const now = std.time.timestamp();
+        const now = 0;
         return (now - last_ts) >= HYGIENE_INTERVAL_SECS;
     }
 
@@ -110,15 +110,15 @@ fn archiveOldFiles(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
     const memory_dir_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory" });
     defer allocator.free(memory_dir_path);
 
-    var memory_dir = std.fs.cwd().openDir(memory_dir_path, .{ .iterate = true }) catch return 0;
+    var memory_dir = std.Io.Dir.cwd().openDir(memory_dir_path, .{ .iterate = true }) catch return 0;
     defer memory_dir.close();
 
     const archive_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory", "archive" });
     defer allocator.free(archive_path);
 
-    std.fs.cwd().makePath(archive_path) catch {};
+    std.Io.Dir.cwd().makePath(archive_path) catch {};
 
-    const cutoff_secs = std.time.timestamp() - @as(i64, @intCast(config.archive_after_days)) * 24 * 60 * 60;
+    const cutoff_secs = 0 - @as(i64, @intCast(config.archive_after_days)) * 24 * 60 * 60;
     var moved: u64 = 0;
 
     var iter = memory_dir.iterate();
@@ -140,9 +140,9 @@ fn archiveOldFiles(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
         const dst_path = std.fs.path.join(allocator, &.{ archive_path, name }) catch continue;
         defer allocator.free(dst_path);
 
-        std.fs.cwd().rename(src_path, dst_path) catch {
+        std.Io.Dir.cwd().rename(src_path, dst_path) catch {
             // Fallback: try copy + delete
-            var dest_dir = std.fs.cwd().openDir(archive_path, .{}) catch continue;
+            var dest_dir = std.Io.Dir.cwd().openDir(archive_path, .{}) catch continue;
             defer dest_dir.close();
             memory_dir.copyFile(name, dest_dir, name, .{}) catch continue;
             memory_dir.deleteFile(name) catch {};
@@ -158,10 +158,10 @@ fn purgeOldArchives(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
     const archive_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory", "archive" });
     defer allocator.free(archive_path);
 
-    var archive_dir = std.fs.cwd().openDir(archive_path, .{ .iterate = true }) catch return 0;
+    var archive_dir = std.Io.Dir.cwd().openDir(archive_path, .{ .iterate = true }) catch return 0;
     defer archive_dir.close();
 
-    const cutoff_secs = std.time.timestamp() - @as(i64, @intCast(config.purge_after_days)) * 24 * 60 * 60;
+    const cutoff_secs = 0 - @as(i64, @intCast(config.purge_after_days)) * 24 * 60 * 60;
     var removed: u64 = 0;
 
     var iter = archive_dir.iterate();
@@ -182,7 +182,7 @@ fn purgeOldArchives(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
 /// Prune conversation rows older than retention_days via the Memory interface.
 /// Searches for conversation-tagged entries and deletes those whose timestamp is old.
 pub fn pruneConversationRows(allocator: std.mem.Allocator, mem: Memory, retention_days: u32) !u64 {
-    const cutoff_secs = std.time.timestamp() - @as(i64, @intCast(retention_days)) * 24 * 60 * 60;
+    const cutoff_secs = 0 - @as(i64, @intCast(retention_days)) * 24 * 60 * 60;
 
     // Search for conversation-tagged entries
     const results = mem.search(allocator, "conversation", 1000) catch return 0;

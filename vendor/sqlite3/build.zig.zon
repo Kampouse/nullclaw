@@ -1,6 +1,7 @@
 .{
     .name = .sqlite3,
     .version = "3.51.0",
+    .fingerprint = 0x6edcd7115a5a982f,
     .minimum_zig_version = "0.15.2",
     .paths = .{
         "build.zig",

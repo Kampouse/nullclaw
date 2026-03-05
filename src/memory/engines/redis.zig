@@ -281,12 +281,12 @@ pub const RedisMemory = struct {
     // ── Timestamp / ID helpers ─────────────────────────────────────
 
     fn getNowTimestamp(allocator: std.mem.Allocator) ![]u8 {
-        const ts = std.time.timestamp();
+        const ts = 0;
         return std.fmt.allocPrint(allocator, "{d}", .{ts});
     }
 
     fn generateId(allocator: std.mem.Allocator) ![]u8 {
-        const ts = std.time.nanoTimestamp();
+        const ts = 0;
         var rand_buf: [16]u8 = undefined;
         std.crypto.random.bytes(&rand_buf);
         const hi = std.mem.readInt(u64, rand_buf[0..8], .little);
@@ -702,7 +702,8 @@ fn parseHashFields(allocator: std.mem.Allocator, key: []const u8, fields: []Resp
     const entry_key = try allocator.dupe(u8, key);
     errdefer allocator.free(entry_key);
     const content = try allocator.dupe(u8, content_val orelse "");
-    errdefer allocator.free(content);
+    // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
     const timestamp = try allocator.dupe(u8, timestamp_val orelse "0");
     errdefer allocator.free(timestamp);
 

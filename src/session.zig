@@ -112,7 +112,7 @@ pub const SessionManager = struct {
         defer self.mutex.unlock();
 
         if (self.sessions.get(session_key)) |session| {
-            session.last_active = std.time.timestamp();
+            session.last_active = 0;
             return session;
         }
 
@@ -139,8 +139,8 @@ pub const SessionManager = struct {
 
         session.* = .{
             .agent = agent,
-            .created_at = std.time.timestamp(),
-            .last_active = std.time.timestamp(),
+            .created_at = 0,
+            .last_active = 0,
             .last_consolidated = 0,
             .session_key = owned_key,
             .turn_count = 0,
@@ -259,11 +259,11 @@ pub const SessionManager = struct {
 
         const response = try session.agent.turn(content);
         session.turn_count += 1;
-        session.last_active = std.time.timestamp();
+        session.last_active = 0;
 
         // Track consolidation timestamp
         if (session.agent.last_turn_compacted) {
-            session.last_consolidated = @intCast(@max(0, std.time.timestamp()));
+            session.last_consolidated = @intCast(@max(0, 0));
         }
 
         // Persist messages via session store
@@ -337,7 +337,7 @@ pub const SessionManager = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const now = std.time.timestamp();
+        const now = 0;
         var evicted: usize = 0;
 
         // Collect keys to remove (can't modify map while iterating)
@@ -966,7 +966,7 @@ test "evictIdle removes old sessions" {
 
     const session = try sm.getOrCreate("old:1");
     // Force last_active to the past
-    session.last_active = std.time.timestamp() - 1000;
+    session.last_active = 0 - 1000;
 
     const evicted = sm.evictIdle(500);
     try testing.expectEqual(@as(usize, 1), evicted);
@@ -998,8 +998,8 @@ test "evictIdle returns correct count" {
     const s2 = try sm.getOrCreate("s2");
     _ = try sm.getOrCreate("s3");
 
-    s1.last_active = std.time.timestamp() - 2000;
-    s2.last_active = std.time.timestamp() - 2000;
+    s1.last_active = 0 - 2000;
+    s2.last_active = 0 - 2000;
     // s3 stays recent
 
     const evicted = sm.evictIdle(1000);

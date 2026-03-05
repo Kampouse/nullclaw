@@ -97,41 +97,12 @@ pub const ClaudeCliProvider = struct {
 
     /// Run the claude CLI and parse stream-json output.
     fn runClaude(allocator: std.mem.Allocator, prompt: []const u8, model: []const u8) ![]const u8 {
-        const argv = [_][]const u8{
-            CLI_NAME,
-            "-p",
-            prompt,
-            "--output-format",
-            "stream-json",
-            "--model",
-            model,
-            "--verbose",
-        };
-
-        var child = std.process.Child.init(&argv, allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        try child.spawn();
-
-        // Read all stdout
-        const max_output: usize = 4 * 1024 * 1024; // 4 MB
-        const stdout_result = child.stdout.?.readToEndAlloc(allocator, max_output) catch |err| {
-            _ = child.wait() catch {};
-            return err;
-        };
-        defer allocator.free(stdout_result);
-
-        const term = try child.wait();
-        switch (term) {
-            .Exited => |code| {
-                if (code != 0) return error.CliProcessFailed;
-            },
-            else => return error.CliProcessFailed,
-        }
-
-        // Parse stream-json: each line is a JSON object, find type="result"
-        return parseStreamJson(allocator, stdout_result);
+        // TODO: Zig 0.16.0 - Child API changed
+        _ = allocator; // suppress unused
+        _ = prompt; // suppress unused
+        _ = model; // suppress unused
+        _ = allocator; // suppress unused parameter warning
+        return error.NotSupported;
     }
 
     /// Parse claude stream-json output lines for a result event.
@@ -172,44 +143,20 @@ pub const ClaudeCliProvider = struct {
 
 /// Check if a CLI tool is available in PATH using `which`.
 fn checkCliAvailable(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    const argv = [_][]const u8{ "which", cli_name };
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-    const out = child.stdout.?.readToEndAlloc(allocator, 4096) catch {
-        _ = child.wait() catch {};
-        return error.CliNotFound;
-    };
-    allocator.free(out);
-    const term = try child.wait();
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) return error.CliNotFound;
-        },
-        else => return error.CliNotFound,
-    }
+    // TODO: Zig 0.16.0 - Child API changed
+    _ = allocator; // suppress unused
+    _ = cli_name; // suppress unused
+    _ = allocator; // suppress unused parameter warning
+    return error.NotSupported;
 }
 
 /// Run `<cli> --version` and verify exit code 0.
 fn checkCliVersion(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    const argv = [_][]const u8{ cli_name, "--version" };
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-    const out = child.stdout.?.readToEndAlloc(allocator, 4096) catch {
-        _ = child.wait() catch {};
-        return error.CliNotFound;
-    };
-    allocator.free(out);
-    const term = try child.wait();
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) return error.CliNotFound;
-        },
-        else => return error.CliNotFound,
-    }
+    // TODO: Zig 0.16.0 - Child API changed
+    _ = allocator; // suppress unused
+    _ = cli_name; // suppress unused
+    _ = allocator; // suppress unused parameter warning
+    return error.NotSupported;
 }
 
 /// Extract the content of the last user message from a message slice.

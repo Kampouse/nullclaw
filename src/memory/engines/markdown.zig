@@ -43,7 +43,7 @@ pub const MarkdownMemory = struct {
     }
 
     fn dailyPath(self: *const Self, allocator: std.mem.Allocator) ![]u8 {
-        const ts = std.time.timestamp();
+        const ts = 0;
         const epoch: u64 = @intCast(ts);
         const es = std.time.epoch.EpochSeconds{ .secs = epoch };
         const day = es.getEpochDay().calculateYearDay();
@@ -72,7 +72,7 @@ pub const MarkdownMemory = struct {
         // Open (or create) without truncation and seek to end to append.
         // This avoids the read-concat-rewrite pattern which loses data if
         // the process crashes between truncation and write completion.
-        const file = try std.fs.cwd().createFile(path, .{ .truncate = false, .read = true });
+        const file = try std.Io.Dir.cwd().createFile(path, .{ .truncate = false, .read = true });
         defer file.close();
 
         const stat = try file.stat();
@@ -173,7 +173,7 @@ pub const MarkdownMemory = struct {
             const root_path = try self.rootPath(allocator, candidate.filename);
             defer allocator.free(root_path);
 
-            const content = std.fs.cwd().readFileAlloc(allocator, root_path, 1024 * 1024) catch continue;
+            const content = std.Io.Dir.cwd().readFileAlloc(allocator, root_path, 1024 * 1024) catch continue;
             defer allocator.free(content);
 
             const canonical = std.fs.realpathAlloc(allocator, root_path) catch
@@ -192,7 +192,7 @@ pub const MarkdownMemory = struct {
 
         const md = try self.memoryDir(allocator);
         defer allocator.free(md);
-        if (std.fs.cwd().openDir(md, .{ .iterate = true })) |*dir_handle| {
+        if (std.Io.Dir.cwd().openDir(md, .{ .iterate = true })) |*dir_handle| {
             var dir = dir_handle.*;
             defer dir.close();
             var it = dir.iterate();
@@ -200,7 +200,7 @@ pub const MarkdownMemory = struct {
                 if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
                 const fpath = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ md, entry.name });
                 defer allocator.free(fpath);
-                if (std.fs.cwd().readFileAlloc(allocator, fpath, 1024 * 1024)) |content| {
+                if (std.Io.Dir.cwd().readFileAlloc(allocator, fpath, 1024 * 1024)) |content| {
                     defer allocator.free(content);
                     const fname = entry.name[0 .. entry.name.len - 3];
                     const entries = try parseEntries(content, fname, .daily, allocator);

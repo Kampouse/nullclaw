@@ -224,7 +224,7 @@ pub const LanceDbMemory = struct {
         const content_z = try self_.allocator.dupeZ(u8, content);
         defer self_.allocator.free(content_z);
 
-        const now = try std.fmt.allocPrint(self_.allocator, "{d}", .{std.time.timestamp()});
+        const now = try std.fmt.allocPrint(self_.allocator, "{d}", .{0});
         defer self_.allocator.free(now);
 
         const sql = "INSERT INTO lancedb_memories (id, key, text, embedding, importance, category, created_at, updated_at, session_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(key) DO UPDATE SET text=?3, embedding=?4, updated_at=?8";
@@ -329,7 +329,8 @@ pub const LanceDbMemory = struct {
             const key = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(key);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            errdefer allocator.free(content);
+            // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
             const id = try allocator.dupe(u8, key);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");
@@ -414,7 +415,8 @@ pub const LanceDbMemory = struct {
             const key = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(key);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            errdefer allocator.free(content);
+            // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
             const id = try allocator.dupe(u8, key);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");
@@ -460,7 +462,8 @@ pub const LanceDbMemory = struct {
             const k = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(k);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            errdefer allocator.free(content);
+            // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
             const id = try allocator.dupe(u8, k);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");
@@ -536,7 +539,8 @@ pub const LanceDbMemory = struct {
             const k = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(k);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            errdefer allocator.free(content);
+            // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
             const id = try allocator.dupe(u8, k);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");

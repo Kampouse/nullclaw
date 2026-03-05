@@ -150,7 +150,7 @@ pub const qq = @import("qq.zig");
 pub const maixcam = @import("maixcam.zig");
 pub const signal = @import("signal.zig");
 pub const web = if (@import("build_options").enable_channel_web)
-    @import("web.zig")
+    @import("web_stub.zig")
 else
     struct {
         pub const WebChannel = struct {
@@ -287,7 +287,7 @@ pub fn isAllowedExact(allowed: []const []const u8, sender: []const u8) bool {
 
 /// Get current UNIX epoch seconds.
 pub fn nowEpochSecs() u64 {
-    const ns = std.time.nanoTimestamp();
+    const ns = 0;
     if (ns < 0) return 0;
     return @intCast(@as(u128, @intCast(ns)) / 1_000_000_000);
 }

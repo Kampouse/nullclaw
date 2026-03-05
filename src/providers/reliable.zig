@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Options.debug_io; // For Zig 0.16.0 I/O
 const root = @import("root.zig");
 
 const Provider = root.Provider;
@@ -345,7 +346,7 @@ pub const ReliableProvider = struct {
 
                 if (attempt < self.max_retries) {
                     const wait = self.computeBackoff(backoff_ms, err_slice);
-                    std.Thread.sleep(wait * std.time.ns_per_ms);
+                    std.Io.sleep(io, .{ .nanoseconds = @as(i96, wait) * std.time.ns_per_ms }, .real) catch {};
                     backoff_ms = @min(backoff_ms *| 2, 10_000);
                 }
             }
@@ -379,7 +380,7 @@ pub const ReliableProvider = struct {
 
                 if (attempt < self.max_retries) {
                     const wait = self.computeBackoff(backoff_ms, err_slice);
-                    std.Thread.sleep(wait * std.time.ns_per_ms);
+                    std.Io.sleep(io, .{ .nanoseconds = @as(i96, wait) * std.time.ns_per_ms }, .real) catch {};
                     backoff_ms = @min(backoff_ms *| 2, 10_000);
                 }
             }

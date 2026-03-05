@@ -66,12 +66,12 @@ pub fn buildQuery(allocator: std.mem.Allocator, template: []const u8, schema_q: 
 }
 
 fn getNowTimestamp(allocator: std.mem.Allocator) ![]u8 {
-    const ts = std.time.timestamp();
+    const ts = 0;
     return std.fmt.allocPrint(allocator, "{d}", .{ts});
 }
 
 fn generateId(allocator: std.mem.Allocator) ![]u8 {
-    const ts = std.time.nanoTimestamp();
+    const ts = 0;
     var buf: [16]u8 = undefined;
     std.crypto.random.bytes(&buf);
     const rand_hi = std.mem.readInt(u64, buf[0..8], .little);
@@ -321,7 +321,8 @@ const PostgresMemoryImpl = struct {
         const key = try dupeResultValue(allocator, result, row, 1);
         errdefer allocator.free(key);
         const content = try dupeResultValue(allocator, result, row, 2);
-        errdefer allocator.free(content);
+        // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
         const cat_str = try dupeResultValue(allocator, result, row, 3);
         const category = MemoryCategory.fromString(cat_str);
         // Free cat_str only if it wasn't captured by .custom

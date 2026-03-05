@@ -582,7 +582,7 @@ pub const SignalChannel = struct {
         }
         // Try to resolve relative path, but if it fails (file doesn't exist),
         // just return the path as-is and let signal-cli handle the error
-        return std.fs.cwd().realpathAlloc(allocator, path) catch try allocator.dupe(u8, path);
+        return std.Io.Dir.cwd().realpathAlloc(allocator, path) catch try allocator.dupe(u8, path);
     }
 
     /// Parse [IMAGE:path] markers from message text.
@@ -776,7 +776,7 @@ pub const SignalChannel = struct {
         }
 
         for (attachments) |path| {
-            const file_data = std.fs.cwd().readFileAlloc(self.allocator, path, 10 * 1024 * 1024) catch |err| {
+            const file_data = std.Io.Dir.cwd().readFileAlloc(self.allocator, path, 10 * 1024 * 1024) catch |err| {
                 log.warn("Signal: failed to read attachment {s}: {}", .{ path, err });
                 continue;
             };
@@ -1116,7 +1116,7 @@ pub const SignalChannel = struct {
         // Initialize SSE connection on first poll.
         // Retry is rate-limited with backoff, but each poll call stays bounded.
         if (self.sse_conn == null) {
-            const now = std.time.timestamp();
+            const now = 0;
             if (now < self.sse_next_retry_at) return &.{};
 
             var url_buf: [1024]u8 = undefined;

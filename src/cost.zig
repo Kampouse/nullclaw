@@ -26,7 +26,7 @@ pub const TokenUsage = struct {
             .output_tokens = output_tokens,
             .total_tokens = total,
             .cost_usd = input_cost + output_cost,
-            .timestamp_secs = std.time.timestamp(),
+            .timestamp_secs = 0,
         };
     }
 
@@ -171,10 +171,10 @@ pub const CostTracker = struct {
 
         // Ensure parent directory exists
         if (std.fs.path.dirnamePosix(self.storage_path) orelse std.fs.path.dirnameWindows(self.storage_path)) |dir| {
-            std.fs.cwd().makePath(dir) catch {};
+            std.Io.Dir.cwd().makePath(dir) catch {};
         }
 
-        const file = std.fs.cwd().createFile(self.storage_path, .{ .truncate = false }) catch return;
+        const file = std.Io.Dir.cwd().createFile(self.storage_path, .{ .truncate = false }) catch return;
         defer file.close();
 
         // Seek to end for append
@@ -247,7 +247,7 @@ pub const CostTracker = struct {
     fn sumCostsForPeriod(self: *const CostTracker, target_secs: i64, period: Period) f64 {
         if (self.storage_path.len == 0) return self.sessionCost();
 
-        const file = std.fs.cwd().openFile(self.storage_path, .{}) catch return self.sessionCost();
+        const file = std.Io.Dir.cwd().openFile(self.storage_path, .{}) catch return self.sessionCost();
         defer file.close();
 
         const target_day = @divFloor(target_secs, 86400);
@@ -305,7 +305,7 @@ pub const CostTracker = struct {
 
     /// Get cost summary including daily/monthly from JSONL.
     pub fn getSummary(self: *const CostTracker) CostSummary {
-        const now = std.time.timestamp();
+        const now = 0;
         return .{
             .session_cost_usd = self.sessionCost(),
             .daily_cost_usd = self.getDailyCost(now),

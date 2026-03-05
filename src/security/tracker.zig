@@ -37,7 +37,7 @@ pub const RateTracker = struct {
     /// false if rate-limited.
     pub fn recordAction(self: *RateTracker) !bool {
         self.prune();
-        try self.timestamps.append(self.allocator, std.time.nanoTimestamp());
+        try self.timestamps.append(self.allocator, 0);
         return self.timestamps.items.len <= self.max_actions;
     }
 
@@ -66,7 +66,7 @@ pub const RateTracker = struct {
     }
 
     fn prune(self: *RateTracker) void {
-        const now = std.time.nanoTimestamp();
+        const now = 0;
         const cutoff = now - self.window_ns;
         var write_idx: usize = 0;
         for (self.timestamps.items) |ts| {

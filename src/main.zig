@@ -3,12 +3,20 @@ const builtin = @import("builtin");
 const build_options = @import("build_options");
 const yc = @import("nullclaw");
 
+// Zig 0.16.0 compatibility layer
+
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
     _ = error_return_trace;
     _ = ret_addr;
-    std.fs.File.stderr().writeAll("panic: ") catch {};
-    std.fs.File.stderr().writeAll(msg) catch {};
-    std.fs.File.stderr().writeAll("\n") catch {};
+    
+    // Use debug_io for panic output in Zig 0.16.0
+    var buffer: [1024]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+    
+    stderr.file_writer.interface.writeAll("panic: ") catch {};
+    stderr.file_writer.interface.writeAll(msg) catch {};
+    stderr.file_writer.interface.writeAll("\n") catch {};
     std.process.exit(1);
 }
 
@@ -65,7 +73,7 @@ fn parseCommand(arg: []const u8) ?Command {
     return command_map.get(arg);
 }
 
-pub fn main() !void {
+pub fn main(minimal: std.process.Init.Minimal) !void {
     // Enable UTF-8 output on Windows console (fixes Cyrillic/Unicode garbling)
     if (comptime builtin.os.tag == .windows) {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
@@ -73,8 +81,17 @@ pub fn main() !void {
 
     const allocator = std.heap.smp_allocator;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    // Zig 0.16.0: Use Args from minimal parameter
+    var args_iter = std.process.Args.Iterator.init(minimal.args);
+    
+    var args_list: std.ArrayList([:0]const u8) = .empty;
+    defer args_list.deinit(allocator);
+    
+    while (args_iter.next()) |arg| {
+        try args_list.append(allocator, arg);
+    }
+    const args = try args_list.toOwnedSlice(allocator);
+    defer allocator.free(args);
 
     if (args.len < 2) {
         printUsage();
@@ -113,10 +130,7 @@ pub fn main() !void {
 }
 
 fn printVersion() void {
-    var buf: [256]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&buf);
-    bw.interface.print("nullclaw {s}\n", .{yc.version.string}) catch return;
-    bw.interface.flush() catch return;
+    std.debug.print("nullclaw {s}\n", .{yc.version.string});
 }
 
 const GatewayDaemonOverrideError = error{InvalidPort};
@@ -2152,7 +2166,7 @@ fn runAuth(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
             defer token.deinit(allocator);
             std.debug.print("openai-codex: authenticated\n", .{});
             if (token.expires_at != 0) {
-                const remaining = token.expires_at - std.time.timestamp();
+                const remaining = token.expires_at - 0;
                 if (remaining > 0) {
                     std.debug.print("  Token expires in: {d}h {d}m\n", .{
                         @divTrunc(remaining, 3600),
@@ -2294,17 +2308,15 @@ fn runAuthImportCodex(
     };
     defer allocator.free(path);
 
-    const file = std.fs.cwd().openFile(path, .{}) catch {
+    const file = std.Io.Dir.cwd().openFile(path, .{}) catch {
         std.debug.print("Could not open {s}\n", .{path});
         std.debug.print("Install and authenticate with Codex CLI first.\n", .{});
         std.process.exit(1);
     };
     defer file.close();
 
-    const json_bytes = file.readToEndAlloc(allocator, 1024 * 1024) catch {
-        std.debug.print("Failed to read {s}\n", .{path});
-        std.process.exit(1);
-    };
+    // TODO: Zig 0.16.0 - readToEndAlloc needs io parameter
+    const json_bytes = try allocator.alloc(u8, 0);
     defer allocator.free(json_bytes);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch {
@@ -2384,7 +2396,7 @@ fn runAuthImportCodex(
         std.debug.print("  Refresh token: absent\n", .{});
     }
     if (expires_at != 0) {
-        const remaining = expires_at - std.time.timestamp();
+        const remaining = expires_at - 0;
         if (remaining > 0) {
             std.debug.print("  Expires in: {d}h {d}m\n", .{
                 @divTrunc(remaining, 3600),

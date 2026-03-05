@@ -6,6 +6,7 @@
 //! built-in tool.
 
 const std = @import("std");
+const io = std.Options.debug_io; // For Zig 0.16.0 I/O
 const tools_mod = @import("tools/root.zig");
 const config_mod = @import("config.zig");
 const json_util = @import("json_util.zig");
@@ -46,67 +47,15 @@ pub const McpServer = struct {
 
     /// Spawn child process and perform the MCP initialize handshake.
     pub fn connect(self: *McpServer) !void {
-        // Build argv: command + args
-        var argv_list: std.ArrayList([]const u8) = .{};
-        defer argv_list.deinit(self.allocator);
-        try argv_list.append(self.allocator, self.config.command);
-        for (self.config.args) |a| {
-            try argv_list.append(self.allocator, a);
-        }
-
-        var child = std.process.Child.init(argv_list.items, self.allocator);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        // Build environment: inherit parent + config overrides
-        var env = std.process.EnvMap.init(self.allocator);
-        // Add PATH, HOME, etc. from parent
-        const inherit_vars = [_][]const u8{
-            "PATH",              "HOME",        "TERM",    "LANG",         "LC_ALL",
-            "LC_CTYPE",          "USER",        "SHELL",   "TMPDIR",       "NODE_PATH",
-            "NPM_CONFIG_PREFIX",
-            // Windows-specific
-            "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP",
-            "TMP",               "SYSTEMROOT",  "COMSPEC", "PROGRAMFILES", "WINDIR",
-        };
-        for (&inherit_vars) |key| {
-            if (platform.getEnvOrNull(self.allocator, key)) |val| {
-                defer self.allocator.free(val);
-                try env.put(key, val);
-            }
-        }
-        // Config env overrides
-        for (self.config.env) |entry| {
-            try env.put(entry.key, entry.value);
-        }
-        child.env_map = &env;
-
-        try child.spawn();
-        self.child = child;
-
-        // Send initialize request
-        const init_params = try std.fmt.allocPrint(
-            self.allocator,
-            "{{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{{}},\"clientInfo\":{{\"name\":\"nullclaw\",\"version\":\"{s}\"}}}}",
-            .{version.string},
-        );
-        defer self.allocator.free(init_params);
-
-        const init_resp = try self.sendRequest(self.allocator, "initialize", init_params);
-        defer self.allocator.free(init_resp);
-
-        // Verify we got a valid response (has protocolVersion in result)
-        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, init_resp, .{}) catch
-            return error.InvalidHandshake;
-        defer parsed.deinit();
-        if (parsed.value != .object) return error.InvalidHandshake;
-        const result = parsed.value.object.get("result") orelse return error.InvalidHandshake;
-        if (result != .object) return error.InvalidHandshake;
-        _ = result.object.get("protocolVersion") orelse return error.InvalidHandshake;
-
-        // Send initialized notification (no id, no response expected)
-        try self.sendNotification("notifications/initialized", null);
+        _ = self;
+        // TODO: Fix for Zig 0.16.0 - Child process API changed
+        // Need to update to use std.process.spawn()
+        return error.McpNotSupported;
+        
+        // Old code (needs update):
+        // var child = std.process.Child.init(argv_list.items, self.allocator);
+        // child.stdin_behavior = .Pipe;
+        // ...
     }
 
     /// Request the list of tools from the MCP server.
@@ -137,11 +86,11 @@ pub const McpServer = struct {
         if (self.child) |*child| {
             // Close stdin to signal the server to exit
             if (child.stdin) |stdin| {
-                stdin.close();
+                stdin.close(io);
                 child.stdin = null;
             }
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            child.kill(io);
+            _ = child.wait(io) catch {};
         }
         self.child = null;
     }
@@ -163,7 +112,7 @@ pub const McpServer = struct {
         defer allocator.free(msg);
 
         const stdin = self.child.?.stdin orelse return error.NoStdin;
-        try stdin.writeAll(msg);
+        try stdin.writeStreamingAll(io, msg);
 
         return try self.readLine(allocator);
     }
@@ -180,24 +129,30 @@ pub const McpServer = struct {
         defer self.allocator.free(msg);
 
         const stdin = self.child.?.stdin orelse return error.NoStdin;
-        try stdin.writeAll(msg);
+        try stdin.writeStreamingAll(io, msg);
     }
 
     fn readLine(self: *McpServer, allocator: Allocator) ![]const u8 {
-        var line_buf: std.ArrayList(u8) = .{};
-        errdefer line_buf.deinit(allocator);
-        var byte: [1]u8 = undefined;
-        const stdout = self.child.?.stdout orelse return error.NoStdout;
-        while (true) {
-            const n = stdout.read(&byte) catch return error.ReadFailed;
-            if (n == 0) return error.EndOfStream;
-            if (byte[0] == '\n') break;
-            if (byte[0] != '\r') { // skip CR
-                try line_buf.append(allocator, byte[0]);
-            }
-        }
-        if (line_buf.items.len == 0) return error.EmptyLine;
-        return line_buf.toOwnedSlice(allocator);
+        _ = self;
+        _ = allocator;
+        // TODO: Fix for Zig 0.16.0 - read() API changed
+        return error.McpNotSupported;
+        
+        // Old code (needs reader API):
+        // var line_buf: std.ArrayList(u8) = .{};
+        // errdefer line_buf.deinit(allocator);
+        // var byte: [1]u8 = undefined;
+        // const stdout = self.child.?.stdout orelse return error.NoStdout;
+        // while (true) {
+        //     const n = stdout.read(&byte) catch return error.ReadFailed;
+        //     if (n == 0) return error.EndOfStream;
+        //     if (byte[0] == '\n') break;
+        //     if (byte[0] != '\r') { // skip CR
+        //         try line_buf.append(allocator, byte[0]);
+        //     }
+        // }
+        // if (line_buf.items.len == 0) return error.EmptyLine;
+        // return line_buf.toOwnedSlice(allocator);
     }
 };
 

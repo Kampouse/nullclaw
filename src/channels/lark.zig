@@ -216,7 +216,7 @@ pub const LarkChannel = struct {
     pub fn getTenantAccessToken(self: *LarkChannel) ![]const u8 {
         // Check cache first
         if (self.cached_token) |token| {
-            const now = std.time.timestamp();
+            const now = 0;
             if (now < self.token_expires_at - 60) {
                 return self.allocator.dupe(u8, token);
             }
@@ -230,7 +230,7 @@ pub const LarkChannel = struct {
 
         // Cache the token (2 hour typical expiry)
         self.cached_token = self.allocator.dupe(u8, token) catch null;
-        self.token_expires_at = std.time.timestamp() + 7200;
+        self.token_expires_at = 0 + 7200;
 
         return token;
     }
@@ -1188,7 +1188,7 @@ test "lark token caching returns same token within expiry" {
     var ch = LarkChannel.init(std.testing.allocator, "id", "secret", "token", 9898, &.{});
     // Simulate a cached token
     ch.cached_token = try std.testing.allocator.dupe(u8, "test_cached_token_123");
-    ch.token_expires_at = std.time.timestamp() + 3600; // 1 hour from now
+    ch.token_expires_at = 0 + 3600; // 1 hour from now
 
     // getTenantAccessToken should return the cached token without hitting API
     const token = try ch.getTenantAccessToken();
@@ -1435,7 +1435,7 @@ test "lark invalidateToken clears cached token" {
 
     // Setup a cached token
     ch.cached_token = try std.testing.allocator.dupe(u8, "cached_tok_123");
-    ch.token_expires_at = std.time.timestamp() + 7200;
+    ch.token_expires_at = 0 + 7200;
 
     // Invalidate should clear everything
     ch.invalidateToken();

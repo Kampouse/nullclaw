@@ -547,21 +547,8 @@ fn curlPostOAuth(allocator: std.mem.Allocator, url: []const u8, body: []const u8
         url,
     });
 
-    var child = std.process.Child.init(argv.items, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch return error.CurlReadError;
-
-    const term = child.wait() catch return error.CurlWaitError;
-    switch (term) {
-        .Exited => |code| if (code != 0) return error.CurlFailed,
-        else => return error.CurlFailed,
-    }
-
-    return stdout;
+    // TODO: Zig 0.16.0 - Child API changed, use std.process.spawn()
+    return error.NotSupported;
 }
 
 pub const AuthHeader = struct {

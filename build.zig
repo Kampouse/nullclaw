@@ -42,13 +42,38 @@ fn hashWithCanonicalLineEndings(bytes: []const u8) [std.crypto.hash.sha2.Sha256.
 
 fn verifyVendoredSqliteHashes(b: *std.Build) !void {
     const max_vendor_file_size = 16 * 1024 * 1024;
+    _ = max_vendor_file_size; // Used in error messages
     for (VENDORED_SQLITE_HASHES) |entry| {
         const file_path = b.pathFromRoot(entry.path);
         defer b.allocator.free(file_path);
 
-        const bytes = std.fs.cwd().readFileAlloc(b.allocator, file_path, max_vendor_file_size) catch |err| {
-            std.log.err("failed to read {s}: {s}", .{ file_path, @errorName(err) });
-            return err;
+        const bytes = blk: {
+            const file = std.Io.Dir.cwd().openFile(b.graph.io, file_path, .{}) catch |err| {
+                std.log.err("failed to open {s}: {s}", .{ file_path, @errorName(err) });
+                return err;
+            };
+            defer file.close(b.graph.io);
+            
+            // Get file size
+            const stat = file.stat(b.graph.io) catch |err| {
+                std.log.err("failed to stat {s}: {s}", .{ file_path, @errorName(err) });
+                return err;
+            };
+            
+            // Read entire file
+            const content = b.allocator.alloc(u8, stat.size) catch |err| {
+                std.log.err("failed to allocate memory for {s}: {s}", .{ file_path, @errorName(err) });
+                return err;
+            };
+            
+            var buffer: [1024 * 1024]u8 = undefined;
+            var reader_stream = file.reader(b.graph.io, &buffer);
+            reader_stream.interface.readSliceAll(content) catch |err| {
+                std.log.err("failed to read {s}: {s}", .{ file_path, @errorName(err) });
+                return err;
+            };
+            
+            break :blk content;
         };
         defer b.allocator.free(bytes);
 
@@ -432,19 +457,22 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("build_options", build_options_module);
-        if (sqlite3) |lib| {
-            module.linkLibrary(lib);
-        }
-        if (enable_postgres) {
-            module.linkSystemLibrary("pq", .{});
-        }
-        if (enable_channel_web) {
-            const ws_dep = b.dependency("websocket", .{
-                .target = target,
-                .optimize = optimize,
-            });
-            module.addImport("websocket", ws_dep.module("websocket"));
-        }
+        
+        // Web channel disabled - requires external websocket library
+        // Can be re-enabled by adding websocket dependency to build.zig.zon
+        // if (enable_channel_web) {
+        //     const ws_dep = b.dependency("websocket", .{
+        //         .target = target,
+        //         .optimize = optimize,
+        //     });
+        //     module.addImport("websocket", ws_dep.module("websocket"));
+        // }
+        // Add zquic for QUIC protocol support
+        const zquic_dep = b.dependency("zquic", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        module.addImport("zquic", zquic_dep.module("zquic"));
         break :blk module;
     };
 
@@ -468,7 +496,7 @@ pub fn build(b: *std.Build) void {
     // Link SQLite on the compile step (not the module)
     if (!is_wasi) {
         if (sqlite3) |lib| {
-            exe.linkLibrary(lib);
+            exe.root_module.linkLibrary(lib);
         }
         if (enable_postgres) {
             exe.root_module.linkSystemLibrary("pq", .{});
@@ -508,7 +536,7 @@ pub fn build(b: *std.Build) void {
     if (!is_wasi) {
         const lib_tests = b.addTest(.{ .root_module = lib_mod.? });
         if (sqlite3) |lib| {
-            lib_tests.linkLibrary(lib);
+            lib_tests.root_module.linkLibrary(lib);
         }
         if (enable_postgres) {
             lib_tests.root_module.linkSystemLibrary("pq", .{});

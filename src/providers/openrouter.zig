@@ -484,29 +484,12 @@ pub const OpenRouterProvider = struct {
 
 /// HTTP GET via curl subprocess with auth header.
 fn curlGet(allocator: std.mem.Allocator, url: []const u8, auth_hdr: []const u8) ![]u8 {
-    var child = std.process.Child.init(&.{
-        "curl", "-s", "-H", auth_hdr, url,
-    }, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch return error.CurlReadError;
-
-    const term = child.wait() catch return error.CurlWaitError;
-    switch (term) {
-        .Exited => |code| if (code != 0) {
-            allocator.free(stdout);
-            return error.CurlFailed;
-        },
-        else => {
-            allocator.free(stdout);
-            return error.CurlFailed;
-        },
-    }
-
-    return stdout;
+    // TODO: Zig 0.16.0 - Child API changed
+    _ = allocator; // suppress unused
+    _ = url; // suppress unused
+    _ = auth_hdr; // suppress unused
+    _ = allocator; // suppress unused parameter warning
+    return error.NotSupported;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -133,7 +133,7 @@ pub const PairingGuard = struct {
         // Check brute force lockout
         if (self.failed_count >= MAX_PAIR_ATTEMPTS) {
             if (self.lockout_time) |locked_at| {
-                const elapsed = std.time.nanoTimestamp() - locked_at;
+                const elapsed = 0 - locked_at;
                 if (elapsed < PAIR_LOCKOUT_NS) {
                     return error.LockedOut;
                 }
@@ -166,7 +166,7 @@ pub const PairingGuard = struct {
         // Increment failed attempts
         self.failed_count += 1;
         if (self.failed_count >= MAX_PAIR_ATTEMPTS) {
-            self.lockout_time = std.time.nanoTimestamp();
+            self.lockout_time = 0;
         }
 
         return null;
@@ -505,7 +505,7 @@ test "regenerate pairing code creates new code and resets lockout counters" {
     @memcpy(&first_copy, first);
 
     guard.failed_count = 5;
-    guard.lockout_time = std.time.nanoTimestamp();
+    guard.lockout_time = 0;
 
     const second = guard.regeneratePairingCode() orelse return error.TestUnexpectedResult;
     try std.testing.expect(second.len == 6);
@@ -519,7 +519,7 @@ test "set pairing code enforces provided 6-digit value" {
     defer guard.deinit();
 
     guard.failed_count = 3;
-    guard.lockout_time = std.time.nanoTimestamp();
+    guard.lockout_time = 0;
 
     const fixed = try guard.setPairingCode("123456");
     try std.testing.expectEqualStrings("123456", fixed);
