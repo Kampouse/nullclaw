@@ -13,6 +13,8 @@ const config_mutator = @import("../config_mutator.zig");
 const context_tokens = @import("context_tokens.zig");
 const max_tokens_resolver = @import("max_tokens.zig");
 
+const io = std.Options.debug_io;
+
 const SlashCommand = struct {
     name: []const u8,
     arg: []const u8,
