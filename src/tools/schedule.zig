@@ -43,8 +43,11 @@ pub const ScheduleTool = struct {
             // Format job list
             var buf: std.ArrayList(u8) = .empty;
             defer buf.deinit(allocator);
-            const w = buf.writer(allocator);
-            try w.print("Scheduled jobs ({d}):\n", .{jobs.len});
+            var fmt_buf: [256]u8 = undefined;
+            
+            try buf.appendSlice(allocator, "Scheduled jobs (");
+            try buf.appendSlice(allocator, try std.fmt.bufPrint(&fmt_buf, "{d}", .{jobs.len}));
+            try buf.appendSlice(allocator, "):\n");
             for (jobs) |job| {
                 const flags: []const u8 = blk: {
                     if (job.paused and job.one_shot) break :blk " [paused, one-shot]";
@@ -53,13 +56,16 @@ pub const ScheduleTool = struct {
                     break :blk "";
                 };
                 const status = job.last_status orelse "pending";
-                try w.print("- {s} | {s} | status={s}{s} | cmd: {s}\n", .{
-                    job.id,
-                    job.expression,
-                    status,
-                    flags,
-                    job.command,
-                });
+                try buf.appendSlice(allocator, "- ");
+                try buf.appendSlice(allocator, job.id);
+                try buf.appendSlice(allocator, " | ");
+                try buf.appendSlice(allocator, job.expression);
+                try buf.appendSlice(allocator, " | status=");
+                try buf.appendSlice(allocator, status);
+                try buf.appendSlice(allocator, flags);
+                try buf.appendSlice(allocator, " | cmd: ");
+                try buf.appendSlice(allocator, job.command);
+                try buf.appendSlice(allocator, "\n");
             }
             return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
         }

@@ -71,17 +71,32 @@ pub const MemoryListTool = struct {
         const shown = @min(limit, filtered_total);
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(allocator);
-        const w = out.writer(allocator);
-        try w.print("Memory entries: showing {d}/{d}\n", .{ shown, filtered_total });
+        var buf: [128]u8 = undefined;
+        
+        try out.appendSlice(allocator, "Memory entries: showing ");
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "{d}/{d}\n", .{ shown, filtered_total }));
 
         var written: usize = 0;
         for (entries) |entry| {
             if (!include_internal and isInternalEntry(entry)) continue;
             if (written >= shown) break;
-            try w.print("  {d}. {s} [{s}] {s}\n", .{ written + 1, entry.key, entry.category.toString(), entry.timestamp });
+            try out.appendSlice(allocator, "  ");
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "{d}", .{written + 1}));
+            try out.appendSlice(allocator, ". ");
+            try out.appendSlice(allocator, entry.key);
+            try out.appendSlice(allocator, " [");
+            try out.appendSlice(allocator, entry.category.toString());
+            try out.appendSlice(allocator, "] ");
+            try out.appendSlice(allocator, entry.timestamp);
+            try out.appendSlice(allocator, "\n");
             if (include_content) {
                 const preview = truncateUtf8(entry.content, 120);
-                try w.print("     {s}{s}\n", .{ preview, if (entry.content.len > preview.len) "..." else "" });
+                try out.appendSlice(allocator, "     ");
+                try out.appendSlice(allocator, preview);
+                if (entry.content.len > preview.len) {
+                    try out.appendSlice(allocator, "...");
+                }
+                try out.appendSlice(allocator, "\n");
             }
             written += 1;
         }
