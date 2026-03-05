@@ -5,6 +5,8 @@ const tools_mod = @import("../tools/root.zig");
 const Tool = tools_mod.Tool;
 const skills_mod = @import("../skills.zig");
 
+const io = std.Options.debug_io;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // System Prompt Builder
 // ═══════════════════════════════════════════════════════════════════════════
@@ -57,8 +59,9 @@ fn openWorkspaceFileWithGuards(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
     filename: []const u8,
-    io: std.Io,
+    io_param: std.Io,
 ) ?GuardedWorkspaceFileOpen {
+    _ = io_param; // TODO: Use for file operations
     if (!isWorkspaceBootstrapFilenameSafe(filename)) return null;
 
     // TODO: Zig 0.16.0 - realpathAlloc not available
