@@ -1638,7 +1638,6 @@ fn handleStopCommand(self: anytype) ![]const u8 {
         const mutex_io = std.Options.debug_io;
         manager.mutex.lock(mutex_io) catch {
             // Mutex lock failed - continue without counting running tasks
-            return try std.fmt.allocPrint(self.allocator, "Pending: {d}", .{pending_count});
         };
         {
             var it = manager.tasks.iterator();
@@ -1648,7 +1647,7 @@ fn handleStopCommand(self: anytype) ![]const u8 {
                 if (state.status == .running) running += 1;
             }
         }
-        manager.mutex.unlock();
+        manager.mutex.unlock(mutex_io);
         if (running > 0) {
             if (cleared_pending) {
                 return try std.fmt.allocPrint(
