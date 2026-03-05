@@ -2,6 +2,8 @@ const std = @import("std");
 const zig_builtin = @import("builtin");
 const platform = @import("platform.zig");
 
+const io = std.Options.debug_io;
+
 // Skills — user-defined capabilities loaded from disk.
 //
 // Each skill lives in ~/.nullclaw/workspace/skills/<name>/ with:
@@ -488,13 +490,13 @@ pub fn listSkills(allocator: std.mem.Allocator, workspace_dir: []const u8) ![]Sk
         skills_list.deinit(allocator);
     }
 
-    const dir = std.Io.Dir.cwd().openDir(skills_dir_path, .{ .iterate = true }) catch {
+    const dir = std.Io.Dir.cwd().openDir(io, skills_dir_path, .{ .iterate = true }) catch {
         // Directory doesn't exist or can't be opened — return empty
         return try skills_list.toOwnedSlice(allocator);
     };
     // Note: openDir returns by value in Zig 0.15, no need to dereference
     var dir_mut = dir;
-    defer dir_mut.close();
+    defer dir_mut.close(io);
 
     var it = dir_mut.iterate();
     while (try it.next()) |entry| {
