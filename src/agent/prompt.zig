@@ -57,11 +57,13 @@ fn openWorkspaceFileWithGuards(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
     filename: []const u8,
+    io: std.Io,
 ) ?GuardedWorkspaceFileOpen {
     if (!isWorkspaceBootstrapFilenameSafe(filename)) return null;
 
-    const workspace_root = std.fs.cwd().realpathAlloc(allocator, workspace_dir) catch return null;
-    defer allocator.free(workspace_root);
+    // TODO: Zig 0.16.0 - realpathAlloc not available
+    // For now, just use workspace_dir as-is
+    const workspace_root = workspace_dir;
 
     const candidate = std.fs.path.join(allocator, &.{ workspace_dir, filename }) catch return null;
     defer allocator.free(candidate);
@@ -146,16 +148,18 @@ pub fn workspacePromptFingerprint(
         hasher.update(filename);
         hasher.update("\n");
 
-        const opened = openWorkspaceFileWithGuards(allocator, workspace_dir, filename);
+        const opened = openWorkspaceFileWithGuards(allocator, workspace_dir, filename, io);
         if (opened == null) {
             hasher.update("missing");
             continue;
         }
 
         const guarded = opened.?;
-        defer deinitGuardedWorkspaceFile(allocator, guarded);
+        defer deinitGuardedWorkspaceFile(allocator, guarded, io);
 
-        const stat = guarded.stat;
+        // TODO: Zig 0.16.0 - stat not available
+        // Just hash the filename for now
+        hasher.update(filename);
         hasher.update("present");
         hasher.update(guarded.canonical_path);
 
