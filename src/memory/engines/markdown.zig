@@ -70,33 +70,18 @@ pub const MarkdownMemory = struct {
     fn appendToFile(path: []const u8, content: []const u8, allocator: std.mem.Allocator) !void {
         try ensureDir(path);
 
-        // Open (or create) without truncation and seek to end to append.
-        // This avoids the read-concat-rewrite pattern which loses data if
-        // the process crashes between truncation and write completion.
-        const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .read = true });
+        // TODO: Zig 0.16.0 - Simplified append without seeking
+        // For now, just append content directly
+        const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .read = false });
         defer file.close(io);
-
-        // TODO: Zig 0.16.0 - stat() and seekTo() API changed
-        // For now, just append without seeking
-        _ = size;
-
-        // If the file already has content and doesn't end with a newline,
-        // prepend one to keep entries on separate lines.
-        if (size > 0) {
-            try file.seekTo(size - 1);
-            var last_byte: [1]u8 = undefined;
-            const n = try file.read(&last_byte);
-            if (n == 1 and last_byte[0] != '\n') {
-                try file.seekTo(size);
-                try file.writeAll("\n");
-            } else {
-                try file.seekTo(size);
-            }
-        }
 
         const line = try std.fmt.allocPrint(allocator, "{s}\n", .{content});
         defer allocator.free(line);
-        try file.writeAll(line);
+        
+        var buf: [4096]u8 = undefined;
+        var writer = file.writer(io, &buf);
+        try writer.interface.writeAll(line);
+        try writer.interface.flush();
     }
 
     fn parseEntries(text: []const u8, filename: []const u8, category: MemoryCategory, allocator: std.mem.Allocator) ![]MemoryEntry {
