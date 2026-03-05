@@ -245,36 +245,55 @@ pub fn formatToolResults(allocator: std.mem.Allocator, results: []const ToolExec
     try buf.appendSlice(allocator, "[Tool results]\n");
     for (results) |result| {
         const status_str = if (result.success) "ok" else "error";
-        try std.fmt.format(buf.writer(allocator), "<tool_result name=\"{s}\" status=\"{s}\">\n{s}\n</tool_result>\n", .{
+        // TODO: Zig 0.16.0 - writer() API changed, use allocPrint instead
+        const formatted = try std.fmt.allocPrint(allocator, "<tool_result name=\"{s}\" status=\"{s}\">\n{s}\n</tool_result>\n", .{
             result.name,
             status_str,
             result.output,
         });
+        defer allocator.free(formatted);
+        try buf.appendSlice(allocator, formatted);
     }
 
     return try buf.toOwnedSlice(allocator);
 }
+
 /// Build tool use instructions for the system prompt.
 pub fn buildToolInstructions(allocator: std.mem.Allocator, tools: anytype) ![]const u8 {
-    // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
-    // For now, return minimal stub
     var buf: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer buf.deinit(allocator);
-    
+    defer buf.deinit(allocator);
+
     try buf.appendSlice(allocator, "\n## Tool Use Protocol\n\n");
-    try buf.appendSlice(allocator, "Use tools by wrapping JSON in tags.\n\n");
+    try buf.appendSlice(allocator, "To use a tool, you MUST wrap a JSON object in [TOOL_CALL][/TOOL_CALL] tags.\n");
+    try buf.appendSlice(allocator, "The JSON object MUST contain exactly two fields: \"name\" (string) and \"arguments\" (object).\n\n");
+    try buf.appendSlice(allocator, "Example:\n```\n[TOOL_CALL]\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n[/TOOL_CALL]\n```\n\n");
+    try buf.appendSlice(allocator, "CRITICAL RULES:\n");
+    try buf.appendSlice(allocator, "1. ONLY use the format above. NEVER use <invoke>, <function>, or other XML-like formats.\n");
+    try buf.appendSlice(allocator, "2. Output actual tags -- never describe steps or give examples.\n");
+    try buf.appendSlice(allocator, "3. The internal content MUST be valid JSON. No trailing commas, no unquoted keys.\n\n");
+    try buf.appendSlice(allocator, "You may use multiple tool calls in a single response. ");
+    try buf.appendSlice(allocator, "After tool execution, results appear in <tool_result> tags. ");
+    try buf.appendSlice(allocator, "Continue reasoning with the results until you can give a final answer.\n\n");
+    try buf.appendSlice(allocator, "Prefer memory tools (memory_recall, memory_list, memory_store, memory_forget) for assistant memory tasks instead of shell/sqlite commands.\n\n");
     try buf.appendSlice(allocator, "### Available Tools\n\n");
-    
+
     for (tools) |t| {
-        var tool_buf: [512]u8 = undefined;
-        try buf.appendSlice(allocator, try std.fmt.bufPrint(&tool_buf, "**{s}**: {s}\n\n", .{
+        const line = try std.fmt.allocPrint(allocator, "**{s}**: {s}\nParameters: `{s}`\n\n", .{
             t.name(),
             t.description(),
-        }));
+            t.parametersJson(),
+        });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
     }
 
     return try buf.toOwnedSlice(allocator);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Structured Tool Call Conversion
+// ═══════════════════════════════════════════════════════════════════════════
+
 const ToolCall = providers.ToolCall;
 
 /// Convert structured tool calls from a ChatResponse (provider-native format)
@@ -323,7 +342,8 @@ pub const DispatcherKind = enum {
 /// Returns true if the text starts with `{` (after trimming whitespace) and contains `"tool_calls"`.
 /// This is a lightweight heuristic — full JSON parsing happens in parseNativeToolCalls.
 pub fn isNativeJsonFormat(text: []const u8) bool {
-    const trimmed = std.mem.trimLeft(u8, text, " \n\r\t");
+    // TODO: Zig 0.16.0 - trimLeft removed, use trim instead
+    const trimmed = std.mem.trim(u8, text, " \n\r\t");
     if (trimmed.len == 0 or trimmed[0] != '{') return false;
     return std.mem.indexOf(u8, trimmed, "\"tool_calls\"") != null;
 }
@@ -474,20 +494,22 @@ pub fn parseNativeToolCalls(
 pub fn formatNativeToolResults(allocator: std.mem.Allocator, results: []const ToolExecutionResult) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
 
-    try w.writeAll("[");
+    try buf.append(allocator, '[');
     for (results, 0..) |result, i| {
-        if (i > 0) try w.writeAll(",");
+        if (i > 0) try buf.append(allocator, ',');
         const tc_id = result.tool_call_id orelse "unknown";
 
         // Serialize content as a JSON string value
-        try std.fmt.format(w, "{{\"role\":\"tool\",\"tool_call_id\":{f},\"content\":{f}}}", .{
-            std.json.fmt(tc_id, .{}),
-            std.json.fmt(result.output, .{}),
+        // TODO: Zig 0.16.0 - writer() API changed, use allocPrint instead
+        const formatted = try std.fmt.allocPrint(allocator, "{{\"role\":\"tool\",\"tool_call_id\":{s},\"content\":{s}}}", .{
+            tc_id,
+            result.output,
         });
+        defer allocator.free(formatted);
+        try buf.appendSlice(allocator, formatted);
     }
-    try w.writeAll("]");
+    try buf.append(allocator, ']');
 
     return try buf.toOwnedSlice(allocator);
 }
@@ -510,26 +532,25 @@ pub fn buildAssistantHistoryWithToolCalls(
 ) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
 
     if (response_text.len > 0) {
-        try w.writeAll(response_text);
-        try w.writeByte('\n');
+        try buf.appendSlice(allocator, response_text);
+        try buf.append(allocator, '\n');
     }
 
     for (parsed_calls) |call| {
-        try w.writeAll("<tool_call>\n");
+        try buf.appendSlice(allocator, " \n");
         const name_json = try std.json.Stringify.valueAlloc(allocator, call.name, .{});
         defer allocator.free(name_json);
-        try w.writeAll("{\"name\": ");
-        try w.writeAll(name_json);
-        try w.writeAll(", \"arguments\": ");
-        try w.writeAll(call.arguments_json);
-        try w.writeByte('}');
-        try w.writeAll("\n</tool_call>\n");
+        try buf.appendSlice(allocator, "{\"name\": ");
+        try buf.appendSlice(allocator, name_json);
+        try buf.appendSlice(allocator, ", \"arguments\": ");
+        try buf.appendSlice(allocator, call.arguments_json);
+        try buf.append(allocator, '}');
+        try buf.appendSlice(allocator, "\n \n");
     }
 
-    return buf.toOwnedSlice(allocator);
+    return try buf.toOwnedSlice(allocator);
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────
@@ -816,8 +837,7 @@ fn parseFunctionTagCall(allocator: std.mem.Allocator, inner: []const u8) !Parsed
 
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer args_buf.deinit(allocator);
-    const w = args_buf.writer(allocator);
-    try w.writeByte('{');
+    try args_buf.append(allocator, '{');
 
     var remaining = body;
     var first = true;
@@ -834,7 +854,7 @@ fn parseFunctionTagCall(allocator: std.mem.Allocator, inner: []const u8) !Parsed
         const value_end_pos = std.mem.indexOf(u8, value_start, param_close) orelse break;
         const value = std.mem.trim(u8, value_start[0..value_end_pos], " \t\r\n");
 
-        if (!first) try w.writeByte(',');
+        if (!first) try args_buf.append(allocator, ',');
         first = false;
 
         // Write "key": "value" with JSON string escaping via Stringify.valueAlloc
@@ -842,14 +862,14 @@ fn parseFunctionTagCall(allocator: std.mem.Allocator, inner: []const u8) !Parsed
         defer allocator.free(key_json);
         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
         defer allocator.free(val_json);
-        try w.writeAll(key_json);
-        try w.writeByte(':');
-        try w.writeAll(val_json);
+        try args_buf.appendSlice(allocator, key_json);
+        try args_buf.append(allocator, ':');
+        try args_buf.appendSlice(allocator, val_json);
 
         remaining = value_start[value_end_pos + param_close.len ..];
     }
 
-    try w.writeByte('}');
+    try args_buf.append(allocator, '}');
 
     const args_json = try args_buf.toOwnedSlice(allocator);
     errdefer allocator.free(args_json);
@@ -900,8 +920,7 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer args_buf.deinit(allocator);
-    const w = args_buf.writer(allocator);
-    try w.writeByte('{');
+    try args_buf.append(allocator, '{');
 
     var remaining = invoke_body;
     var first = true;
@@ -930,21 +949,21 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
         const value_end_pos = std.mem.indexOf(u8, value_start, param_close) orelse break;
         const value = std.mem.trim(u8, value_start[0..value_end_pos], " \t\r\n");
 
-        if (!first) try w.writeByte(',');
+        if (!first) try args_buf.append(allocator, ',');
         first = false;
 
         const key_json = try std.json.Stringify.valueAlloc(allocator, key, .{});
         defer allocator.free(key_json);
         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
         defer allocator.free(val_json);
-        try w.writeAll(key_json);
-        try w.writeByte(':');
-        try w.writeAll(val_json);
+        try args_buf.appendSlice(allocator, key_json);
+        try args_buf.append(allocator, ':');
+        try args_buf.appendSlice(allocator, val_json);
 
         remaining = value_start[value_end_pos + param_close.len ..];
     }
 
-    try w.writeByte('}');
+    try args_buf.append(allocator, '}');
 
     const args_json = try args_buf.toOwnedSlice(allocator);
     errdefer allocator.free(args_json);
@@ -1007,8 +1026,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
     // 2. Greedy Parameter Collection
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer args_buf.deinit(allocator);
-    const w = args_buf.writer(allocator);
-    try w.writeByte('{');
+    try args_buf.append(allocator, '{');
 
     var first = true;
     var remaining = inner;
@@ -1049,15 +1067,15 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
                     const value = std.mem.trim(u8, val_start[0..val_end], " \t\r\n");
 
                     if (!found_keys.contains(key)) {
-                        if (!first) try w.writeByte(',');
+                        if (!first) try args_buf.append(allocator, ',');
                         first = false;
                         const key_json = try std.json.Stringify.valueAlloc(allocator, key, .{});
                         defer allocator.free(key_json);
                         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
                         defer allocator.free(val_json);
-                        try w.writeAll(key_json);
-                        try w.writeByte(':');
-                        try w.writeAll(val_json);
+                        try args_buf.appendSlice(allocator, key_json);
+                        try args_buf.append(allocator, ':');
+                        try args_buf.appendSlice(allocator, val_json);
                         try found_keys.put(key, {});
                     }
                     search_idx = absolute_ps + 15 + q_end + 1 + tag_end + 1 + val_end + p_close.len;
@@ -1085,15 +1103,15 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
                 if (std.mem.indexOfScalar(u8, val_start, '"')) |val_q_end| {
                     const value = val_start[0..val_q_end];
                     if (!found_keys.contains(key) and !std.mem.eql(u8, key, "name") and !std.mem.eql(u8, key, "arguments")) {
-                        if (!first) try w.writeByte(',');
+                        if (!first) try args_buf.append(allocator, ',');
                         first = false;
                         const key_json = try std.json.Stringify.valueAlloc(allocator, key, .{});
                         defer allocator.free(key_json);
                         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
                         defer allocator.free(val_json);
-                        try w.writeAll(key_json);
-                        try w.writeByte(':');
-                        try w.writeAll(val_json);
+                        try args_buf.appendSlice(allocator, key_json);
+                        try args_buf.append(allocator, ':');
+                        try args_buf.appendSlice(allocator, val_json);
                         try found_keys.put(key, {});
                     }
                     search_idx = absolute_q1 + 1 + q2 + 1 + i + 1 + val_q_end + 1;
@@ -1104,7 +1122,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
         search_idx = absolute_q1 + 1;
     }
 
-    try w.writeByte('}');
+    try args_buf.append(allocator, '}');
 
     const args_json = try args_buf.toOwnedSlice(allocator);
     errdefer allocator.free(args_json);

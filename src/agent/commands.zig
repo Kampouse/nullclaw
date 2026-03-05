@@ -2142,26 +2142,31 @@ pub fn composeFinalReply(
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
 
     if (show_reasoning) {
-        try w.writeAll("Reasoning:\n");
-        try w.writeAll(reasoning_content.?);
-        try w.writeAll("\n\n");
+        try out.appendSlice(self.allocator, "Reasoning:\n");
+        try out.appendSlice(self.allocator, reasoning_content.?);
+        try out.appendSlice(self.allocator, "\n\n");
     }
-    try w.writeAll(base_text);
+    try out.appendSlice(self.allocator, base_text);
 
     switch (self.usage_mode) {
         .off => {},
-        .tokens => try w.print("\n\n[usage] total_tokens={d}", .{usage.total_tokens}),
-        .full => try w.print(
-            "\n\n[usage] prompt={d} completion={d} total={d} session_total={d}",
-            .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens, self.total_tokens },
-        ),
-        .cost => try w.print(
-            "\n\n[usage] prompt={d} completion={d} total={d} (cost estimate unavailable)",
-            .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens },
-        ),
+        .tokens => {
+            const fmt = try std.fmt.allocPrint(self.allocator, "\n\n[usage] total_tokens={d}", .{usage.total_tokens});
+            defer self.allocator.free(fmt);
+            try out.appendSlice(self.allocator, fmt);
+        },
+        .full => {
+            const fmt = try std.fmt.allocPrint(self.allocator, "\n\n[usage] prompt={d} completion={d} total={d} session_total={d}", .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens, self.total_tokens });
+            defer self.allocator.free(fmt);
+            try out.appendSlice(self.allocator, fmt);
+        },
+        .cost => {
+            const fmt = try std.fmt.allocPrint(self.allocator, "\n\n[usage] prompt={d} completion={d} total={d} (cost estimate unavailable)", .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens });
+            defer self.allocator.free(fmt);
+            try out.appendSlice(self.allocator, fmt);
+        },
     }
 
     return try out.toOwnedSlice(self.allocator);

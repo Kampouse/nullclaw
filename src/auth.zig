@@ -6,6 +6,7 @@
 //! - Device Authorization Grant flow (RFC 8628)
 
 const std = @import("std");
+const util = @import("util.zig");
 const io = std.Options.debug_io;
 // Zig 0.16.0 file reading helper
 fn readFileAlloc(allocator: std.mem.Allocator, file_io: std.Io, file: std.Io.File, max_size: usize) ![]u8 {
@@ -13,20 +14,20 @@ fn readFileAlloc(allocator: std.mem.Allocator, file_io: std.Io, file: std.Io.Fil
     const stat = try file.stat(file_io);
     const size = @as(usize, @intCast(stat.size));
     if (size > max_size) return error.FileTooBig;
-    
+
     // const buffer = try allocator.alloc(u8, size); // unused
     // errdefer allocator.free(buffer); // buffer not allocated
-    
+
     // var read_buffer: [4096]u8 = undefined; // unused
     // var reader = file.reader(file_io, &read_buffer); // unused
-    
-        // var total_read: usize = 0; // unused
-        // while (total_read < size) {
-        // TODO: Zig 0.16.0 - reader.read API
-        // if (n == 0) break; // n is undeclared
-        // total_read += n;
+
+    // var total_read: usize = 0; // unused
+    // while (total_read < size) {
+    // TODO: Zig 0.16.0 - reader.read API
+    // if (n == 0) break; // n is undeclared
+    // total_read += n;
     // }
-    
+
     // return buffer[0..total_read]; // total_read undefined
     // }
 
@@ -36,7 +37,6 @@ fn readFileAlloc(allocator: std.mem.Allocator, file_io: std.Io, file: std.Io.Fil
 
 const platform = @import("platform.zig");
 const json_util = @import("json_util.zig");
-
 
 fn timestamp() i64 {
     // TODO: Zig 0.16.0 - timeval API changed
@@ -60,7 +60,7 @@ pub const PkceChallenge = struct {
 /// SHA-256(verifier) → base64url (no padding) challenge.
 pub fn generatePkce(allocator: std.mem.Allocator) !PkceChallenge {
     var random_bytes: [64]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    util.randomBytes(&random_bytes);
 
     // base64url-encode the random bytes → verifier (86 chars for 64 bytes, no padding)
     const verifier = try base64UrlEncodeAlloc(allocator, &random_bytes);

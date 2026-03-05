@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const platform = @import("../platform.zig");
@@ -194,7 +195,7 @@ test "buildSystemPrompt includes AGENTS operational guidance" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("AGENTS.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
         defer f.close();
         try f.writeAll("Session Startup\n- Read SOUL.md");
     }
@@ -232,7 +233,7 @@ test "buildSystemPrompt blocks AGENTS symlink escape outside workspace" {
     var outside_tmp = std.testing.tmpDir(.{});
     defer outside_tmp.cleanup();
 
-    try outside_tmp.dir.writeFile(.{ .sub_path = "outside-agents.md", .data = "outside-secret-rules" });
+    try outside_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "outside-agents.md", .data = "outside-secret-rules" });
     const outside_path = try outside_tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(outside_path);
     const outside_agents = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "outside-agents.md" });
@@ -392,7 +393,7 @@ fn appendSkillsSection(
 
 /// Append a human-readable UTC date/time section derived from the system clock.
 fn appendDateTimeSection(w: anytype) !void {
-    const timestamp = std.time.timestamp();
+    const timestamp = util.timestampUnix();
     const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
     const epoch_day = epoch_seconds.getEpochDay();
     const year_day = epoch_day.calculateYearDay();
@@ -566,7 +567,7 @@ test "buildSystemPrompt injects memory.md when MEMORY.md is absent" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("memory.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "memory.md", .{});
         defer f.close();
         try f.writeAll("alt-memory");
     }
@@ -592,7 +593,7 @@ test "buildSystemPrompt injects BOOTSTRAP.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("BOOTSTRAP.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "BOOTSTRAP.md", .{});
         defer f.close();
         try f.writeAll("bootstrap-welcome-line");
     }
@@ -616,7 +617,7 @@ test "buildSystemPrompt injects HEARTBEAT.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("HEARTBEAT.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "HEARTBEAT.md", .{});
         defer f.close();
         try f.writeAll("- heartbeat-check-item");
     }
@@ -640,7 +641,7 @@ test "buildSystemPrompt injects IDENTITY.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("IDENTITY.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
         defer f.close();
         try f.writeAll("- **Name:** identity-test-bot");
     }
@@ -664,7 +665,7 @@ test "buildSystemPrompt injects USER.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("USER.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close();
         try f.writeAll("- **Name:** user-test\n- **Timezone:** UTC");
     }
@@ -688,7 +689,7 @@ test "workspacePromptFingerprint is stable when files are unchanged" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("SOUL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{});
         defer f.close();
         try f.writeAll("soul-v1");
     }
@@ -706,7 +707,7 @@ test "workspacePromptFingerprint changes when tracked file changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("SOUL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{});
         defer f.close();
         try f.writeAll("short");
     }
@@ -717,7 +718,7 @@ test "workspacePromptFingerprint changes when tracked file changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("SOUL.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("longer-content-after-change");
     }
@@ -731,7 +732,7 @@ test "workspacePromptFingerprint changes when MEMORY.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("MEMORY.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
         defer f.close();
         try f.writeAll("memory-v1");
     }
@@ -742,7 +743,7 @@ test "workspacePromptFingerprint changes when MEMORY.md changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("MEMORY.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("memory-v2-updated");
     }
@@ -756,7 +757,7 @@ test "workspacePromptFingerprint changes when memory.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("memory.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "memory.md", .{});
         defer f.close();
         try f.writeAll("alt-memory-v1");
     }
@@ -767,7 +768,7 @@ test "workspacePromptFingerprint changes when memory.md changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("memory.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "memory.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("alt-memory-v2-updated");
     }
@@ -781,7 +782,7 @@ test "workspacePromptFingerprint changes when BOOTSTRAP.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("BOOTSTRAP.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "BOOTSTRAP.md", .{});
         defer f.close();
         try f.writeAll("bootstrap-v1");
     }
@@ -792,7 +793,7 @@ test "workspacePromptFingerprint changes when BOOTSTRAP.md changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("BOOTSTRAP.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "BOOTSTRAP.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("bootstrap-v2-updated");
     }
@@ -806,7 +807,7 @@ test "workspacePromptFingerprint changes when HEARTBEAT.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("HEARTBEAT.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "HEARTBEAT.md", .{});
         defer f.close();
         try f.writeAll("- check-1");
     }
@@ -817,7 +818,7 @@ test "workspacePromptFingerprint changes when HEARTBEAT.md changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("HEARTBEAT.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "HEARTBEAT.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("- check-2-updated");
     }
@@ -831,7 +832,7 @@ test "workspacePromptFingerprint changes when IDENTITY.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("IDENTITY.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
         defer f.close();
         try f.writeAll("- **Name:** v1");
     }
@@ -842,7 +843,7 @@ test "workspacePromptFingerprint changes when IDENTITY.md changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("IDENTITY.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("- **Name:** v2-updated");
     }
@@ -856,7 +857,7 @@ test "workspacePromptFingerprint changes when AGENTS.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("AGENTS.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
         defer f.close();
         try f.writeAll("startup-v1");
     }
@@ -867,7 +868,7 @@ test "workspacePromptFingerprint changes when AGENTS.md changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("AGENTS.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("startup-v2-updated");
     }
@@ -881,7 +882,7 @@ test "workspacePromptFingerprint changes when USER.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("USER.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close();
         try f.writeAll("- **Name:** v1");
     }
@@ -892,7 +893,7 @@ test "workspacePromptFingerprint changes when USER.md changes" {
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile("USER.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("- **Name:** v2-updated");
     }
@@ -906,13 +907,13 @@ test "buildSystemPrompt includes both MEMORY.md and memory.md when distinct" {
     defer tmp.cleanup();
 
     {
-        const primary = try tmp.dir.createFile("MEMORY.md", .{});
+        const primary = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
         defer primary.close();
         try primary.writeAll("primary-memory");
     }
 
     var has_distinct_case_files = true;
-    const alt = tmp.dir.createFile("memory.md", .{ .exclusive = true }) catch |err| switch (err) {
+    const alt = tmp.dir.createFile(std.Options.debug_io, "memory.md", .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => blk: {
             has_distinct_case_files = false;
             break :blk null;
@@ -971,11 +972,11 @@ test "appendSkillsSection renders summary XML for always=false skill" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makePath("skills/greeter");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/greeter");
 
     // always defaults to false — should render as summary XML
     {
-        const f = try tmp.dir.createFile("skills/greeter/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/greeter/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"greeter\", \"version\": \"1.0.0\", \"description\": \"Greets the user\", \"author\": \"dev\"}");
     }
@@ -1005,9 +1006,9 @@ test "appendSkillsSection escapes XML attributes in summary output" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/xml-escape");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/xml-escape");
     {
-        const f = try tmp.dir.createFile("skills/xml-escape/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/xml-escape/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"xml-escape\", \"description\": \"Use \\\"quotes\\\" & <tags>\"}");
     }
@@ -1032,9 +1033,9 @@ test "appendSkillsSection supports markdown-only installed skill" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/md-only");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/md-only");
     {
-        const f = try tmp.dir.createFile("skills/md-only/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/md-only/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Markdown only skill");
     }
@@ -1059,16 +1060,16 @@ test "appendSkillsSection renders full instructions for always=true skill" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makePath("skills/commit");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/commit");
 
     // always=true skill with instructions
     {
-        const f = try tmp.dir.createFile("skills/commit/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/commit/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"commit\", \"description\": \"Git commit helper\", \"always\": true}");
     }
     {
-        const f = try tmp.dir.createFile("skills/commit/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/commit/SKILL.md", .{});
         defer f.close();
         try f.writeAll("Always stage before committing.");
     }
@@ -1096,24 +1097,24 @@ test "appendSkillsSection renders mixed always=true and always=false" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makePath("skills/full-skill");
-    try tmp.dir.makePath("skills/lazy-skill");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/full-skill");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/lazy-skill");
 
     // always=true skill
     {
-        const f = try tmp.dir.createFile("skills/full-skill/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/full-skill/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"full-skill\", \"description\": \"Full loader\", \"always\": true}");
     }
     {
-        const f = try tmp.dir.createFile("skills/full-skill/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/full-skill/SKILL.md", .{});
         defer f.close();
         try f.writeAll("Full instructions here.");
     }
 
     // always=false skill (default)
     {
-        const f = try tmp.dir.createFile("skills/lazy-skill/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/lazy-skill/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"lazy-skill\", \"description\": \"Lazy loader\"}");
     }
@@ -1143,11 +1144,11 @@ test "appendSkillsSection renders unavailable skill with missing deps" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makePath("skills/docker-deploy");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/docker-deploy");
 
     // Skill requiring nonexistent binary and env
     {
-        const f = try tmp.dir.createFile("skills/docker-deploy/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/docker-deploy/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"docker-deploy\", \"description\": \"Deploy with docker\", \"requires_bins\": [\"nullclaw_fake_docker_xyz\"], \"requires_env\": [\"NULLCLAW_FAKE_TOKEN_XYZ\"]}");
     }
@@ -1176,16 +1177,16 @@ test "appendSkillsSection unavailable always=true skill renders in XML not full"
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makePath("skills/broken-always");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/broken-always");
 
     // always=true but requires nonexistent binary — should be unavailable
     {
-        const f = try tmp.dir.createFile("skills/broken-always/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/broken-always/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"broken-always\", \"description\": \"Broken always skill\", \"always\": true, \"requires_bins\": [\"nullclaw_nonexistent_xyz_aaa\"]}");
     }
     {
-        const f = try tmp.dir.createFile("skills/broken-always/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/broken-always/SKILL.md", .{});
         defer f.close();
         try f.writeAll("These instructions should NOT appear in prompt.");
     }
@@ -1212,16 +1213,16 @@ test "installSkill end-to-end appears in buildSystemPrompt" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
 
     {
-        const f = try tmp.dir.createFile("source/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"e2e-installed-skill\", \"description\": \"Installed via installSkill\"}");
     }
     {
-        const f = try tmp.dir.createFile("source/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.md", .{});
         defer f.close();
         try f.writeAll("Follow the installed skill instructions.");
     }

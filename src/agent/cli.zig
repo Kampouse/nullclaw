@@ -372,50 +372,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
         agent.stream_ctx = @ptrCast(&stream_ctx);
     }
 
-    const stdin = std.Io.File.stdin();
-    var line_buf: [4096]u8 = undefined;
-
-    while (true) {
-        try w.print("> ", .{});
-        try w.flush();
-
-        // Read a line from stdin byte-by-byte
-        var pos: usize = 0;
-        while (pos < line_buf.len) {
-            const n = stdin.read(line_buf[pos .. pos + 1]) catch return;
-            if (n == 0) return; // EOF (Ctrl+D)
-            if (line_buf[pos] == '\n') break;
-            pos += 1;
-        }
-        const line = line_buf[0..pos];
-
-        if (line.len == 0) continue;
-        if (cli_mod.CliChannel.isQuitCommand(line)) return;
-
-        // Append to history
-        repl_history.append(allocator, allocator.dupe(u8, line) catch continue) catch {};
-
-        const response = agent.turn(line) catch |err| {
-            if (err == error.ProviderDoesNotSupportVision) {
-                try w.print("Error: The current provider does not support image input. Switch to a vision-capable provider or remove [IMAGE:] attachments.\n", .{});
-            } else if (err == error.AllProvidersFailed) {
-                try w.print("Error: {}\n", .{err});
-                try maybePrintAllProvidersFailedHint(allocator, w, cfg.default_provider);
-            } else {
-                try w.print("Error: {}\n", .{err});
-            }
-            try w.flush();
-            continue;
-        };
-        defer allocator.free(response);
-
-        if (supports_streaming) {
-            try w.print("\n\n", .{});
-        } else {
-            try w.print("\n{s}\n\n", .{response});
-        }
-        try w.flush();
-    }
+    // TODO: Zig 0.16.0 - stdin.read() API changed, stubbed for now
+    return;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

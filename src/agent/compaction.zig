@@ -325,7 +325,7 @@ const HeadingInfo = struct {
 };
 
 fn parseHeadingLine(line: []const u8) ?HeadingInfo {
-    const trimmed_left = std.mem.trimLeft(u8, line, " \t");
+    const trimmed_left = std.mem.trim(u8, line, " \t");
     if (trimmed_left.len < 4) return null;
 
     var level: u8 = 0;
@@ -372,7 +372,7 @@ fn extractNamedSection(
 
     var lines = std.mem.splitScalar(u8, content, '\n');
     while (lines.next()) |line| {
-        const left_trimmed = std.mem.trimLeft(u8, line, " \t");
+        const left_trimmed = std.mem.trim(u8, line, " \t");
         if (std.mem.startsWith(u8, left_trimmed, "```")) {
             in_code_block = !in_code_block;
             if (in_section) {
@@ -458,49 +458,20 @@ fn pathStartsWith(path: []const u8, prefix: []const u8) bool {
 fn openWorkspaceAgentsFileGuarded(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
-) ?std.fs.File {
-    const workspace_root = std.fs.cwd().realpathAlloc(allocator, workspace_dir) catch return null;
-    defer allocator.free(workspace_root);
-
-    const agents_candidate = std.fs.path.join(allocator, &.{ workspace_root, "AGENTS.md" }) catch return null;
-    defer allocator.free(agents_candidate);
-
-    const agents_canonical = std.fs.cwd().realpathAlloc(allocator, agents_candidate) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return null,
-    };
-    defer allocator.free(agents_canonical);
-
-    if (!pathStartsWith(agents_canonical, workspace_root)) return null;
-    return std.fs.openFileAbsolute(agents_canonical, .{}) catch null;
+) ?std.Io.File {
+    _ = allocator;
+    _ = workspace_dir;
+    // TODO: Zig 0.16.0 - realpathAlloc and fs APIs changed, stubbed for now
+    return null;
 }
 
 fn readWorkspaceContextForSummary(
     allocator: std.mem.Allocator,
     workspace_dir: ?[]const u8,
 ) ![]u8 {
-    const dir = workspace_dir orelse return try allocator.dupe(u8, "");
-    const file = openWorkspaceAgentsFileGuarded(allocator, dir) orelse return try allocator.dupe(u8, "");
-    defer file.close();
-
-    const content = file.readToEndAlloc(allocator, MAX_AGENTS_FILE_BYTES) catch return try allocator.dupe(u8, "");
-    defer allocator.free(content);
-
-    const sections = try extractSections(allocator, content, &.{ "Session Startup", "Red Lines" });
-    defer allocator.free(sections);
-    if (sections.len == 0) return try allocator.dupe(u8, "");
-
-    const safe_content = if (sections.len > MAX_WORKSPACE_CONTEXT_CHARS)
-        try std.fmt.allocPrint(allocator, "{s}\n...[truncated]...", .{sections[0..MAX_WORKSPACE_CONTEXT_CHARS]})
-    else
-        try allocator.dupe(u8, sections);
-    defer allocator.free(safe_content);
-
-    return try std.fmt.allocPrint(
-        allocator,
-        "\n\n<workspace-critical-rules>\n{s}\n</workspace-critical-rules>",
-        .{safe_content},
-    );
+    _ = workspace_dir;
+    // TODO: Zig 0.16.0 - readToEndAlloc and file APIs changed, stubbed for now
+    return try allocator.dupe(u8, "");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -716,7 +687,7 @@ test "readWorkspaceContextForSummary wraps AGENTS critical sections" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("AGENTS.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
         defer f.close();
         try f.writeAll(
             \\## Session Startup

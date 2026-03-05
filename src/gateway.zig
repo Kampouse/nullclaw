@@ -11,6 +11,7 @@
 //! Uses std.http.Server (built-in, no external deps).
 
 const std = @import("std");
+const util = @import("util.zig");
 const build_options = @import("build_options");
 const health = @import("health.zig");
 const Config = @import("config.zig").Config;
@@ -1055,7 +1056,7 @@ fn verifySlackSignature(
     if (provided_hex.len != 64) return false;
 
     const ts = std.fmt.parseInt(i64, ts_trimmed, 10) catch return false;
-    const now = std.time.timestamp();
+    const now = util.timestampUnix();
     const delta = if (now >= ts) now - ts else ts - now;
     if (delta > 300) return false; // 5-minute replay window
 
@@ -4141,7 +4142,7 @@ test "verifySlackSignature accepts valid signature" {
     const secret = "slack_signing_secret";
 
     var ts_buf: [32]u8 = undefined;
-    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{std.time.timestamp()}) catch unreachable;
+    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{util.timestampUnix()}) catch unreachable;
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
@@ -4169,7 +4170,7 @@ test "verifySlackSignature rejects stale timestamp" {
     const secret = "slack_signing_secret";
 
     var ts_buf: [32]u8 = undefined;
-    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{std.time.timestamp() - 900}) catch unreachable;
+    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{util.timestampUnix() - 900}) catch unreachable;
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
@@ -4231,7 +4232,7 @@ test "hasSlackHttpEndpoint respects mode and webhook_path" {
 
 test "findSlackConfigForRequest selects account by verified signature" {
     const body = "{\"type\":\"event_callback\",\"event\":{\"type\":\"message\",\"channel\":\"C1\",\"user\":\"U1\",\"text\":\"hi\"}}";
-    const ts_val = std.time.timestamp();
+    const ts_val = util.timestampUnix();
     var ts_buf: [32]u8 = undefined;
     const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{ts_val}) catch unreachable;
 

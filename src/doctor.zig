@@ -866,7 +866,7 @@ test "checkDaemonState parses valid JSON state" {
         \\{"status": "running", "updated_at": 9999999999, "components": {"scheduler": {"status": "ok"}, "channel:telegram": {"status": "ok"}}}
     ;
     {
-        const file = try tmp.dir.createFile("daemon_state.json", .{});
+        const file = try tmp.dir.createFile(std.Options.debug_io, "daemon_state.json", .{});
         try file.writeAll(state_content);
         file.close();
     }

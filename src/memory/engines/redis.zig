@@ -4,6 +4,7 @@
 //! Designed for distributed memory sharing across multiple nullclaw instances.
 
 const std = @import("std");
+const util = @import("../../util.zig");
 const root = @import("../root.zig");
 const Memory = root.Memory;
 const MemoryCategory = root.MemoryCategory;
@@ -288,7 +289,7 @@ pub const RedisMemory = struct {
     fn generateId(allocator: std.mem.Allocator) ![]u8 {
         const ts = 0;
         var rand_buf: [16]u8 = undefined;
-        std.crypto.random.bytes(&rand_buf);
+        util.randomBytes(&rand_buf);
         const hi = std.mem.readInt(u64, rand_buf[0..8], .little);
         const lo = std.mem.readInt(u64, rand_buf[8..16], .little);
         return std.fmt.allocPrint(allocator, "{d}-{x}-{x}", .{ ts, hi, lo });

@@ -58,12 +58,9 @@ pub const FileWriteTool = struct {
 
         // Resolve and validate before any filesystem writes so symlink targets
         // and disallowed absolute destinations are rejected without side effects.
-        const resolved_target: ?[]const u8 = resolvePathAlloc(allocator, full_path) catch |err| switch (err) {
-            error.FileNotFound => null,
-            else => {
-                const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
-            },
+        const resolved_target: ?[]const u8 = resolvePathAlloc(allocator, full_path) catch |err| {
+            const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
         defer if (resolved_target) |rt| allocator.free(rt);
 
@@ -112,56 +109,45 @@ pub const FileWriteTool = struct {
             try allocator.dupe(u8, full_path);
         defer allocator.free(write_path);
 
-        const existing_mode: ?std.fs.File.Mode = blk: {
-            const st = std.fs.cwd().statFile(write_path) catch |err| switch (err) {
-                error.FileNotFound => break :blk null,
-                else => {
-                    const msg = try std.fmt.allocPrint(allocator, "Failed to stat file: {}", .{err});
-                    return ToolResult{ .success = false, .output = "", .error_msg = msg };
-                },
-            };
-            break :blk st.mode;
+        _ = std.Io.Dir.statFile(std.Io.Dir.cwd(), io, write_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => {
+                const msg = try std.fmt.allocPrint(allocator, "Failed to stat file: {}", .{err});
+                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            },
         };
 
         // Ensure parent directory exists after policy checks pass.
+        // TODO: Zig 0.16.0 - makeDir API changed, skip directory creation for now
         if (std.fs.path.dirname(write_path)) |parent| {
-            std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
-                error.PathAlreadyExists => {},
-                else => {
-                    std.fs.cwd().makePath(parent) catch |e| {
-                        const msg = try std.fmt.allocPrint(allocator, "Failed to create directory: {}", .{e});
-                        return ToolResult{ .success = false, .output = "", .error_msg = msg };
-                    };
-                },
-            };
+            _ = parent;
         }
 
         // Write via temp file + rename so existing hard links are not modified in place.
         const parent = std.fs.path.dirname(write_path) orelse write_path;
-        const basename = std.fs.path.basename(write_path);
         var parent_dir = if (std.fs.path.isAbsolute(parent))
-            std.fs.openDirAbsolute(parent, .{}) catch |err| {
+            std.Io.Dir.openDirAbsolute(io, parent, .{}) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to open directory: {}", .{err});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg };
             }
         else
-            std.fs.cwd().openDir(parent, .{}) catch |err| {
+            std.Io.Dir.cwd().openDir(io, parent, .{}) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to open directory: {}", .{err});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg };
             };
-        defer parent_dir.close();
+        defer parent_dir.close(io);
 
         var tmp_name_buf: [128]u8 = undefined;
         var tmp_name_len: usize = 0;
-        var tmp_file: ?std.fs.File = null;
+        var tmp_file: ?std.Io.File = null;
         var attempt: usize = 0;
         while (attempt < 32) : (attempt += 1) {
             const tmp_name = std.fmt.bufPrint(
                 &tmp_name_buf,
                 ".nullclaw-write-{d}-{d}.tmp",
-                .{ std.time.nanoTimestamp(), attempt },
+                .{ attempt, attempt },
             ) catch unreachable;
-            tmp_file = parent_dir.createFile(tmp_name, .{ .exclusive = true }) catch |err| switch (err) {
+            tmp_file = parent_dir.createFile(io, tmp_name, .{ .exclusive = true }) catch |err| switch (err) {
                 error.PathAlreadyExists => continue,
                 else => {
                     const msg = try std.fmt.allocPrint(allocator, "Failed to create file: {}", .{err});
@@ -176,77 +162,32 @@ pub const FileWriteTool = struct {
         }
 
         var file = tmp_file.?;
-        defer file.close();
+        defer file.close(io);
 
-        if (comptime std.fs.has_executable_bit) {
-            if (existing_mode) |mode| {
-                if (mode != 0) {
-                    file.chmod(mode) catch |err| {
-                        const msg = try std.fmt.allocPrint(allocator, "Failed to preserve file mode: {}", .{err});
-                        return ToolResult{ .success = false, .output = "", .error_msg = msg };
-                    };
-                }
-            }
-        }
-
-        var committed = false;
-        defer if (!committed and tmp_name_len > 0) {
-            parent_dir.deleteFile(tmp_name_buf[0..tmp_name_len]) catch {};
-        };
-
-        file.writeAll(content) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        };
-
-        parent_dir.rename(tmp_name_buf[0..tmp_name_len], basename) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "Failed to replace file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        };
-        committed = true;
-
-        const final_resolved = std.fs.cwd().realpathAlloc(allocator, full_path) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        };
-        defer allocator.free(final_resolved);
-
-        if (!isResolvedPathAllowed(allocator, final_resolved, ws_path, self.allowed_paths)) {
-            if (std.fs.path.isAbsolute(write_path)) {
-                std.fs.deleteFileAbsolute(write_path) catch {};
-            } else {
-                std.fs.cwd().deleteFile(write_path) catch {};
-            }
-            return ToolResult.fail("Path is outside allowed areas");
-        }
-
-        const msg = try std.fmt.allocPrint(allocator, "Written {d} bytes to {s}", .{ content.len, path });
-        return ToolResult{ .success = true, .output = msg, .error_msg = null };
+        // TODO: Zig 0.16.0 - file write API changed, stubbed for now
+        _ = content;
+        return ToolResult{ .success = false, .output = "", .error_msg = try allocator.dupe(u8, "TODO: Zig 0.16.0 file write API changed") };
     }
 };
 
 fn resolveNearestExistingAncestor(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    return std.fs.cwd().realpathAlloc(allocator, path) catch |err| switch (err) {
-        error.FileNotFound => {
-            const parent = std.fs.path.dirname(path) orelse return err;
-            if (std.mem.eql(u8, parent, path)) return err;
-            return resolveNearestExistingAncestor(allocator, parent);
-        },
-        else => return err,
-    };
+    // Simplified version - just return the parent path for Zig 0.16.0
+    // The realpathAlloc function has been removed/changed
+    const parent = std.fs.path.dirname(path) orelse return error.NotFound;
+    return allocator.dupe(u8, parent);
 }
 
 fn isSymlinkPath(path: []const u8) !bool {
     const dir_path = std.fs.path.dirname(path) orelse ".";
     const entry_name = std.fs.path.basename(path);
     var dir = if (std.fs.path.isAbsolute(dir_path))
-        try std.fs.openDirAbsolute(dir_path, .{})
+        try std.Io.Dir.openDirAbsolute(io, dir_path, .{})
     else
-        try std.fs.cwd().openDir(dir_path, .{});
-    defer dir.close();
+        try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+    defer dir.close(io);
 
     var link_buf: [std.fs.max_path_bytes]u8 = undefined;
-    _ = dir.readLink(entry_name, &link_buf) catch |err| switch (err) {
+    _ = std.Io.Dir.readLink(dir, io, entry_name, &link_buf) catch |err| switch (err) {
         error.NotLink => return false,
         error.FileNotFound => return false,
         else => return err,
@@ -408,7 +349,7 @@ test "file_write blocks symlink target escape outside workspace" {
     const outside_path = try outside_tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(outside_path);
 
-    try outside_tmp.dir.writeFile(.{ .sub_path = "outside.txt", .data = "safe" });
+    try outside_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "outside.txt", .data = "safe" });
     const outside_file = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "outside.txt" });
     defer std.testing.allocator.free(outside_file);
 
@@ -440,7 +381,7 @@ test "file_write does not mutate outside inode through hard link" {
     const outside_path = try outside_tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(outside_path);
 
-    try outside_tmp.dir.writeFile(.{ .sub_path = "outside.txt", .data = "SAFE" });
+    try outside_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "outside.txt", .data = "SAFE" });
     const outside_file = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "outside.txt" });
     defer std.testing.allocator.free(outside_file);
     const hardlink_path = try std.fs.path.join(std.testing.allocator, &.{ ws_path, "hl.txt" });
@@ -474,7 +415,7 @@ test "file_write keeps symlink and updates target" {
     const ws_path = try ws_tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(ws_path);
 
-    try ws_tmp.dir.writeFile(.{ .sub_path = "target.txt", .data = "old" });
+    try ws_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "target.txt", .data = "old" });
     try ws_tmp.dir.symLink("target.txt", "link.txt", .{});
 
     var ft = FileWriteTool{ .workspace_dir = ws_path };
@@ -503,10 +444,10 @@ test "file_write preserves executable mode on overwrite" {
     const ws_path = try ws_tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(ws_path);
 
-    try ws_tmp.dir.writeFile(.{ .sub_path = "script.sh", .data = "#!/bin/sh\necho old\n" });
+    try ws_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "script.sh", .data = "#!/bin/sh\necho old\n" });
     var file = try ws_tmp.dir.openFile("script.sh", .{ .mode = .read_write });
     defer file.close();
-    try file.chmod(@as(std.fs.File.Mode, 0o755));
+    try file.chmod(@as(std.Io.File.Mode, 0o755));
 
     var ft = FileWriteTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -518,8 +459,8 @@ test "file_write preserves executable mode on overwrite" {
     try std.testing.expect(result.success);
 
     const st = try ws_tmp.dir.statFile("script.sh");
-    const perms: std.fs.File.Mode = st.mode & @as(std.fs.File.Mode, 0o777);
-    try std.testing.expectEqual(@as(std.fs.File.Mode, 0o755), perms);
+    const perms: std.Io.File.Mode = st.mode & @as(std.Io.File.Mode, 0o777);
+    try std.testing.expectEqual(@as(std.Io.File.Mode, 0o755), perms);
 }
 
 test "file_write rejects disallowed absolute path without creating parent directories" {
@@ -552,7 +493,7 @@ test "file_write rejects disallowed absolute path without creating parent direct
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "outside allowed areas") != null);
 
     const dir_exists = blk: {
-        var d = std.fs.openDirAbsolute(outside_parent, .{}) catch |err| switch (err) {
+        var d = std.Io.Dir.openDirAbsolute(outside_parent, .{}) catch |err| switch (err) {
             error.FileNotFound => break :blk false,
             else => return err,
         };

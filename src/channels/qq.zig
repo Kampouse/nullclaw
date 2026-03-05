@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
@@ -775,7 +776,7 @@ pub const QQChannel = struct {
         self.token_mu.lock();
         defer self.token_mu.unlock();
 
-        const now = std.time.timestamp();
+        const now = util.timestampUnix();
         if (self.access_token) |tok| {
             if (now < self.token_expires_at - TOKEN_REFRESH_MARGIN_SECS) {
                 return self.allocator.dupe(u8, tok);

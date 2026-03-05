@@ -1,3 +1,4 @@
+const util = @import("util.zig");
 const std = @import("std");
 const Atomic = @import("portable_atomic.zig").Atomic;
 

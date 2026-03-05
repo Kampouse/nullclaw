@@ -276,7 +276,7 @@ fn handleHybridEvent(allocator: std.mem.Allocator, event: hybrid_mod.Event) void
     switch (mut_event) {
         .message_received => |*msg| {
             // Replay protection: check timestamp
-            // TODO: Zig 0.16.0 removed std.time.timestamp()
+            // TODO: Zig 0.16.0 removed util.timestampUnix()
             // Need to implement using std.os.clock_gettime or similar
             const now: u64 = 0; // Placeholder - implement proper timestamp
             const msg_time = msg.timestamp;

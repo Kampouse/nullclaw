@@ -110,20 +110,6 @@ pub const HttpRequestTool = struct {
         var client: std.http.Client = .{ .allocator = allocator, .io = io };
         defer client.deinit();
 
-        const protocol: std.http.Client.Protocol = if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) .tls else .plain;
-        const authority_host = stripHostBrackets(host);
-        const connection = client.connectTcpOptions(.{
-            .host = connect_host,
-            .port = resolved_port,
-            .protocol = protocol,
-            .proxied_host = authority_host,
-            .proxied_port = resolved_port,
-        }) catch |err| {
-            log.err("HTTP request connection failed for {s}: {}", .{ url, err });
-            const msg = try std.fmt.allocPrint(allocator, "HTTP request failed: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        };
-
         const body: ?[]const u8 = root.getString(args, "body");
 
         // Build extra headers
@@ -135,11 +121,13 @@ pub const HttpRequestTool = struct {
             extra_count += 1;
         }
 
-        var req = client.request(method, uri, buildRequestOptions(extra_headers_buf[0..extra_count], connection)) catch |err| {
+        var req = client.request(method, uri, .{}) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "HTTP request failed: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
         defer req.deinit();
+
+        // TODO: Zig 0.16.0 - add custom headers support (Headers API changed)
 
         // Send body if present, otherwise send bodiless
         if (body) |b| {

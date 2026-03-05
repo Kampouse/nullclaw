@@ -35,7 +35,7 @@ pub const NostrChannel = struct {
     /// Accessed from both reader thread (writes) and outbound dispatcher (reads),
     /// so guard all map access with sender_protocols_mu.
     sender_protocols: std.StringHashMapUnmanaged(DmProtocol),
-    sender_protocols_mu: std.Thread.Mutex,
+    sender_protocols_mu: std.atomic.Mutex,
     /// Recently-seen inner rumor IDs (kind:14 event id → arrival unix timestamp).
     /// Suppresses duplicate deliveries when the same rumor arrives via multiple relays.
     seen_rumor_ids: std.StringHashMapUnmanaged(i64),

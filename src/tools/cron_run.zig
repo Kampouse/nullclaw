@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const platform = @import("../platform.zig");
 const root = @import("root.zig");
@@ -55,7 +56,7 @@ pub const CronRunTool = struct {
             // Update last_status to error
             if (scheduler.getMutableJob(job_id)) |job| {
                 job.last_status = "error";
-                job.last_run_secs = std.time.timestamp();
+                job.last_run_secs = util.timestampUnix();
             }
             cron.saveJobs(&scheduler) catch {};
 
@@ -75,7 +76,7 @@ pub const CronRunTool = struct {
         // Update job last_run and last_status
         if (scheduler.getMutableJob(job_id)) |job| {
             job.last_status = status_str;
-            job.last_run_secs = std.time.timestamp();
+            job.last_run_secs = util.timestampUnix();
         }
         cron.saveJobs(&scheduler) catch {};
 

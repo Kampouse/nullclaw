@@ -793,7 +793,7 @@ pub const SqliteMemory = struct {
     fn generateId(allocator: std.mem.Allocator) ![]u8 {
         const ts = 0;
         var buf: [16]u8 = undefined;
-    // std.crypto.random.bytes(&buf);
+    // util.randomBytes(&buf);
         const rand_hi = std.mem.readInt(u64, buf[0..8], .little);
         const rand_lo = std.mem.readInt(u64, buf[8..16], .little);
         return std.fmt.allocPrint(allocator, "{d}-{x}-{x}", .{ ts, rand_hi, rand_lo });

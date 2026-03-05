@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
@@ -1456,7 +1457,7 @@ pub const TelegramChannel = struct {
     fn sweepTempMediaFiles(self: *TelegramChannel) void {
         const tmp_dir = platform.getTempDir(self.allocator) catch return;
         defer self.allocator.free(tmp_dir);
-        sweepTempMediaFilesInDir(tmp_dir, std.time.timestamp(), TEMP_MEDIA_TTL_SECS);
+        sweepTempMediaFilesInDir(tmp_dir, util.timestampUnix(), TEMP_MEDIA_TTL_SECS);
     }
 
     fn flushMaturedPendingMediaGroups(
@@ -3960,7 +3961,7 @@ test "telegram sweepTempMediaFilesInDir removes only stale nullclaw temp media f
     defer std.testing.allocator.free(abs_tmp);
 
     // TTL < 0 forces matched temp files to be treated as stale for test determinism.
-    sweepTempMediaFilesInDir(abs_tmp, std.time.timestamp(), -1);
+    sweepTempMediaFilesInDir(abs_tmp, util.timestampUnix(), -1);
 
     const keep_stat = try tmp_dir.dir.statFile("keep.txt");
     try std.testing.expect(keep_stat.size > 0);

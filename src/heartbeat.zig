@@ -40,7 +40,7 @@ pub const HeartbeatEngine = struct {
         while (iter.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t\r");
             if (std.mem.startsWith(u8, trimmed, "- ")) {
-                const task = std.mem.trimLeft(u8, trimmed[2..], " \t");
+                const task = std.mem.trim(u8, trimmed[2..], " \t");
                 if (task.len > 0) {
                     try list.append(allocator, try allocator.dupe(u8, task));
                 }
@@ -156,14 +156,14 @@ fn isMarkdownHeader(line: []const u8) bool {
 fn isEmptyMarkdownBullet(line: []const u8) bool {
     if (line.len == 0 or !isMarkdownBulletPrefix(line[0])) return false;
 
-    const rest = std.mem.trimLeft(u8, line[1..], " \t");
+    const rest = std.mem.trim(u8, line[1..], " \t");
     if (rest.len == 0) return true;
 
     if (std.mem.startsWith(u8, rest, "[ ]") or
         std.mem.startsWith(u8, rest, "[x]") or
         std.mem.startsWith(u8, rest, "[X]"))
     {
-        const after_checkbox = std.mem.trimLeft(u8, rest[3..], " \t");
+        const after_checkbox = std.mem.trim(u8, rest[3..], " \t");
         return after_checkbox.len == 0;
     }
 

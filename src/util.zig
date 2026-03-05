@@ -47,6 +47,26 @@ test "timestamp produces valid length" {
     try std.testing.expectEqual(@as(usize, 20), ts.len);
 }
 
+/// Get current Unix timestamp in seconds (Zig 0.16.0 compatible)
+pub fn timestampUnix() i64 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    return tv.sec;
+}
+
+/// Fill buffer with random bytes (Zig 0.16.0 compatible)
+pub fn randomBytes(buf: []u8) void {
+    const io = std.Options.debug_io;
+    io.random(buf);
+}
+
+/// Get a random integer of the specified type (Zig 0.16.0 compatible)
+pub fn randomInt(comptime T: type) T {
+    var bytes: [@sizeOf(T)]u8 = undefined;
+    randomBytes(&bytes);
+    return std.mem.readInt(T, &bytes, .little);
+}
+
 // ── JSON helpers ────────────────────────────────────────────────
 
 /// Append a string to an ArrayList with JSON escaping (quotes, backslashes, control chars).

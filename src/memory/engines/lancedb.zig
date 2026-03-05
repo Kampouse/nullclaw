@@ -12,6 +12,7 @@
 //! Uses the existing vector/math.zig for cosine similarity and serialization.
 
 const std = @import("std");
+const util = @import("../../util.zig");
 const build_options = @import("build_options");
 const root = @import("../root.zig");
 const Memory = root.Memory;
@@ -111,7 +112,7 @@ pub const LanceDbMemory = struct {
 
     fn generateUuid(allocator: std.mem.Allocator) ![]u8 {
         var buf: [16]u8 = undefined;
-        std.crypto.random.bytes(&buf);
+        util.randomBytes(&buf);
         // Set version 4
         buf[6] = (buf[6] & 0x0f) | 0x40;
         // Set variant bits

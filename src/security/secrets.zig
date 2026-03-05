@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("../util.zig");
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const log = std.log.scoped(.secrets);
@@ -129,7 +130,7 @@ pub const SecretStore = struct {
 
         // Generate random nonce
         var nonce: [NONCE_LEN]u8 = undefined;
-        std.crypto.random.bytes(&nonce);
+        util.randomBytes(&nonce);
 
         // Encrypt
         const ct_len = plaintext.len + TAG_LEN;
@@ -203,43 +204,58 @@ pub const SecretStore = struct {
         const path = self.keyPath();
 
         // Try to read existing key
-        if (std.Io.Dir.cwd().openFile(path, .{})) |file| {
-            defer file.close();
-            var hex_buf: [KEY_LEN * 2 + 16]u8 = undefined; // some slack for whitespace
-            const bytes_read = file.readAll(&hex_buf) catch return error.KeyReadFailed;
-            const hex_str = std.mem.trim(u8, hex_buf[0..bytes_read], " \t\r\n");
-            var key: [KEY_LEN]u8 = undefined;
-            _ = hexDecode(hex_str, &key) catch return error.KeyCorrupt;
-            return key;
-        } else |_| {
-            // Generate new key
-            var key: [KEY_LEN]u8 = undefined;
-            std.crypto.random.bytes(&key);
-
-            // Write hex-encoded key
-            var hex_buf: [KEY_LEN * 2]u8 = undefined;
-            _ = hexEncode(&key, &hex_buf);
-
-            // Ensure parent dir exists
-            if (std.fs.path.dirname(path)) |parent| {
-                std.Io.Dir.cwd().makePath(parent) catch |err| {
-                    log.err("failed to create parent dir {s}: {}", .{ parent, err });
-                };
+        const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+            // If file doesn't exist, create a new key
+            if (err == error.FileNotFound) {
+                return self.createNewKey(path);
             }
+            return err;
+        };
+        defer file.close();
 
-            const file = std.Io.Dir.cwd().createFile(path, .{}) catch return error.KeyWriteFailed;
-            defer file.close();
-            file.writeAll(&hex_buf) catch return error.KeyWriteFailed;
+        // Read hex-encoded key
+        var hex_buf: [KEY_LEN * 2]u8 = undefined;
+        const bytes_read = file.readAll(&hex_buf) catch return error.KeyReadFailed;
+        if (bytes_read != hex_buf.len) return error.KeyReadFailed;
 
-            // Set restrictive permissions (Unix: 0600, owner-only)
-            if (@import("builtin").os.tag != .windows) {
-                file.chmod(0o600) catch |err| {
-                    log.err("failed to set 0600 permissions on {s}: {}", .{ path, err });
-                };
-            }
+        // Decode hex to bytes
+        var key: [KEY_LEN]u8 = undefined;
+        hexDecode(&hex_buf, &key) catch return error.KeyReadFailed;
 
-            return key;
+        return key;
+    }
+
+    /// Create a new encryption key and save it to disk.
+    fn createNewKey(self: *const SecretStore, path: []const u8) ![KEY_LEN]u8 {
+        _ = self;
+
+        // Generate new key
+        var key: [KEY_LEN]u8 = undefined;
+        util.randomBytes(&key);
+
+        // Write hex-encoded key
+        var hex_buf: [KEY_LEN * 2]u8 = undefined;
+        _ = hexEncode(&key, &hex_buf);
+
+        // Ensure parent dir exists
+        if (std.fs.path.dirname(path)) |parent| {
+            std.fs.cwd().makePath(parent) catch |err| {
+                log.err("failed to create parent dir {s}: {}", .{ parent, err });
+            };
         }
+
+        const file = std.fs.cwd().createFile(path, .{}) catch return error.KeyWriteFailed;
+        defer file.close();
+        file.writeAll(&hex_buf) catch return error.KeyWriteFailed;
+
+        // Set restrictive permissions (Unix: 0600, owner-only)
+        if (@import("builtin").os.tag != .windows) {
+            file.chmod(0o600) catch |err| {
+                log.err("failed to set 0600 permissions on {s}: {}", .{ path, err });
+            };
+        }
+
+        return key;
     }
 };
 

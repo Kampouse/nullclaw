@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
@@ -563,7 +564,7 @@ fn createTestDb(allocator: std.mem.Allocator) ![]u8 {
     defer allocator.free(tmp_dir);
     const filename = try std.fmt.allocPrint(allocator, "nullclaw_imessage_{d}_{x}.db", .{
         std.time.microTimestamp(),
-        std.crypto.random.int(u32),
+        util.randomInt(u32),
     });
     defer allocator.free(filename);
     const path = try std.fs.path.join(allocator, &.{ tmp_dir, filename });

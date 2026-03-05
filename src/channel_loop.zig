@@ -5,6 +5,7 @@
 //! daemon supervisor).
 
 const std = @import("std");
+const util = @import("util.zig");
 const Config = @import("config.zig").Config;
 const telegram = @import("channels/telegram.zig");
 const session_mod = @import("session.zig");
@@ -196,7 +197,7 @@ pub const TelegramLoopState = struct {
 
     pub fn init() TelegramLoopState {
         return .{
-            .last_activity = Atomic(i64).init(std.time.timestamp()),
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
     }
@@ -403,18 +404,18 @@ pub fn runTelegramLoop(
     };
 
     // Update activity timestamp at start
-    loop_state.last_activity.store(std.time.timestamp(), .release);
+    loop_state.last_activity.store(util.timestampUnix(), .release);
 
     while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
         const messages = tg_ptr.pollUpdates(allocator) catch |err| {
             log.warn("Telegram poll error: {}", .{err});
-            loop_state.last_activity.store(std.time.timestamp(), .release);
+            loop_state.last_activity.store(util.timestampUnix(), .release);
             std.Thread.sleep(5 * std.time.ns_per_s);
             continue;
         };
 
         // Update activity after each poll (even if no messages)
-        loop_state.last_activity.store(std.time.timestamp(), .release);
+        loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
             // Handle /start command
@@ -513,7 +514,7 @@ pub const SignalLoopState = struct {
 
     pub fn init() SignalLoopState {
         return .{
-            .last_activity = Atomic(i64).init(std.time.timestamp()),
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
     }
@@ -535,20 +536,20 @@ pub fn runSignalLoop(
     sg_ptr: *signal.SignalChannel,
 ) void {
     // Update activity timestamp at start
-    loop_state.last_activity.store(std.time.timestamp(), .release);
+    loop_state.last_activity.store(util.timestampUnix(), .release);
 
     var evict_counter: u32 = 0;
 
     while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
         const messages = sg_ptr.pollMessages(allocator) catch |err| {
             log.warn("Signal poll error: {}", .{err});
-            loop_state.last_activity.store(std.time.timestamp(), .release);
+            loop_state.last_activity.store(util.timestampUnix(), .release);
             std.Thread.sleep(5 * std.time.ns_per_s);
             continue;
         };
 
         // Update activity after each poll (even if no messages)
-        loop_state.last_activity.store(std.time.timestamp(), .release);
+        loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
             // Session key — always resolve through agent routing (falls back on errors)
@@ -647,7 +648,7 @@ pub const MatrixLoopState = struct {
 
     pub fn init() MatrixLoopState {
         return .{
-            .last_activity = Atomic(i64).init(std.time.timestamp()),
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
     }
@@ -749,19 +750,19 @@ pub fn runMatrixLoop(
     loop_state: *MatrixLoopState,
     mx_ptr: *matrix.MatrixChannel,
 ) void {
-    loop_state.last_activity.store(std.time.timestamp(), .release);
+    loop_state.last_activity.store(util.timestampUnix(), .release);
 
     var evict_counter: u32 = 0;
 
     while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
         const messages = mx_ptr.pollMessages(allocator) catch |err| {
             log.warn("Matrix poll error: {}", .{err});
-            loop_state.last_activity.store(std.time.timestamp(), .release);
+            loop_state.last_activity.store(util.timestampUnix(), .release);
             std.Thread.sleep(5 * std.time.ns_per_s);
             continue;
         };
 
-        loop_state.last_activity.store(std.time.timestamp(), .release);
+        loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
             var key_buf: [192]u8 = undefined;
@@ -850,7 +851,7 @@ test "TelegramLoopState last_activity update" {
     var state = TelegramLoopState.init();
     const before = state.last_activity.load(.acquire);
     std.Thread.sleep(10 * std.time.ns_per_ms);
-    state.last_activity.store(std.time.timestamp(), .release);
+    state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
 }
@@ -926,7 +927,7 @@ test "SignalLoopState last_activity update" {
     var state = SignalLoopState.init();
     const before = state.last_activity.load(.acquire);
     std.Thread.sleep(10 * std.time.ns_per_ms);
-    state.last_activity.store(std.time.timestamp(), .release);
+    state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
 }
@@ -949,7 +950,7 @@ test "MatrixLoopState last_activity update" {
     var state = MatrixLoopState.init();
     const before = state.last_activity.load(.acquire);
     std.Thread.sleep(10 * std.time.ns_per_ms);
-    state.last_activity.store(std.time.timestamp(), .release);
+    state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
 }

@@ -65,13 +65,8 @@ pub const QmdAdapter = struct {
 
         const argv = &[_][]const u8{ self.config.command, self.config.search_mode, query, "--json", "-n", limit_str };
 
-        var env_map = std.process.EnvMap.init(alloc);
-        defer env_map.deinit();
-        env_map.put("NO_COLOR", "1") catch {};
-
         const result = process_util.run(alloc, argv, .{
             .cwd = self.workspace_dir,
-            .env_map = &env_map,
         }) catch |err| {
             log.warn("qmd process spawn failed: {}", .{err});
             return alloc.alloc(RetrievalCandidate, 0);
@@ -635,7 +630,7 @@ test "pruneExportedSessions deletes old files" {
 
     // Create a test file
     {
-        const f = try tmp.dir.createFile("old-session.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "old-session.md", .{});
         try f.writeAll("old content");
         f.close();
     }

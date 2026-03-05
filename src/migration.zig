@@ -8,6 +8,7 @@
 //!   - Creates backup before import
 
 const std = @import("std");
+const util = @import("util.zig");
 const platform = @import("platform.zig");
 const Config = @import("config.zig").Config;
 const memory_root = @import("memory/root.zig");
@@ -342,7 +343,7 @@ pub fn createBackup(
     allocator: std.mem.Allocator,
     config: *const Config,
 ) ![]u8 {
-    const timestamp = std.time.timestamp();
+    const timestamp = util.timestampUnix();
     const backend = config.memory_backend;
 
     if (std.mem.eql(u8, backend, "sqlite") or std.mem.eql(u8, backend, "lucid")) {
@@ -668,8 +669,8 @@ test "resolveOpenclawConfigPath finds parent config for workspace layout" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath(".openclaw/workspace");
-    const cfg_file = try tmp.dir.createFile(".openclaw/config.json", .{});
+    try tmp.dir.makeDir(std.Options.debug_io, ".openclaw/workspace");
+    const cfg_file = try tmp.dir.createFile(std.Options.debug_io, ".openclaw/config.json", .{});
     cfg_file.close();
 
     const workspace_abs = try tmp.dir.realpathAlloc(std.testing.allocator, ".openclaw/workspace");
@@ -687,8 +688,8 @@ test "migrateOpenclawConfig copies and normalizes config json" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath(".openclaw/workspace");
-    try tmp.dir.makePath(".nullclaw");
+    try tmp.dir.makeDir(std.Options.debug_io, ".openclaw/workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, ".nullclaw");
 
     const source_cfg_rel = ".openclaw/config.json";
     const source_cfg = try tmp.dir.createFile(source_cfg_rel, .{});

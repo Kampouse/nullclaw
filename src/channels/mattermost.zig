@@ -770,7 +770,7 @@ pub const MattermostChannel = struct {
             const p = std.mem.trim(u8, prefix, " \t\r\n");
             if (p.len == 0) continue;
             if (std.mem.startsWith(u8, trimmed, p)) {
-                return std.mem.trimLeft(u8, trimmed[p.len..], " \t\r\n");
+                return std.mem.trim(u8, trimmed[p.len..], " \t\r\n");
             }
         }
         return null;

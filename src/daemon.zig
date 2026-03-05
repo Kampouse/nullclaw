@@ -7,6 +7,7 @@
 //!   - Ctrl+C graceful shutdown
 
 const std = @import("std");
+const util = @import("util.zig");
 const health = @import("health.zig");
 const Config = @import("config.zig").Config;
 const CronScheduler = @import("cron.zig").CronScheduler;
@@ -360,7 +361,7 @@ fn schedulerThread(allocator: std.mem.Allocator, config: *const Config, state: *
             continue;
         };
 
-        const changed = scheduler.tick(std.time.timestamp(), event_bus);
+        const changed = scheduler.tick(util.timestampUnix(), event_bus);
         if (changed) {
             mergeSchedulerTickChangesAndSave(allocator, &scheduler, &before_tick) catch |err| {
                 log.warn("scheduler merge-save failed: {}", .{err});
@@ -1727,7 +1728,7 @@ test "mergeSchedulerTickChangesAndSave preserves externally added jobs" {
     _ = try external.addJob("*/5 * * * *", cmd_external);
     try cron.saveJobs(&external);
 
-    _ = loaded.tick(std.time.timestamp(), null);
+    _ = loaded.tick(util.timestampUnix(), null);
     try mergeSchedulerTickChangesAndSave(allocator, &loaded, &before_tick);
 
     var merged = CronScheduler.init(allocator, 64, true);
@@ -1770,7 +1771,7 @@ test "mergeSchedulerTickChangesAndSave preserves runtime agent fields" {
     defer external.deinit();
     try cron.saveJobs(&external);
 
-    _ = loaded.tick(std.time.timestamp(), null);
+    _ = loaded.tick(util.timestampUnix(), null);
     try mergeSchedulerTickChangesAndSave(allocator, &loaded, &before_tick);
 
     var merged = CronScheduler.init(allocator, 32, true);

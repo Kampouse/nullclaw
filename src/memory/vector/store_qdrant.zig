@@ -115,7 +115,7 @@ pub const QdrantVectorStore = struct {
         method: std.http.Method,
         payload: ?[]const u8,
     ) !struct { status: std.http.Status, body: []u8 } {
-        var client = std.http.Client{ .allocator = alloc };
+        var client = std.http.Client{ .allocator = alloc, .io = std.Options.debug_io };
         defer client.deinit();
 
         var aw: std.Io.Writer.Allocating = .init(alloc);
@@ -392,7 +392,7 @@ pub const QdrantVectorStore = struct {
         const url = try std.fmt.allocPrint(alloc, "{s}/healthz", .{self.url});
         defer alloc.free(url);
 
-        var client = std.http.Client{ .allocator = alloc };
+        var client = std.http.Client{ .allocator = alloc, .io = std.Options.debug_io };
         defer client.deinit();
 
         var aw: std.Io.Writer.Allocating = .init(alloc);

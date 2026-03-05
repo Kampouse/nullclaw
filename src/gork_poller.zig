@@ -213,7 +213,7 @@ fn parseInbox(allocator: Allocator, output: []const u8) !std.ArrayList(IncomingM
             if (current_msg) |msg| {
                 try messages.append(allocator, msg);
             }
-            const from = std.mem.trimLeft(u8, line["│ From:".len..], " ");
+            const from = std.mem.trim(u8, line["│ From:".len..], " ");
             current_msg = IncomingMessage{
                 .from = try allocator.dupe(u8, from),
                 .message_type = try allocator.dupe(u8, "chat"),
@@ -222,7 +222,7 @@ fn parseInbox(allocator: Allocator, output: []const u8) !std.ArrayList(IncomingM
             };
         } else if (current_msg) |*msg| {
             if (std.mem.startsWith(u8, line, "│ ") and !std.mem.startsWith(u8, line, "│ From:") and !std.mem.startsWith(u8, line, "│ Date:")) {
-                const content_part = std.mem.trimLeft(u8, line["│ ".len..], " ");
+                const content_part = std.mem.trim(u8, line["│ ".len..], " ");
                 if (msg.content.len == 0) {
                     // First content line - allocate the copy
                     msg.content = try allocator.dupe(u8, content_part);

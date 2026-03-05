@@ -5,6 +5,7 @@
 //! Persisted to `~/.nullclaw/state.json` with atomic writes (temp + rename).
 
 const std = @import("std");
+const util = @import("util.zig");
 const json_util = @import("json_util.zig");
 const Allocator = std.mem.Allocator;
 
@@ -51,7 +52,7 @@ pub const StateManager = struct {
 
         self.state.last_channel = self.allocator.dupe(u8, channel) catch null;
         self.state.last_chat_id = self.allocator.dupe(u8, chat_id) catch null;
-        self.state.updated_at = std.time.timestamp();
+        self.state.updated_at = util.timestampUnix();
     }
 
     /// Get the last active channel. Returns null if not set.

@@ -275,7 +275,7 @@ pub const OneBotChannel = struct {
             if (self.config.group_trigger_prefix) |prefix| {
                 if (std.mem.startsWith(u8, content, prefix)) {
                     // Strip prefix and leading whitespace
-                    content = std.mem.trimLeft(u8, content[prefix.len..], " ");
+                    content = std.mem.trim(u8, content[prefix.len..], " ");
                 } else if (!cq.is_mention) {
                     // Not prefixed and not a mention — skip
                     return;

@@ -175,7 +175,7 @@ pub const OpenAiEmbedding = struct {
         const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{self_.api_key});
         defer allocator.free(auth_header);
 
-        var client = std.http.Client{ .allocator = allocator };
+        var client = std.http.Client{ .allocator = allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         var aw: std.Io.Writer.Allocating = .init(allocator);
@@ -236,7 +236,7 @@ fn hasExplicitApiPath(url: []const u8) bool {
     const path_start = std.mem.indexOfScalar(u8, after_scheme, '/') orelse return false;
     const path = after_scheme[path_start..];
     // Trim trailing slashes
-    const trimmed = std.mem.trimRight(u8, path, "/");
+    const trimmed = std.mem.trim(u8, path, "/");
     return trimmed.len > 0 and !std.mem.eql(u8, trimmed, "/");
 }
 

@@ -467,7 +467,7 @@ fn readCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
         else => return error.CacheParseError,
     };
 
-    const now = std.time.timestamp();
+    const now = util.timestampUnix();
     if (now - fetched_at > CACHE_TTL_SECS) return error.CacheExpired;
 
     // Get provider's model list
@@ -497,7 +497,7 @@ fn saveCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
 
     try buf.appendSlice(allocator, "{\n  \"fetched_at\": ");
     var ts_buf: [24]u8 = undefined;
-    const ts_str = std.fmt.bufPrint(&ts_buf, "{d}", .{std.time.timestamp()}) catch return;
+    const ts_str = std.fmt.bufPrint(&ts_buf, "{d}", .{util.timestampUnix()}) catch return;
     try buf.appendSlice(allocator, ts_str);
     try buf.appendSlice(allocator, ",\n  \"");
     try buf.appendSlice(allocator, provider);
@@ -569,7 +569,7 @@ fn initFreshConfig(backing_allocator: std.mem.Allocator) !Config {
 /// Non-interactive setup: generates a sensible default config.
 pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provider: ?[]const u8, memory_backend: ?[]const u8) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
     try stdout.writeAll(BANNER);
     try stdout.writeAll("  Quick Setup -- generating config with sensible defaults...\n\n");
@@ -656,7 +656,7 @@ pub fn run(allocator: std.mem.Allocator) !void {
 /// Reconfigure channels and allowlists only (preserves existing config).
 pub fn runChannelsOnly(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
     var input_buf: [512]u8 = undefined;
     resetStdinLineReader();
@@ -697,7 +697,7 @@ const StdinLineReader = struct {
     }
 
     fn copyLineToOut(out: []u8, raw_line: []const u8) []const u8 {
-        const trimmed = std.mem.trimRight(u8, raw_line, "\r");
+        const trimmed = std.mem.trim(u8, raw_line, "\r");
         const copy_len = @min(out.len, trimmed.len);
         @memcpy(out[0..copy_len], trimmed[0..copy_len]);
         return out[0..copy_len];
@@ -727,22 +727,23 @@ var stdin_line_reader = StdinLineReader{};
 fn resetStdinLineReader() void {
     stdin_line_reader.reset();
 }
-
+/// Read a line from stdin, trimming trailing newline/carriage return.
 /// Read a line from stdin, trimming trailing newline/carriage return.
 /// Returns null on EOF (Ctrl+D).
 fn readLine(buf: []u8) ?[]const u8 {
-    const stdin = std.fs.File.stdin();
+    const stdin = std.Io.File.stdin();
+    var read_buffer: [256]u8 = undefined;
+    const stdin_reader = stdin.reader(std.Options.debug_io, &read_buffer);
+
     while (true) {
         if (stdin_line_reader.popLine(buf)) |line| return line;
 
         if (stdin_line_reader.pending_len == stdin_line_reader.pending.len) {
-            // No newline yet and internal buffer is full; return a truncated line
-            // to prevent deadlock on oversized input.
             return stdin_line_reader.flushRemainder(buf);
         }
 
         const read_dst = stdin_line_reader.pending[stdin_line_reader.pending_len..];
-        const n = stdin.read(read_dst) catch return null;
+        const n = stdin_reader.read(read_dst) catch return null;
         if (n == 0) {
             return stdin_line_reader.flushRemainder(buf);
         }
@@ -750,7 +751,7 @@ fn readLine(buf: []u8) ?[]const u8 {
     }
 }
 
-/// Prompt user with a message, read a line. Returns default_val if input is empty.
+/// Prompt for a line of input with optional message and default value.
 /// Returns null on EOF.
 fn prompt(out: *std.Io.Writer, buf: []u8, message: []const u8, default_val: []const u8) ?[]const u8 {
     out.writeAll(message) catch return null;
@@ -1290,43 +1291,27 @@ fn configureNostrChannel(cfg: *Config, out: *std.Io.Writer, input_buf: []u8, pre
 
 /// Run a nak subprocess, capture stdout, trim whitespace, return owned slice or null on failure.
 fn nakRun(allocator: std.mem.Allocator, argv: []const []const u8) ?[]u8 {
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-    child.spawn() catch return null;
-    const stdout = child.stdout orelse {
-        _ = child.wait() catch {};
-        return null;
-    };
-    var out = std.ArrayListUnmanaged(u8).empty;
-    var buf: [256]u8 = undefined;
-    while (true) {
-        const n = stdout.read(&buf) catch break;
-        if (n == 0) break;
-        out.appendSlice(allocator, buf[0..n]) catch {
-            out.deinit(allocator);
-            _ = child.wait() catch {};
-            return null;
-        };
-    }
-    const term = child.wait() catch {
-        out.deinit(allocator);
-        return null;
-    };
-    switch (term) {
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = argv,
+        .max_output_bytes = 4096,
+    }) catch return null;
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
         .Exited => |code| if (code != 0) {
-            out.deinit(allocator);
+            allocator.free(result.stdout);
             return null;
         },
         else => {
-            out.deinit(allocator);
+            allocator.free(result.stdout);
             return null;
         },
     }
-    const raw = out.toOwnedSlice(allocator) catch return null;
-    const trimmed = std.mem.trimRight(u8, raw, " \t\r\n");
-    if (trimmed.len == raw.len) return raw;
-    defer allocator.free(raw);
+
+    const trimmed = std.mem.trimRight(u8, result.stdout, " \t\r\n");
+    if (trimmed.len == result.stdout.len) return result.stdout;
+    defer allocator.free(result.stdout);
     return allocator.dupe(u8, trimmed) catch null;
 }
 
@@ -1719,7 +1704,6 @@ pub fn scaffoldWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8
     _ = ctx;
     // TODO: Zig 0.16.0 - makeDirAbsolute removed
     return error.NotImplemented;
-
 
     // AGENTS.md (operational guidelines — loaded by prompt.zig)
 }
@@ -2372,12 +2356,12 @@ test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("AGENTS.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
         defer f.close();
         try f.writeAll("custom-agents-content");
     }
     {
-        const f = try tmp.dir.createFile("USER.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close();
         try f.writeAll("custom-user-content");
     }
@@ -2405,13 +2389,13 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("MEMORY.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
         defer f.close();
         try f.writeAll("custom-memory");
     }
 
     var has_distinct_case_memory_file = true;
-    const alt = tmp.dir.createFile("memory.md", .{ .exclusive = true }) catch |err| switch (err) {
+    const alt = tmp.dir.createFile(std.Options.debug_io, "memory.md", .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => blk: {
             has_distinct_case_memory_file = false;
             break :blk null;
@@ -2491,12 +2475,12 @@ test "scaffoldWorkspace does not recreate BOOTSTRAP after onboarding completion"
     try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
 
     {
-        const f = try tmp.dir.createFile("IDENTITY.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("custom identity");
     }
     {
-        const f = try tmp.dir.createFile("USER.md", .{ .truncate = true });
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
         defer f.close();
         try f.writeAll("custom user");
     }
@@ -2520,12 +2504,12 @@ test "scaffoldWorkspace does not seed BOOTSTRAP for legacy completed workspace" 
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("IDENTITY.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
         defer f.close();
         try f.writeAll("custom identity");
     }
     {
-        const f = try tmp.dir.createFile("USER.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close();
         try f.writeAll("custom user");
     }
@@ -2547,7 +2531,7 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("memory");
+    try tmp.dir.makeDir(std.Options.debug_io, "memory");
     try tmp.dir.writeFile(.{
         .sub_path = "memory/2026-02-25.md",
         .data = "# Daily log\nSome notes",
@@ -2581,7 +2565,7 @@ test "scaffoldWorkspace treats git-backed workspace as existing and skips BOOTST
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath(".git");
+    try tmp.dir.makeDir(std.Options.debug_io, ".git");
     try tmp.dir.writeFile(.{
         .sub_path = ".git/HEAD",
         .data = "ref: refs/heads/main\n",
@@ -3091,7 +3075,7 @@ test "cache read returns error for expired cache" {
 
     // Write a cache with old timestamp
     const old_json = "{\"fetched_at\": 1000000, \"myprov\": [\"old-model\"]}";
-    const file = try tmp.dir.createFile("models_cache.json", .{});
+    const file = try tmp.dir.createFile(std.Options.debug_io, "models_cache.json", .{});
     defer file.close();
     try file.writeAll(old_json);
 

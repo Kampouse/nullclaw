@@ -5,6 +5,7 @@
 //! transcribed text as an owned slice.
 
 const std = @import("std");
+const util = @import("util.zig");
 const builtin = @import("builtin");
 const platform = @import("platform.zig");
 const json_util = @import("json_util.zig");
@@ -141,7 +142,7 @@ pub fn transcribeFile(
 /// Generate a random 32-character hex boundary string.
 fn generateBoundary() ![32]u8 {
     var random_bytes: [16]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    util.randomBytes(&random_bytes);
     var boundary: [32]u8 = undefined;
     const hex = "0123456789abcdef";
     for (random_bytes, 0..) |b, i| {

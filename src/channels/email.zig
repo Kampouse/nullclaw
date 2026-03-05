@@ -89,7 +89,7 @@ pub const EmailChannel = struct {
         if (std.mem.startsWith(u8, message, "Subject: ")) {
             if (std.mem.indexOf(u8, message, "\n")) |nl_pos| {
                 subject = message[9..nl_pos];
-                body = std.mem.trimLeft(u8, message[nl_pos + 1 ..], " \t\r\n");
+                body = std.mem.trim(u8, message[nl_pos + 1 ..], " \t\r\n");
             }
         }
 

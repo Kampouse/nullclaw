@@ -83,21 +83,57 @@ pub fn loadContext(
     }
     defer if (global_entries) |entries| memory_mod.freeEntries(allocator, entries);
 
-    // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
-    // For now, return minimal stub
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    
-    if (scoped_entries.len > 0) {
-        try buf.appendSlice(allocator, "[Memory context]\n");
-        var line_buf: [512]u8 = undefined;
-        for (scoped_entries, 0..) |entry, i| {
-            if (i >= 5) break; // Limit to 5 entries for stub
-            if (isInternalMemoryEntry(entry)) continue;
-            try buf.appendSlice(allocator, try std.fmt.bufPrint(&line_buf, "- {s}: {s}\n", .{ entry.key, entry.content }));
+
+    var appended: usize = 0;
+    var wrote_header = false;
+
+    for (scoped_entries) |entry| {
+        if (isInternalMemoryEntry(entry)) continue;
+        if (!wrote_header) {
+            try buf.appendSlice(allocator, "[Memory context]\n");
+            wrote_header = true;
+        }
+        // Truncate individual entry content to prevent a single large memory from blowing the budget
+        const content = truncateUtf8(entry.content, MAX_CONTEXT_BYTES / 2);
+        const sanitized = try sanitizeMemoryText(allocator, content);
+        defer allocator.free(sanitized);
+        const line = try std.fmt.allocPrint(allocator, "- {s}: {s}\n", .{ entry.key, sanitized });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
+        appended += 1;
+        if (appended >= DEFAULT_RECALL_LIMIT or buf.items.len >= MAX_CONTEXT_BYTES) break;
+    }
+
+    if (appended < DEFAULT_RECALL_LIMIT and buf.items.len < MAX_CONTEXT_BYTES and session_id != null) {
+        if (global_entries) |entries| {
+            for (entries) |entry| {
+                if (entry.session_id != null) continue; // keep scoped isolation (no cross-session bleed)
+                if (containsKey(scoped_entries, entry.key)) continue;
+                if (isInternalMemoryEntry(entry)) continue;
+
+                if (!wrote_header) {
+                    try buf.appendSlice(allocator, "[Memory context]\n");
+                    wrote_header = true;
+                }
+                const content = truncateUtf8(entry.content, MAX_CONTEXT_BYTES / 2);
+                const sanitized = try sanitizeMemoryText(allocator, content);
+                defer allocator.free(sanitized);
+                const line = try std.fmt.allocPrint(allocator, "- {s}: {s}\n", .{ entry.key, sanitized });
+                defer allocator.free(line);
+                try buf.appendSlice(allocator, line);
+                appended += 1;
+                if (appended >= DEFAULT_RECALL_LIMIT or buf.items.len >= MAX_CONTEXT_BYTES) break;
+            }
         }
     }
-    
+
+    if (!wrote_header) {
+        return try allocator.dupe(u8, "");
+    }
+    try buf.appendSlice(allocator, "\n");
+
     return try buf.toOwnedSlice(allocator);
 }
 
@@ -132,8 +168,9 @@ pub fn loadContextWithRuntime(
         const snippet = truncateUtf8(cand.snippet, MAX_CONTEXT_BYTES / 2);
         const sanitized = try sanitizeMemoryText(allocator, snippet);
         defer allocator.free(sanitized);
-        var line_buf: [1024]u8 = undefined;
-        try buf.appendSlice(allocator, try std.fmt.bufPrint(&line_buf, "- {s}: {s}\n", .{ cand.key, sanitized }));
+        const line = try std.fmt.allocPrint(allocator, "- {s}: {s}\n", .{ cand.key, sanitized });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
         if (buf.items.len >= MAX_CONTEXT_BYTES) break;
     }
     if (!wrote_header) return try allocator.dupe(u8, "");

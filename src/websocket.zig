@@ -3,6 +3,7 @@
 //! All connections are TLS-only (wss://).
 
 const std = @import("std");
+const util = @import("util.zig");
 
 const log = std.log.scoped(.websocket);
 
@@ -122,7 +123,7 @@ pub const WsClient = struct {
 
         // HTTP Upgrade handshake
         var key_raw: [16]u8 = undefined;
-        std.crypto.random.bytes(&key_raw);
+        util.randomBytes(&key_raw);
         var key_b64: [24]u8 = undefined;
         _ = std.base64.standard.Encoder.encode(&key_b64, &key_raw);
 
@@ -312,7 +313,7 @@ pub const WsClient = struct {
 
         // Random 4-byte masking key (RFC 6455 §5.3: client→server MUST mask)
         var mask: [4]u8 = undefined;
-        std.crypto.random.bytes(&mask);
+        util.randomBytes(&mask);
         @memcpy(header[hlen..][0..4], &mask);
         hlen += 4;
 
@@ -496,14 +497,14 @@ test "ws accept key known value" {
 
 test "ws accept key length" {
     var key: [24]u8 = undefined;
-    std.crypto.random.bytes(&key);
+    util.randomBytes(&key);
     const accept = WsClient.computeAcceptKey(&key);
     try std.testing.expectEqual(@as(usize, 28), accept.len);
 }
 
 test "ws handshake key is 24 chars base64" {
     var key_raw: [16]u8 = undefined;
-    std.crypto.random.bytes(&key_raw);
+    util.randomBytes(&key_raw);
     var key_b64: [24]u8 = undefined;
     _ = std.base64.standard.Encoder.encode(&key_b64, &key_raw);
     // 16 bytes → 24 base64 chars (no padding needed since 16 is divisible by 3? No, 16/3=5r1 → 24 with padding)

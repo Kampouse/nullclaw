@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const crypto = @import("../security/secrets.zig");
 
@@ -195,7 +196,7 @@ pub const PairingGuard = struct {
 /// Generate a 6-digit numeric pairing code using cryptographic randomness.
 fn generateCode() [6]u8 {
     var bytes: [4]u8 = undefined;
-    std.crypto.random.bytes(&bytes);
+    util.randomBytes(&bytes);
     const raw = std.mem.readInt(u32, &bytes, .little);
     // Rejection sampling to avoid modulo bias
     const upper_bound: u32 = 1_000_000;
@@ -203,7 +204,7 @@ fn generateCode() [6]u8 {
     const val = if (raw < reject_threshold) raw % upper_bound else blk: {
         // Extremely rare case; just re-draw
         var retry_bytes: [4]u8 = undefined;
-        std.crypto.random.bytes(&retry_bytes);
+        util.randomBytes(&retry_bytes);
         break :blk std.mem.readInt(u32, &retry_bytes, .little) % upper_bound;
     };
     var buf: [6]u8 = undefined;
@@ -214,7 +215,7 @@ fn generateCode() [6]u8 {
 /// Generate a bearer token with 256-bit entropy.
 fn generateToken() [67]u8 {
     var random_bytes: [32]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    util.randomBytes(&random_bytes);
     var buf: [67]u8 = undefined; // "zc_" (3) + 64 hex chars
     @memcpy(buf[0..3], "zc_");
     const hex = std.fmt.bytesToHex(random_bytes, .lower);

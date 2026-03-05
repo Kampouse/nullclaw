@@ -236,7 +236,7 @@ const TomlStringPrefix = struct {
 };
 
 fn parseTomlStringPrefix(raw_value: []const u8) ?TomlStringPrefix {
-    const cleaned = std.mem.trimLeft(u8, raw_value, " \t\r");
+    const cleaned = std.mem.trim(u8, raw_value, " \t\r");
     if (cleaned.len < 2) return null;
 
     const quote = cleaned[0];
@@ -962,7 +962,7 @@ fn auditTomlPromptsFragment(raw_fragment: []const u8) !bool {
     const cleaned = std.mem.trim(u8, stripTomlInlineComment(raw_fragment), " \t\r");
     var rest = cleaned;
     while (true) {
-        rest = std.mem.trimLeft(u8, rest, " \t\r,");
+        rest = std.mem.trim(u8, rest, " \t\r,");
         if (rest.len == 0) return true;
 
         if (rest[0] == ']') return false;
@@ -1017,7 +1017,7 @@ fn auditTomlContent(content: []const u8) !void {
         const key = std.mem.trim(u8, line[0..eq_idx], " \t");
         if (key.len == 0) return error.SkillSecurityAuditFailed;
         const value = line[eq_idx + 1 ..];
-        const value_trimmed = std.mem.trimLeft(u8, stripTomlInlineComment(value), " \t\r");
+        const value_trimmed = std.mem.trim(u8, stripTomlInlineComment(value), " \t\r");
         if (value_trimmed.len > 0 and (value_trimmed[0] == '"' or value_trimmed[0] == '\'')) {
             const multiline_quote = value_trimmed.len >= 3 and
                 value_trimmed[0] == value_trimmed[1] and
@@ -2045,7 +2045,7 @@ test "listSkills from empty directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills");
 
     const base = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(base);
@@ -2139,9 +2139,9 @@ test "loadSkill without skill.json falls back to markdown-only skill" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/md-only");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/md-only");
     {
-        const f = try tmp.dir.createFile("skills/md-only/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/md-only/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Markdown Skill\nUse markdown-only format.");
     }
@@ -2165,9 +2165,9 @@ test "loadSkill reads metadata from SKILL.toml" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/toml-meta");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/toml-meta");
     {
-        const f = try tmp.dir.createFile("skills/toml-meta/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/toml-meta/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2197,9 +2197,9 @@ test "loadSkill prefers SKILL.toml metadata over skill.json" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/dual");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/dual");
     {
-        const f = try tmp.dir.createFile("skills/dual/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/dual/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2208,7 +2208,7 @@ test "loadSkill prefers SKILL.toml metadata over skill.json" {
         );
     }
     {
-        const f = try tmp.dir.createFile("skills/dual/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/dual/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"json-name\", \"description\": \"json\"}");
     }
@@ -2301,9 +2301,9 @@ test "listSkills discovers markdown-only skill directories" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/md-skill");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills/md-skill");
     {
-        const f = try tmp.dir.createFile("skills/md-skill/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/md-skill/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# MD Skill\nWorks without skill.json.");
     }
@@ -2398,7 +2398,7 @@ test "snapshotSkillChildren and detectNewlyInstalledDirectory roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace/skills/existing");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace/skills/existing");
 
     const base = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(base);
@@ -2408,7 +2408,7 @@ test "snapshotSkillChildren and detectNewlyInstalledDirectory roundtrip" {
     var before = try snapshotSkillChildren(allocator, skills_dir);
     defer freePathSnapshot(allocator, &before);
 
-    try tmp.dir.makePath("workspace/skills/newly-added");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace/skills/newly-added");
 
     const newly = try detectNewlyInstalledDirectory(allocator, skills_dir, &before);
     defer allocator.free(newly);
@@ -2420,7 +2420,7 @@ test "detectNewlyInstalledDirectory errors for none and multiple directories" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace/skills/base");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace/skills/base");
 
     const base = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(base);
@@ -2432,8 +2432,8 @@ test "detectNewlyInstalledDirectory errors for none and multiple directories" {
 
     try std.testing.expectError(error.GitCloneNoNewDirectory, detectNewlyInstalledDirectory(allocator, skills_dir, &before));
 
-    try tmp.dir.makePath("workspace/skills/new-a");
-    try tmp.dir.makePath("workspace/skills/new-b");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace/skills/new-a");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace/skills/new-b");
     try std.testing.expectError(error.GitCloneAmbiguousDirectory, detectNewlyInstalledDirectory(allocator, skills_dir, &before));
 }
 
@@ -2444,9 +2444,9 @@ test "auditSkillDirectory rejects symlink entries" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"symlink-skill\"}");
     }
@@ -2465,19 +2465,19 @@ test "auditSkillDirectory allows large non-script files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source/assets");
+    try tmp.dir.makeDir(std.Options.debug_io, "source/assets");
     {
-        const f = try tmp.dir.createFile("source/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"large-asset-skill\"}");
     }
     {
-        const f = try tmp.dir.createFile("source/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Skill with large asset");
     }
     {
-        const f = try tmp.dir.createFile("source/assets/blob.bin", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/assets/blob.bin", .{});
         defer f.close();
         const buf = try allocator.alloc(u8, (SKILL_AUDIT_MAX_FILE_BYTES + 1024));
         defer allocator.free(buf);
@@ -2498,14 +2498,14 @@ test "auditSkillDirectory rejects script suffix files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Safe doc");
     }
     {
-        const f = try tmp.dir.createFile("source/install.sh", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/install.sh", .{});
         defer f.close();
         try f.writeAll("echo unsafe");
     }
@@ -2523,14 +2523,14 @@ test "auditSkillDirectory rejects shell shebang files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Safe doc");
     }
     {
-        const f = try tmp.dir.createFile("source/tool", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/tool", .{});
         defer f.close();
         try f.writeAll("#!/bin/bash\necho unsafe");
     }
@@ -2548,14 +2548,14 @@ test "auditSkillDirectory rejects markdown links escaping skill root" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Skill\nSee [escape](../outside.md)");
     }
     {
-        const f = try tmp.dir.createFile("outside.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "outside.md", .{});
         defer f.close();
         try f.writeAll("# outside");
     }
@@ -2573,9 +2573,9 @@ test "auditSkillDirectory rejects TOML tool command with shell chaining" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2602,9 +2602,9 @@ test "auditSkillDirectory rejects TOML tool entries without command" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2630,9 +2630,9 @@ test "auditSkillDirectory rejects TOML shell tool with empty command" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2659,9 +2659,9 @@ test "auditSkillDirectory rejects invalid TOML manifest syntax" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close();
         try f.writeAll("this is not valid toml {{{{");
     }
@@ -2679,9 +2679,9 @@ test "auditSkillDirectory rejects TOML prompts with high-risk content" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2704,9 +2704,9 @@ test "auditSkillDirectory rejects multiline TOML prompts with high-risk content"
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2732,9 +2732,9 @@ test "auditSkillDirectory rejects malformed TOML string literals" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -2756,9 +2756,9 @@ test "auditSkillDirectory accepts root with legacy skill.json marker" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
     {
-        const f = try tmp.dir.createFile("source/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\":\"legacy-only\"}");
     }
@@ -2776,7 +2776,7 @@ test "auditSkillDirectory rejects root without any skill markers" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
 
     const base = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(base);
@@ -2792,8 +2792,8 @@ test "installSkill and removeSkill roundtrip" {
     defer tmp.cleanup();
 
     // Setup workspace and source directories
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("source");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
 
     // Write source skill files
     {
@@ -2842,21 +2842,21 @@ test "installSkillFromPath copies full source directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("source/assets");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source/assets");
 
     {
-        const f = try tmp.dir.createFile("source/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"with-assets\", \"version\": \"1.0.0\"}");
     }
     {
-        const f = try tmp.dir.createFile("source/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Skill with assets");
     }
     {
-        const f = try tmp.dir.createFile("source/assets/payload.txt", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source/assets/payload.txt", .{});
         defer f.close();
         try f.writeAll("asset-data");
     }
@@ -2882,10 +2882,10 @@ test "installSkillFromPath supports markdown-only source directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("source-md");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source-md");
     {
-        const f = try tmp.dir.createFile("source-md/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source-md/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Markdown only install");
     }
@@ -2912,10 +2912,10 @@ test "installSkillFromPath supports legacy skill.json-only source directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("source-json");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source-json");
     {
-        const f = try tmp.dir.createFile("source-json/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source-json/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"legacy-json\", \"version\": \"1.0.0\"}");
     }
@@ -2939,15 +2939,15 @@ test "installSkillFromPath supports relative source path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("source-rel");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source-rel");
     {
-        const f = try tmp.dir.createFile("source-rel/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source-rel/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"relative-install\", \"version\": \"1.0.0\"}");
     }
     {
-        const f = try tmp.dir.createFile("source-rel/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source-rel/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Relative install skill");
     }
@@ -2978,10 +2978,10 @@ test "installSkillFromPath supports SKILL.toml-only source directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("source-toml");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source-toml");
     {
-        const f = try tmp.dir.createFile("source-toml/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "source-toml/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -3017,8 +3017,8 @@ test "installSkillFromGit installs from local git repository" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("repo");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "repo");
 
     {
         const rel = try std.fs.path.join(allocator, &.{ "repo", "skill.json" });
@@ -3064,11 +3064,11 @@ test "installSkillFromGit supports root markdown-only repository" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("repo");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "repo");
 
     {
-        const f = try tmp.dir.createFile("repo/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Root skill\nInstalled from root markdown.");
     }
@@ -3100,22 +3100,22 @@ test "installSkillFromGit installs all skills from repository skills directory" 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("repo/skills/http_request");
-    try tmp.dir.makePath("repo/skills/review");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "repo/skills/http_request");
+    try tmp.dir.makeDir(std.Options.debug_io, "repo/skills/review");
 
     {
-        const f = try tmp.dir.createFile("repo/skills/http_request/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/skills/http_request/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# HTTP Request\nFetch remote API responses.");
     }
     {
-        const f = try tmp.dir.createFile("repo/skills/review/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/skills/review/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Review\nReview and audit code.");
     }
     {
-        const f = try tmp.dir.createFile("repo/README.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/README.md", .{});
         defer f.close();
         try f.writeAll("# Not a skill");
     }
@@ -3164,11 +3164,11 @@ test "installSkillFromGit installs SKILL.toml entry from repository skills direc
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("repo/skills/toml_only");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "repo/skills/toml_only");
 
     {
-        const f = try tmp.dir.createFile("repo/skills/toml_only/SKILL.toml", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/skills/toml_only/SKILL.toml", .{});
         defer f.close();
         try f.writeAll(
             \\[skill]
@@ -3204,21 +3204,21 @@ test "installSkillFromGit keeps clone directory name when manifest name differs"
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("workspace");
-    try tmp.dir.makePath("repo/assets");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "repo/assets");
 
     {
-        const f = try tmp.dir.createFile("repo/skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"renamed-skill\", \"version\": \"1.0.0\"}");
     }
     {
-        const f = try tmp.dir.createFile("repo/SKILL.md", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/SKILL.md", .{});
         defer f.close();
         try f.writeAll("# Renamed Skill\nUses assets.");
     }
     {
-        const f = try tmp.dir.createFile("repo/assets/payload.txt", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "repo/assets/payload.txt", .{});
         defer f.close();
         try f.writeAll("asset-data");
     }
@@ -3253,8 +3253,8 @@ test "installSkillFromPath rejects missing manifest" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
-    try tmp.dir.makePath("workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
 
     const base = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(base);
@@ -3271,7 +3271,7 @@ test "removeSkill nonexistent returns SkillNotFound" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills");
+    try tmp.dir.makeDir(std.Options.debug_io, "skills");
 
     const workspace = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(workspace);
@@ -3292,8 +3292,8 @@ test "installSkillFromPath uses source directory name even when manifest name is
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("source");
-    try tmp.dir.makePath("workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "source");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
 
     // Manifest name must not influence destination directory naming.
     {
@@ -3389,7 +3389,7 @@ test "loadCommunitySkills loads .md files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("community");
+    try tmp.dir.makeDir(std.Options.debug_io, "community");
 
     // Create two .md files and one non-.md file
     {
@@ -3647,7 +3647,7 @@ test "loadSkill reads always field" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("skill.json", .{});
+        const f = try tmp.dir.createFile(std.Options.debug_io, "skill.json", .{});
         defer f.close();
         try f.writeAll("{\"name\": \"always-skill\", \"always\": true, \"requires_bins\": [\"ls\"]}");
     }
@@ -3815,7 +3815,7 @@ test "listSkillsMerged runs checkRequirements" {
     }
 
     // Empty workspace
-    try tmp.dir.makePath("workspace");
+    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
 
     const base = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(base);
@@ -3871,7 +3871,7 @@ test "countMdFiles counts only .md files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("countmd");
+    try tmp.dir.makeDir(std.Options.debug_io, "countmd");
 
     // Create 3 .md files and 2 non-.md files
     inline for (.{ "a.md", "b.md", "c.md", "readme.txt", "data.json" }) |name| {

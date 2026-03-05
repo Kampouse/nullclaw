@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");

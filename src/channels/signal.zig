@@ -33,6 +33,7 @@
 //!     signal-cli --account +1234567890 daemon --http 127.0.0.1:8080
 
 const std = @import("std");
+const util = @import("../util.zig");
 const builtin = @import("builtin");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");

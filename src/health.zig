@@ -29,7 +29,7 @@ var pending_error_msg: ?[]const u8 = null;
 
 fn ensureInit() void {
     if (!registry_started) {
-        registry_start_time = std.time.timestamp();
+        registry_start_time = util.timestampUnix();
         registry_started = true;
     }
 }
@@ -114,7 +114,7 @@ pub fn snapshot() HealthSnapshot {
     defer registry_mutex.unlock();
     ensureInit();
 
-    const now = std.time.timestamp();
+    const now = util.timestampUnix();
     const uptime: u64 = if (now > registry_start_time) @intCast(now - registry_start_time) else 0;
 
     return .{
