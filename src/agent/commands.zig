@@ -1463,8 +1463,9 @@ fn handleKillCommand(self: anytype, arg: []const u8) ![]const u8 {
     const task_id = parseTaskId(target) orelse
         return try self.allocator.dupe(u8, "Usage: /kill <id|all>");
 
-    manager.mutex.lock();
-    defer manager.mutex.unlock();
+    const mutex_io = std.Options.debug_io;
+    manager.mutex.lock(mutex_io) catch {};
+    defer manager.mutex.unlock(mutex_io);
 
     const state = manager.tasks.get(task_id) orelse
         return try std.fmt.allocPrint(self.allocator, "Task #{d} not found.", .{task_id});
