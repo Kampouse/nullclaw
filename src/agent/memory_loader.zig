@@ -151,7 +151,6 @@ pub fn loadContextWithRuntime(
 
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
     var wrote_header = false;
 
     for (candidates) |cand| {
@@ -160,17 +159,18 @@ pub fn loadContextWithRuntime(
             if (isInternalMemoryKey(extracted)) continue;
         }
         if (!wrote_header) {
-            try w.writeAll("[Memory context]\n");
+            try buf.appendSlice(allocator, "[Memory context]\n");
             wrote_header = true;
         }
         const snippet = truncateUtf8(cand.snippet, MAX_CONTEXT_BYTES / 2);
         const sanitized = try sanitizeMemoryText(allocator, snippet);
         defer allocator.free(sanitized);
-        try std.fmt.format(w, "- {s}: {s}\n", .{ cand.key, sanitized });
+        var line_buf: [1024]u8 = undefined;
+        try buf.appendSlice(allocator, try std.fmt.bufPrint(&line_buf, "- {s}: {s}\n", .{ cand.key, sanitized }));
         if (buf.items.len >= MAX_CONTEXT_BYTES) break;
     }
     if (!wrote_header) return try allocator.dupe(u8, "");
-    try w.writeAll("\n");
+    try buf.appendSlice(allocator, "\n");
 
     return try buf.toOwnedSlice(allocator);
 }
