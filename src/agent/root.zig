@@ -539,11 +539,18 @@ pub const Agent = struct {
     pub fn formatModelStatus(self: *const Agent) ![]const u8 {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
+        const allocator = self.allocator;
+        var buf: [256]u8 = undefined;
 
-        try w.print("Current model: {s}\n", .{self.model_name});
-        try w.print("Default model: {s}\n", .{self.default_model});
-        try w.print("Default provider: {s}\n", .{self.default_provider});
+        try out.appendSlice(allocator, "Current model: ");
+        try out.appendSlice(allocator, self.model_name);
+        try out.appendSlice(allocator, "\n");
+        try out.appendSlice(allocator, "Default model: ");
+        try out.appendSlice(allocator, self.default_model);
+        try out.appendSlice(allocator, "\n");
+        try out.appendSlice(allocator, "Default provider: ");
+        try out.appendSlice(allocator, self.default_provider);
+        try out.appendSlice(allocator, "\n");
 
         var provider_names: std.ArrayListUnmanaged([]const u8) = .empty;
         defer provider_names.deinit(self.allocator);
@@ -556,7 +563,7 @@ pub const Agent = struct {
         }
 
         if (provider_names.items.len > 0) {
-            try w.writeAll("\nProviders:\n");
+            try out.appendSlice(allocator, "\nProviders:\n");
             for (provider_names.items) |provider_name| {
                 const is_default = std.mem.eql(u8, provider_name, self.default_provider);
                 const is_fallback = self.providerIsFallback(provider_name);
@@ -568,11 +575,12 @@ pub const Agent = struct {
                     " [fallback]"
                 else
                     "";
-                try w.print("  - {s}{s} (auth: {s})\n", .{
-                    provider_name,
-                    role_label,
-                    self.providerAuthStatus(provider_name),
-                });
+                try out.appendSlice(allocator, "  - ");
+                try out.appendSlice(allocator, provider_name);
+                try out.appendSlice(allocator, role_label);
+                try out.appendSlice(allocator, " (auth: ");
+                try out.appendSlice(allocator, self.providerAuthStatus(provider_name));
+                try out.appendSlice(allocator, ")\n");
             }
         }
 
@@ -588,7 +596,7 @@ pub const Agent = struct {
         }
 
         if (model_names.items.len > 0) {
-            try w.writeAll("\nModels:\n");
+            try out.appendSlice(allocator, "\nModels:\n");
             for (model_names.items) |model_name| {
                 const is_current = std.mem.eql(u8, model_name, self.model_name);
                 const is_default = std.mem.eql(u8, model_name, self.default_model);
@@ -600,31 +608,36 @@ pub const Agent = struct {
                     " [default]"
                 else
                     "";
-                try w.print("  - {s}{s}\n", .{ model_name, role_label });
+                try out.appendSlice(allocator, "  - ");
+                try out.appendSlice(allocator, model_name);
+                try out.appendSlice(allocator, role_label);
+                try out.appendSlice(allocator, "\n");
             }
         }
 
-        try w.writeAll("\nProvider chain: ");
-        try w.writeAll(self.default_provider);
+        try out.appendSlice(allocator, "\nProvider chain: ");
+        try out.appendSlice(allocator, self.default_provider);
         if (self.fallback_providers.len == 0) {
-            try w.writeAll(" (no fallback providers)");
+            try out.appendSlice(allocator, " (no fallback providers)");
         } else {
             for (self.fallback_providers) |fallback_provider| {
-                try w.print(" -> {s}", .{fallback_provider});
+                try out.appendSlice(allocator, " -> ");
+                try out.appendSlice(allocator, fallback_provider);
             }
         }
 
-        try w.writeAll("\nModel chain: ");
-        try w.writeAll(self.model_name);
+        try out.appendSlice(allocator, "\nModel chain: ");
+        try out.appendSlice(allocator, self.model_name);
         if (self.currentModelFallbacks()) |fallbacks| {
             for (fallbacks) |fallback_model| {
-                try w.print(" -> {s}", .{fallback_model});
+                try out.appendSlice(allocator, " -> ");
+                try out.appendSlice(allocator, fallback_model);
             }
         } else {
-            try w.writeAll(" (no configured fallbacks)");
+            try out.appendSlice(allocator, " (no configured fallbacks)");
         }
 
-        try w.writeAll("\nSwitch: /model <name>");
+        try out.appendSlice(allocator, "\nSwitch: /model <name>");
         return try out.toOwnedSlice(self.allocator);
     }
 
