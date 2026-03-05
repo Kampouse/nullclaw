@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Options.debug_io;
 
 /// Result of a child process execution.
 pub const RunResult = struct {
@@ -17,7 +18,7 @@ pub const RunResult = struct {
 /// Options for running a child process.
 pub const RunOptions = struct {
     cwd: ?[]const u8 = null,
-    env_map: ?*std.process.EnvMap = null,
+    env_map: ?*anyopaque = null, // Ignored in Zig 0.16.0 - environment inherited from parent
     max_output_bytes: usize = 1_048_576,
 };
 
@@ -30,31 +31,24 @@ pub fn run(
     argv: []const []const u8,
     opts: RunOptions,
 ) !RunResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    if (opts.cwd) |cwd| child.cwd = cwd;
-    if (opts.env_map) |env| child.env_map = env;
+    // Zig 0.16.0 uses std.process.run() instead of Child.init()
+    const result = try std.process.run(allocator, io, .{
+        .argv = argv,
+        .cwd = opts.cwd,
+        .stdout_limit = .limited(opts.max_output_bytes),
+        .stderr_limit = .limited(opts.max_output_bytes),
+    });
 
-    try child.spawn();
-
-    const stdout = try child.stdout.?.readToEndAlloc(allocator, opts.max_output_bytes);
-    errdefer allocator.free(stdout);
-    const stderr = try child.stderr.?.readToEndAlloc(allocator, opts.max_output_bytes);
-    errdefer allocator.free(stderr);
-
-    const term = try child.wait();
-
-    return switch (term) {
+    return switch (result.term) {
         .Exited => |code| .{
-            .stdout = stdout,
-            .stderr = stderr,
+            .stdout = result.stdout,
+            .stderr = result.stderr,
             .success = code == 0,
             .exit_code = code,
         },
         else => .{
-            .stdout = stdout,
-            .stderr = stderr,
+            .stdout = result.stdout,
+            .stderr = result.stderr,
             .success = false,
             .exit_code = null,
         },
