@@ -987,10 +987,13 @@ fn handleAllowlistCommand(self: anytype, arg: []const u8) ![]const u8 {
     if (self.policy) |pol| {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.writeAll("Allowlisted commands:\n");
+        const allocator = self.allocator;
+        
+        try out.appendSlice(allocator, "Allowlisted commands:\n");
         for (pol.allowed_commands) |cmd| {
-            try w.print("  - {s}\n", .{cmd});
+            try out.appendSlice(allocator, "  - ");
+            try out.appendSlice(allocator, cmd);
+            try out.appendSlice(allocator, "\n");
         }
         return try out.toOwnedSlice(self.allocator);
     }
