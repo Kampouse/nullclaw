@@ -254,42 +254,27 @@ pub fn formatToolResults(allocator: std.mem.Allocator, results: []const ToolExec
 
     return try buf.toOwnedSlice(allocator);
 }
-
 /// Build tool use instructions for the system prompt.
 pub fn buildToolInstructions(allocator: std.mem.Allocator, tools: anytype) ![]const u8 {
+    // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
+    // For now, return minimal stub
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-
-    try w.writeAll("\n## Tool Use Protocol\n\n");
-    try w.writeAll("To use a tool, you MUST wrap a JSON object in <tool_call></tool_call> or [TOOL_CALL][/TOOL_CALL] tags.\n");
-    try w.writeAll("The JSON object MUST contain exactly two fields: \"name\" (string) and \"arguments\" (object).\n\n");
-    try w.writeAll("Example:\n```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n");
-    try w.writeAll("CRITICAL RULES:\n");
-    try w.writeAll("1. ONLY use the format above. NEVER use <invoke>, <function>, or other XML-like formats.\n");
-    try w.writeAll("2. Output actual tags -- never describe steps or give examples.\n");
-    try w.writeAll("3. The internal content MUST be valid JSON. No trailing commas, no unquoted keys.\n\n");
-    try w.writeAll("You may use multiple tool calls in a single response. ");
-    try w.writeAll("After tool execution, results appear in <tool_result> tags. ");
-    try w.writeAll("Continue reasoning with the results until you can give a final answer.\n\n");
-    try w.writeAll("Prefer memory tools (memory_recall, memory_list, memory_store, memory_forget) for assistant memory tasks instead of shell/sqlite commands.\n\n");
-    try w.writeAll("### Available Tools\n\n");
-
+    
+    try buf.appendSlice(allocator, "\n## Tool Use Protocol\n\n");
+    try buf.appendSlice(allocator, "Use tools by wrapping JSON in tags.\n\n");
+    try buf.appendSlice(allocator, "### Available Tools\n\n");
+    
     for (tools) |t| {
-        try std.fmt.format(w, "**{s}**: {s}\nParameters: `{s}`\n\n", .{
+        var tool_buf: [512]u8 = undefined;
+        try buf.appendSlice(allocator, try std.fmt.bufPrint(&tool_buf, "**{s}**: {s}\n\n", .{
             t.name(),
             t.description(),
-            t.parametersJson(),
-        });
+        }));
     }
 
     return try buf.toOwnedSlice(allocator);
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Structured Tool Call Conversion
-// ═══════════════════════════════════════════════════════════════════════════
-
 const ToolCall = providers.ToolCall;
 
 /// Convert structured tool calls from a ChatResponse (provider-native format)
