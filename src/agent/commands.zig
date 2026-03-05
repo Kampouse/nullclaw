@@ -2467,19 +2467,21 @@ fn handleMemoryCommand(self: anytype, arg: []const u8) ![]const u8 {
         const shown = @min(limit, filtered_total);
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print("Memory entries: showing {d}/{d}\n", .{ shown, filtered_total });
+        const allocator = self.allocator;
+        var buf: [256]u8 = undefined;
+        
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Memory entries: showing {d}/{d}\n", .{ shown, filtered_total }));
         var written: usize = 0;
         for (entries) |e| {
             if (!include_internal and isInternalMemoryEntryKeyOrContent(e.key, e.content)) continue;
             if (written >= shown) break;
             const preview_len = @min(@as(usize, 120), e.content.len);
             const preview = e.content[0..preview_len];
-            try w.print("  {d}. {s} [{s}] {s}\n", .{ written + 1, e.key, e.category.toString(), e.timestamp });
-            try w.print("     {s}{s}\n", .{ preview, if (e.content.len > preview_len) "..." else "" });
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  {d}. {s} [{s}] {s}\n", .{ written + 1, e.key, e.category.toString(), e.timestamp }));
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "     {s}{s}\n", .{ preview, if (e.content.len > preview_len) "..." else "" }));
             written += 1;
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     return try self.allocator.dupe(u8, usage);
