@@ -1601,17 +1601,19 @@ fn handleTellCommand(self: anytype, arg: []const u8) ![]const u8 {
 fn handlePollCommand(self: anytype) ![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
+    const allocator = self.allocator;
+    var buf: [256]u8 = undefined;
 
     var wrote_any = false;
     if (self.pending_exec_command) |cmd| {
         wrote_any = true;
-        try w.print("Pending approval id={d}: {s}\n", .{ self.pending_exec_id, cmd });
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Pending approval id={d}: {s}\n", .{ self.pending_exec_id, cmd }));
     }
 
     if (findSubagentManager(self)) |manager| {
-        manager.mutex.lock();
-        defer manager.mutex.unlock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {};
+        defer manager.mutex.unlock(mutex_io);
         var running: u32 = 0;
         var completed: u32 = 0;
         var failed: u32 = 0;
@@ -1630,17 +1632,18 @@ fn handlePollCommand(self: anytype) ![]const u8 {
         }
         if (visible > 0) {
             wrote_any = true;
-            try w.print(
+            try out.appendSlice(allocator, try std.fmt.bufPrint(
+                &buf,
                 "Subagent tasks: running={d}, completed={d}, failed={d}\n",
                 .{ running, completed, failed },
-            );
+            ));
         }
     }
 
     if (!wrote_any) {
         return try self.allocator.dupe(u8, "No pending approvals or background tasks.");
     }
-    return try out.toOwnedSlice(self.allocator);
+    return try out.toOwnedSlice(allocator);
 }
 
 fn handleStopCommand(self: anytype) ![]const u8 {
