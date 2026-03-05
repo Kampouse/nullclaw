@@ -1323,10 +1323,11 @@ fn formatSubagentList(self: anytype, include_details: bool) ![]const u8 {
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
+    const allocator = self.allocator;
 
-    manager.mutex.lock();
-    defer manager.mutex.unlock();
+    const mutex_io = std.Options.debug_io;
+    manager.mutex.lock(mutex_io) catch {};
+    defer manager.mutex.unlock(mutex_io);
 
     var running: u32 = 0;
     var completed: u32 = 0;
@@ -1345,20 +1346,22 @@ fn formatSubagentList(self: anytype, include_details: bool) ![]const u8 {
             .failed => failed += 1,
         }
 
-        try w.print("#{d} {s} [{s}]", .{ task_id, state.label, taskStatusLabel(state.status) });
+        var buf: [256]u8 = undefined;
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "#{d} {s} [{s}]", .{ task_id, state.label, taskStatusLabel(state.status) }));
         if (include_details and state.status == .failed and state.error_msg != null) {
-            try w.print(" error={s}", .{state.error_msg.?});
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, " error={s}", .{state.error_msg.?}));
         }
-        try w.writeAll("\n");
+        try out.appendSlice(allocator, "\n");
     }
 
     if (visible_count == 0) {
-        try w.writeAll("No subagents tracked in this session.");
-        return try out.toOwnedSlice(self.allocator);
+        try out.appendSlice(allocator, "No subagents tracked in this session.");
+        return try out.toOwnedSlice(allocator);
     }
 
-    try w.print("Totals: running={d}, completed={d}, failed={d}", .{ running, completed, failed });
-    return try out.toOwnedSlice(self.allocator);
+    var buf2: [128]u8 = undefined;
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf2, "Totals: running={d}, completed={d}, failed={d}", .{ running, completed, failed }));
+    return try out.toOwnedSlice(allocator);
 }
 
 fn spawnSubagentTask(self: anytype, task: []const u8, label: []const u8) ![]const u8 {
