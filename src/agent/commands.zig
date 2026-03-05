@@ -1635,7 +1635,11 @@ fn handleStopCommand(self: anytype) ![]const u8 {
 
     if (findSubagentManager(self)) |manager| {
         var running: u32 = 0;
-        manager.mutex.lock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {
+            // Mutex lock failed - continue without counting running tasks
+            return try std.fmt.allocPrint(self.allocator, "Pending: {d}", .{pending_count});
+        };
         {
             var it = manager.tasks.iterator();
             while (it.next()) |entry| {
