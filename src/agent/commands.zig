@@ -2002,15 +2002,23 @@ fn handleSkillCommand(self: anytype, arg: []const u8) ![]const u8 {
         }
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.writeAll("Available skills:\n");
+        const allocator = self.allocator;
+        
+        try out.appendSlice(allocator, "Available skills:\n");
         for (skills) |skill| {
-            try w.print("  - {s}", .{skill.name});
-            if (skill.description.len > 0) try w.print(": {s}", .{skill.description});
-            if (!skill.available) try w.print(" (unavailable: {s})", .{skill.missing_deps});
-            try w.writeAll("\n");
+            var buf: [256]u8 = undefined;
+            try out.appendSlice(allocator, "  - ");
+            try out.appendSlice(allocator, skill.name);
+            if (skill.description.len > 0) {
+                try out.appendSlice(allocator, ": ");
+                try out.appendSlice(allocator, skill.description);
+            }
+            if (!skill.available) {
+                try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, " (unavailable: {s})", .{skill.missing_deps}));
+            }
+            try out.appendSlice(allocator, "\n");
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     var selected: ?*const skills_mod.Skill = null;
