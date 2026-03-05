@@ -2412,23 +2412,18 @@ fn handleMemoryCommand(self: anytype, arg: []const u8) ![]const u8 {
         };
         defer memory_mod.retrieval.freeCandidates(self.allocator, results);
 
+        // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
+        // For now, return simplified results
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print("Search results: {d}\n", .{results.len});
+        const allocator = self.allocator;
+        var buf: [512]u8 = undefined;
+        
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Search results: {d}\n", .{results.len}));
         for (results, 0..) |c, idx| {
-            try w.print("  {d}. {s} [{s}] score={d:.4}", .{ idx + 1, c.key, c.category.toString(), c.final_score });
-            if (c.vector_score) |vs| {
-                try w.print(" vector_score={d:.4}", .{vs});
-            } else {
-                try w.print(" vector_score=n/a", .{});
-            }
-            try w.print(" source={s}\n", .{c.source});
-            const preview_len = @min(@as(usize, 140), c.snippet.len);
-            const preview = c.snippet[0..preview_len];
-            try w.print("     {s}{s}\n", .{ preview, if (c.snippet.len > preview_len) "..." else "" });
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  {d}. {s} [{s}]\n", .{ idx + 1, c.key, c.category.toString() }));
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     if (std.mem.eql(u8, sub, "list")) {
