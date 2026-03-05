@@ -15,13 +15,12 @@ const BOOTSTRAP_MAX_CHARS: usize = 20_000;
 const MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 const GuardedWorkspaceFileOpen = struct {
-    file: std.fs.File,
+    file: std.Io.File,
     canonical_path: []u8,
-    stat: std.fs.File.Stat,
 };
 
-fn deinitGuardedWorkspaceFile(allocator: std.mem.Allocator, opened: GuardedWorkspaceFileOpen) void {
-    opened.file.close();
+fn deinitGuardedWorkspaceFile(allocator: std.mem.Allocator, opened: GuardedWorkspaceFileOpen, io: std.Io) void {
+    opened.file.close(io);
     allocator.free(opened.canonical_path);
 }
 
