@@ -1425,8 +1425,9 @@ fn handleKillCommand(self: anytype, arg: []const u8) ![]const u8 {
         var ids: std.ArrayListUnmanaged(u64) = .empty;
         defer ids.deinit(self.allocator);
 
-        manager.mutex.lock();
-        defer manager.mutex.unlock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {};
+        defer manager.mutex.unlock(mutex_io);
 
         var running: u32 = 0;
         var it = manager.tasks.iterator();
