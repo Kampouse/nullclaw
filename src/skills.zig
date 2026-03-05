@@ -292,7 +292,7 @@ pub fn loadSkill(allocator: std.mem.Allocator, skill_dir_path: []const u8) !Skil
     const instructions_path = try std.fmt.allocPrint(allocator, "{s}/SKILL.md", .{skill_dir_path});
     defer allocator.free(instructions_path);
 
-    const toml_bytes = std.Io.Dir.cwd().readFileAlloc(allocator, toml_path, 128 * 1024) catch |err| switch (err) {
+    const toml_bytes = std.Io.Dir.cwd().readFileAlloc(io, allocator, toml_path, 128 * 1024) catch |err| switch (err) {
         error.FileNotFound => null,
         else => return error.ManifestNotFound,
     };
@@ -314,7 +314,7 @@ pub fn loadSkill(allocator: std.mem.Allocator, skill_dir_path: []const u8) !Skil
         errdefer allocator.free(author);
         const path = try allocator.dupe(u8, skill_dir_path);
         errdefer allocator.free(path);
-        const instructions = std.Io.Dir.cwd().readFileAlloc(allocator, instructions_path, 256 * 1024) catch
+        const instructions = std.Io.Dir.cwd().readFileAlloc(io, allocator, instructions_path, 256 * 1024) catch
             try allocator.dupe(u8, "");
 
         return Skill{
@@ -331,7 +331,7 @@ pub fn loadSkill(allocator: std.mem.Allocator, skill_dir_path: []const u8) !Skil
         };
     }
 
-    const manifest_bytes = std.Io.Dir.cwd().readFileAlloc(allocator, manifest_path, 64 * 1024) catch |err| switch (err) {
+    const manifest_bytes = std.Io.Dir.cwd().readFileAlloc(io, allocator, manifest_path, 64 * 1024) catch |err| switch (err) {
         error.FileNotFound => null,
         else => return error.ManifestNotFound,
     };
@@ -353,7 +353,7 @@ pub fn loadSkill(allocator: std.mem.Allocator, skill_dir_path: []const u8) !Skil
         const path = try allocator.dupe(u8, skill_dir_path);
         errdefer allocator.free(path);
 
-        const instructions = std.Io.Dir.cwd().readFileAlloc(allocator, instructions_path, 256 * 1024) catch
+        const instructions = std.Io.Dir.cwd().readFileAlloc(io, allocator, instructions_path, 256 * 1024) catch
             try allocator.dupe(u8, "");
 
         return Skill{
@@ -370,7 +370,7 @@ pub fn loadSkill(allocator: std.mem.Allocator, skill_dir_path: []const u8) !Skil
         };
     }
 
-    const instructions = std.Io.Dir.cwd().readFileAlloc(allocator, instructions_path, 256 * 1024) catch
+    const instructions = std.Io.Dir.cwd().readFileAlloc(io, allocator, instructions_path, 256 * 1024) catch
         return error.ManifestNotFound;
     errdefer allocator.free(instructions);
 
@@ -1059,7 +1059,7 @@ fn auditSkillFileContent(
     const toml = isTomlFile(file_path);
     if (!markdown and !toml) return;
 
-    const content = std.Io.Dir.cwd().readFileAlloc(allocator, file_path, SKILL_AUDIT_MAX_FILE_BYTES) catch |err| switch (err) {
+    const content = std.Io.Dir.cwd().readFileAlloc(io, allocator, file_path, SKILL_AUDIT_MAX_FILE_BYTES) catch |err| switch (err) {
         error.FileTooBig => return error.SkillSecurityAuditFailed,
         else => return error.SkillSecurityAuditFailed,
     };
@@ -1724,7 +1724,7 @@ pub fn loadCommunitySkills(allocator: std.mem.Allocator, community_dir: []const 
         const file_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ community_dir, name_slice });
         defer allocator.free(file_path);
 
-        const content = std.Io.Dir.cwd().readFileAlloc(allocator, file_path, 256 * 1024) catch continue;
+        const content = std.Io.Dir.cwd().readFileAlloc(io, allocator, file_path, 256 * 1024) catch continue;
 
         const duped_name = try allocator.dupe(u8, skill_name);
         errdefer allocator.free(duped_name);
@@ -2872,7 +2872,7 @@ test "installSkillFromPath copies full source directory" {
 
     const installed_payload = try std.fs.path.join(allocator, &.{ workspace, "skills", "source", "assets", "payload.txt" });
     defer allocator.free(installed_payload);
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(allocator, installed_payload, 1024);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, allocator, installed_payload, 1024);
     defer allocator.free(bytes);
     try std.testing.expectEqualStrings("asset-data", bytes);
 }
@@ -2901,7 +2901,7 @@ test "installSkillFromPath supports markdown-only source directory" {
 
     const installed_path = try std.fs.path.join(allocator, &.{ workspace, "skills", "source-md", "SKILL.md" });
     defer allocator.free(installed_path);
-    const content = try std.Io.Dir.cwd().readFileAlloc(allocator, installed_path, 1024);
+    const content = try std.Io.Dir.cwd().readFileAlloc(io, allocator, installed_path, 1024);
     // TODO: Zig 0.16.0 - disabled
     // defer allocator.free(content);
     try std.testing.expectEqualStrings("# Markdown only install", content);
@@ -2967,7 +2967,7 @@ test "installSkillFromPath supports relative source path" {
 
     const installed = try std.fs.path.join(allocator, &.{ workspace, "skills", "source-rel", "SKILL.md" });
     defer allocator.free(installed);
-    const content = try std.Io.Dir.cwd().readFileAlloc(allocator, installed, 1024);
+    const content = try std.Io.Dir.cwd().readFileAlloc(io, allocator, installed, 1024);
     // TODO: Zig 0.16.0 - disabled
     // defer allocator.free(content);
     try std.testing.expectEqualStrings("# Relative install skill", content);
@@ -3241,7 +3241,7 @@ test "installSkillFromGit keeps clone directory name when manifest name differs"
     const payload_path = try std.fs.path.join(allocator, &.{ installed_skill_path, "assets", "payload.txt" });
     defer allocator.free(payload_path);
 
-    const payload = try std.Io.Dir.cwd().readFileAlloc(allocator, payload_path, 1024);
+    const payload = try std.Io.Dir.cwd().readFileAlloc(io, allocator, payload_path, 1024);
     defer allocator.free(payload);
     try std.testing.expectEqualStrings("asset-data", payload);
 
