@@ -21,8 +21,8 @@ const GuardedWorkspaceFileOpen = struct {
     canonical_path: []u8,
 };
 
-fn deinitGuardedWorkspaceFile(allocator: std.mem.Allocator, opened: GuardedWorkspaceFileOpen, io: std.Io) void {
-    opened.file.close(io);
+fn deinitGuardedWorkspaceFile(allocator: std.mem.Allocator, opened: GuardedWorkspaceFileOpen, io_arg: std.Io) void {
+    opened.file.close(io_arg);
     allocator.free(opened.canonical_path);
 }
 
