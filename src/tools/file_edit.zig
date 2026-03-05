@@ -3,8 +3,12 @@ const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
-const isPathSafe = @import("path_security.zig").isPathSafe;
-const isResolvedPathAllowed = @import("path_security.zig").isResolvedPathAllowed;
+const path_security = @import("path_security.zig");
+const isPathSafe = path_security.isPathSafe;
+const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
+const resolvePathAlloc = path_security.resolvePathAlloc;
+
+const io = std.Options.debug_io;
 
 /// Default maximum file size to read for editing (10MB).
 const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -55,14 +59,14 @@ pub const FileEditTool = struct {
         defer allocator.free(full_path);
 
         // Resolve to catch symlink escapes
-        const resolved = std.fs.cwd().realpathAlloc(allocator, full_path) catch |err| {
+        const resolved = resolvePathAlloc(allocator, full_path) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve file path: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
         defer allocator.free(resolved);
 
         // Validate against workspace + allowed_paths + system blocklist
-        const ws_resolved: ?[]const u8 = std.fs.cwd().realpathAlloc(allocator, self.workspace_dir) catch null;
+        const ws_resolved: ?[]const u8 = resolvePathAlloc(allocator, self.workspace_dir) catch null;
         defer if (ws_resolved) |wr| allocator.free(wr);
 
         if (!isResolvedPathAllowed(allocator, resolved, ws_resolved orelse "", self.allowed_paths)) {
@@ -70,16 +74,17 @@ pub const FileEditTool = struct {
         }
 
         // Read existing file contents
-        const file_r = std.fs.openFileAbsolute(resolved, .{}) catch |err| {
+        const file_r = std.Io.Dir.openFileAbsolute(io, resolved, .{}) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
-        const contents = file_r.readToEndAlloc(allocator, self.max_file_size) catch |err| {
-            file_r.close();
+        defer file_r.close(io);
+        var read_buf: [1024 * 1024]u8 = undefined;
+        var reader = file_r.reader(io, &read_buf);
+        const contents = reader.interface.readAlloc(allocator, self.max_file_size) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
-        file_r.close();
         defer allocator.free(contents);
 
         // old_text must not be empty
@@ -99,14 +104,20 @@ pub const FileEditTool = struct {
         defer allocator.free(new_contents);
 
         // Write back
-        const file_w = std.fs.createFileAbsolute(resolved, .{ .truncate = true }) catch |err| {
+        const file_w = std.Io.Dir.createFileAbsolute(io, resolved, .{ .truncate = true }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
-        defer file_w.close();
+        defer file_w.close(io);
 
-        file_w.writeAll(new_contents) catch |err| {
+        var write_buf: [1024 * 1024]u8 = undefined;
+        var writer = file_w.writer(io, &write_buf);
+        writer.interface.writeAll(new_contents) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        };
+        writer.interface.flush() catch |err| {
+            const msg = try std.fmt.allocPrint(allocator, "Failed to flush file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
 

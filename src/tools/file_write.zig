@@ -4,8 +4,12 @@ const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
-const isPathSafe = @import("path_security.zig").isPathSafe;
-const isResolvedPathAllowed = @import("path_security.zig").isResolvedPathAllowed;
+const path_security = @import("path_security.zig");
+const isPathSafe = path_security.isPathSafe;
+const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
+const resolvePathAlloc = path_security.resolvePathAlloc;
+
+const io = std.Options.debug_io;
 
 /// Write file contents with workspace path scoping.
 pub const FileWriteTool = struct {
@@ -48,13 +52,13 @@ pub const FileWriteTool = struct {
         };
         defer allocator.free(full_path);
 
-        const ws_resolved: ?[]const u8 = std.fs.cwd().realpathAlloc(allocator, self.workspace_dir) catch null;
+        const ws_resolved: ?[]const u8 = resolvePathAlloc(allocator, self.workspace_dir) catch null;
         defer if (ws_resolved) |wr| allocator.free(wr);
         const ws_path = ws_resolved orelse "";
 
         // Resolve and validate before any filesystem writes so symlink targets
         // and disallowed absolute destinations are rejected without side effects.
-        const resolved_target: ?[]const u8 = std.fs.cwd().realpathAlloc(allocator, full_path) catch |err| switch (err) {
+        const resolved_target: ?[]const u8 = resolvePathAlloc(allocator, full_path) catch |err| switch (err) {
             error.FileNotFound => null,
             else => {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});

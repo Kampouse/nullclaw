@@ -540,7 +540,6 @@ pub const Agent = struct {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
         const allocator = self.allocator;
-        var buf: [256]u8 = undefined;
 
         try out.appendSlice(allocator, "Current model: ");
         try out.appendSlice(allocator, self.model_name);
