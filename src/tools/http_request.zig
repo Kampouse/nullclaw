@@ -105,8 +105,9 @@ pub const HttpRequestTool = struct {
             header_list.deinit(allocator);
         }
 
-        // Execute request using std.http.Client (Zig 0.15 API)
-        var client: std.http.Client = .{ .allocator = allocator };
+        // Execute request using std.http.Client (Zig 0.16.0 API)
+        const io = std.Options.debug_io;
+        var client: std.http.Client = .{ .allocator = allocator, .io = io };
         defer client.deinit();
 
         const protocol: std.http.Client.Protocol = if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) .tls else .plain;
