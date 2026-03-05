@@ -100,19 +100,6 @@ pub fn loadContext(
     
     return try buf.toOwnedSlice(allocator);
 }
-                appended += 1;
-                if (appended >= DEFAULT_RECALL_LIMIT or buf.items.len >= MAX_CONTEXT_BYTES) break;
-            }
-        }
-    }
-
-    if (!wrote_header) {
-        return try allocator.dupe(u8, "");
-    }
-    try w.writeAll("\n");
-
-    return try buf.toOwnedSlice(allocator);
-}
 
 /// Load context using the full retrieval pipeline (hybrid search, RRF, etc.)
 /// when a MemoryRuntime is available.
