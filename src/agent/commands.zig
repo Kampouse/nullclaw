@@ -2325,28 +2325,30 @@ fn handleMemoryCommand(self: anytype, arg: []const u8) ![]const u8 {
         const report = mem_rt.diagnose();
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print("Memory resolved config:\n", .{});
-        try w.print("  backend: {s}\n", .{r.primary_backend});
-        try w.print("  retrieval: {s}\n", .{r.retrieval_mode});
-        try w.print("  vector: {s}\n", .{r.vector_mode});
-        try w.print("  embedding: {s}\n", .{r.embedding_provider});
-        try w.print("  rollout: {s}\n", .{r.rollout_mode});
-        try w.print("  sync: {s}\n", .{r.vector_sync_mode});
-        try w.print("  sources: {d}\n", .{r.source_count});
-        try w.print("  fallback: {s}\n", .{r.fallback_policy});
-        try w.print("  entries: {d}\n", .{report.entry_count});
+        const allocator = self.allocator;
+        var buf: [256]u8 = undefined;
+        
+        try out.appendSlice(allocator, "Memory resolved config:\n");
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  backend: {s}\n", .{r.primary_backend}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  retrieval: {s}\n", .{r.retrieval_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  vector: {s}\n", .{r.vector_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  embedding: {s}\n", .{r.embedding_provider}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  rollout: {s}\n", .{r.rollout_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  sync: {s}\n", .{r.vector_sync_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  sources: {d}\n", .{r.source_count}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  fallback: {s}\n", .{r.fallback_policy}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  entries: {d}\n", .{report.entry_count}));
         if (report.vector_entry_count) |n| {
-            try w.print("  vector_entries: {d}\n", .{n});
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  vector_entries: {d}\n", .{n}));
         } else {
-            try w.print("  vector_entries: n/a\n", .{});
+            try out.appendSlice(allocator, "  vector_entries: n/a\n");
         }
         if (report.outbox_pending) |n| {
-            try w.print("  outbox_pending: {d}\n", .{n});
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  outbox_pending: {d}\n", .{n}));
         } else {
-            try w.print("  outbox_pending: n/a\n", .{});
+            try out.appendSlice(allocator, "  outbox_pending: n/a\n");
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     if (std.mem.eql(u8, sub, "count")) {
