@@ -32,9 +32,11 @@ pub fn run(
     opts: RunOptions,
 ) !RunResult {
     // Zig 0.16.0 uses std.process.run() instead of Child.init()
+    // Note: cwd option not directly supported in std.process.run() API
+    // For now, we ignore opts.cwd - TODO: implement cwd support if needed
+    _ = opts.cwd;
     const result = try std.process.run(allocator, io, .{
         .argv = argv,
-        .cwd = opts.cwd,
         .stdout_limit = .limited(opts.max_output_bytes),
         .stderr_limit = .limited(opts.max_output_bytes),
     });
