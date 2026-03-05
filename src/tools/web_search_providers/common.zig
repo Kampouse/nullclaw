@@ -36,10 +36,7 @@ pub fn curlGet(
     _ = timeout_secs; // timeout not implemented yet
     if (builtin.is_test) return error.RequestFailed;
 
-    return http_util.curlGet(allocator, url, headers, "30") catch |err| switch (err) {
-        error.HttpUtilStubbed => return error.RequestFailed,
-        else => return error.RequestFailed,
-    };
+    return http_util.curlGet(allocator, url, headers, "30") catch return error.RequestFailed;
 }
 
 pub fn curlPostJson(
@@ -52,10 +49,7 @@ pub fn curlPostJson(
     _ = timeout_secs;
     if (builtin.is_test) return error.RequestFailed;
 
-    return http_util.curlPostWithProxy(allocator, url, body, headers, null, null) catch |err| switch (err) {
-        error.HttpUtilStubbed => return error.RequestFailed,
-        else => return error.RequestFailed,
-    };
+    return http_util.curlPostWithProxy(allocator, url, body, headers, null, null) catch return error.RequestFailed;
 }
 
 pub fn timeoutToString(allocator: std.mem.Allocator, timeout_secs: u64) ![]u8 {
