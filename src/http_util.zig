@@ -2,6 +2,9 @@
 //!
 //! Replaces 9+ local `curlPost` / `curlGet` duplicates across the codebase.
 //! Uses curl to avoid Zig 0.15 std.http.Client segfaults.
+//!
+//! TODO: Zig 0.16.0 - These functions are stubbed out pending rewrite using
+//! std.process.run() or std.http.Client.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -14,11 +17,7 @@ pub const HttpResponse = struct {
 };
 
 /// HTTP POST via curl subprocess with optional proxy and timeout.
-///
-/// `headers` is a slice of header strings (e.g. `"Authorization: Bearer xxx"`).
-/// `proxy` is an optional proxy URL (e.g. `"socks5://host:port"`).
-/// `max_time` is an optional --max-time value as a string (e.g. `"300"`).
-/// Returns the response body. Caller owns returned memory.
+/// TODO: Zig 0.16.0 - Stubbed, needs rewrite
 pub fn curlPostWithProxy(
     allocator: Allocator,
     url: []const u8,
@@ -27,97 +26,13 @@ pub fn curlPostWithProxy(
     proxy: ?[]const u8,
     max_time: ?[]const u8,
 ) ![]u8 {
-    return curlRequestWithProxy(allocator, "POST", url, body, headers, proxy, max_time);
-}
-
-fn curlRequestWithProxy(
-    allocator: Allocator,
-    method: []const u8,
-    url: []const u8,
-    body: []const u8,
-    headers: []const []const u8,
-    proxy: ?[]const u8,
-    max_time: ?[]const u8,
-) ![]u8 {
-    var argv_buf: [40][]const u8 = undefined;
-    var argc: usize = 0;
-
-    argv_buf[argc] = "curl";
-    argc += 1;
-    argv_buf[argc] = "-s";
-    argc += 1;
-    argv_buf[argc] = "-X";
-    argc += 1;
-    argv_buf[argc] = method;
-    argc += 1;
-    argv_buf[argc] = "-H";
-    argc += 1;
-    argv_buf[argc] = "Content-Type: application/json";
-    argc += 1;
-
-    if (proxy) |p| {
-        argv_buf[argc] = "--proxy";
-        argc += 1;
-        argv_buf[argc] = p;
-        argc += 1;
-    }
-
-    if (max_time) |mt| {
-        argv_buf[argc] = "--max-time";
-        argc += 1;
-        argv_buf[argc] = mt;
-        argc += 1;
-    }
-
-    for (headers) |hdr| {
-        if (argc + 2 > argv_buf.len) break;
-        argv_buf[argc] = "-H";
-        argc += 1;
-        argv_buf[argc] = hdr;
-        argc += 1;
-    }
-
-    // Pass payload via stdin to avoid OS argv length limits for large JSON
-    // bodies (e.g. multimodal base64 images).
-    argv_buf[argc] = "--data-binary";
-    argc += 1;
-    argv_buf[argc] = "@-";
-    argc += 1;
-    argv_buf[argc] = url;
-    argc += 1;
-
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-
-    if (child.stdin) |stdin_file| {
-        stdin_file.writeAll(body) catch {
-            stdin_file.close();
-            child.stdin = null;
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
-            return error.CurlWriteError;
-        };
-        stdin_file.close();
-        child.stdin = null;
-    } else {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
-        return error.CurlWriteError;
-    }
-
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch return error.CurlReadError;
-
-    const term = child.wait() catch return error.CurlWaitError;
-    switch (term) {
-        .Exited => |code| if (code != 0) return error.CurlFailed,
-        else => return error.CurlFailed,
-    }
-
-    return stdout;
+    _ = allocator;
+    _ = url;
+    _ = body;
+    _ = headers;
+    _ = proxy;
+    _ = max_time;
+    return error.HttpUtilStubbed;
 }
 
 /// HTTP POST via curl subprocess (no proxy, no timeout).
@@ -126,175 +41,30 @@ pub fn curlPost(allocator: Allocator, url: []const u8, body: []const u8, headers
 }
 
 /// HTTP POST via curl subprocess and include HTTP status code in response.
-/// Caller owns `response.body`.
+/// TODO: Zig 0.16.0 - Stubbed, needs rewrite
 pub fn curlPostWithStatus(
     allocator: Allocator,
     url: []const u8,
     body: []const u8,
     headers: []const []const u8,
 ) !HttpResponse {
-    var argv_buf: [48][]const u8 = undefined;
-    var argc: usize = 0;
-
-    argv_buf[argc] = "curl";
-    argc += 1;
-    argv_buf[argc] = "-s";
-    argc += 1;
-    argv_buf[argc] = "-X";
-    argc += 1;
-    argv_buf[argc] = "POST";
-    argc += 1;
-    argv_buf[argc] = "-H";
-    argc += 1;
-    argv_buf[argc] = "Content-Type: application/json";
-    argc += 1;
-
-    for (headers) |hdr| {
-        if (argc + 2 > argv_buf.len) break;
-        argv_buf[argc] = "-H";
-        argc += 1;
-        argv_buf[argc] = hdr;
-        argc += 1;
-    }
-
-    argv_buf[argc] = "--data-binary";
-    argc += 1;
-    argv_buf[argc] = "@-";
-    argc += 1;
-    argv_buf[argc] = "-w";
-    argc += 1;
-    argv_buf[argc] = "\n%{http_code}";
-    argc += 1;
-    argv_buf[argc] = url;
-    argc += 1;
-
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-
-    if (child.stdin) |stdin_file| {
-        stdin_file.writeAll(body) catch {
-            stdin_file.close();
-            child.stdin = null;
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
-            return error.CurlWriteError;
-        };
-        stdin_file.close();
-        child.stdin = null;
-    } else {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
-        return error.CurlWriteError;
-    }
-
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch return error.CurlReadError;
-    errdefer allocator.free(stdout);
-
-    const term = child.wait() catch return error.CurlWaitError;
-    switch (term) {
-        .Exited => |code| if (code != 0) return error.CurlFailed,
-        else => return error.CurlFailed,
-    }
-
-    const status_sep = std.mem.lastIndexOfScalar(u8, stdout, '\n') orelse return error.CurlParseError;
-    const status_raw = std.mem.trim(u8, stdout[status_sep + 1 ..], " \t\r\n");
-    if (status_raw.len != 3) return error.CurlParseError;
-    const status_code = std.fmt.parseInt(u16, status_raw, 10) catch return error.CurlParseError;
-    const body_slice = stdout[0..status_sep];
-    const response_body = try allocator.dupe(u8, body_slice);
-    allocator.free(stdout);
-
-    return .{
-        .status_code = status_code,
-        .body = response_body,
-    };
+    _ = allocator;
+    _ = url;
+    _ = body;
+    _ = headers;
+    return error.HttpUtilStubbed;
 }
 
 /// HTTP PUT via curl subprocess (no proxy, no timeout).
 pub fn curlPut(allocator: Allocator, url: []const u8, body: []const u8, headers: []const []const u8) ![]u8 {
-    return curlRequestWithProxy(allocator, "PUT", url, body, headers, null, null);
+    _ = allocator;
+    _ = url;
+    _ = body;
+    _ = headers;
+    return error.HttpUtilStubbed;
 }
 
 /// HTTP GET via curl subprocess with optional proxy.
-///
-/// `headers` is a slice of header strings (e.g. `"Authorization: Bearer xxx"`).
-/// `timeout_secs` sets --max-time. Returns the response body. Caller owns returned memory.
-fn curlGetWithProxyAndResolve(
-    allocator: Allocator,
-    url: []const u8,
-    headers: []const []const u8,
-    timeout_secs: []const u8,
-    proxy: ?[]const u8,
-    resolve_entry: ?[]const u8,
-) ![]u8 {
-    var argv_buf: [48][]const u8 = undefined;
-    var argc: usize = 0;
-
-    argv_buf[argc] = "curl";
-    argc += 1;
-    argv_buf[argc] = "-sf";
-    argc += 1;
-    argv_buf[argc] = "--max-time";
-    argc += 1;
-    argv_buf[argc] = timeout_secs;
-    argc += 1;
-
-    if (proxy) |p| {
-        argv_buf[argc] = "--proxy";
-        argc += 1;
-        argv_buf[argc] = p;
-        argc += 1;
-    }
-
-    if (resolve_entry) |entry| {
-        argv_buf[argc] = "--resolve";
-        argc += 1;
-        argv_buf[argc] = entry;
-        argc += 1;
-    }
-
-    for (headers) |hdr| {
-        if (argc + 2 > argv_buf.len) break;
-        argv_buf[argc] = "-H";
-        argc += 1;
-        argv_buf[argc] = hdr;
-        argc += 1;
-    }
-
-    argv_buf[argc] = url;
-    argc += 1;
-
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 4 * 1024 * 1024) catch return error.CurlReadError;
-
-    const term = child.wait() catch return error.CurlWaitError;
-    switch (term) {
-        .Exited => |code| if (code != 0) {
-            allocator.free(stdout);
-            return error.CurlFailed;
-        },
-        else => {
-            allocator.free(stdout);
-            return error.CurlFailed;
-        },
-    }
-
-    return stdout;
-}
-
-/// HTTP GET via curl subprocess with optional proxy.
-///
-/// `headers` is a slice of header strings (e.g. `"Authorization: Bearer xxx"`).
-/// `timeout_secs` sets --max-time. Returns the response body. Caller owns returned memory.
 pub fn curlGetWithProxy(
     allocator: Allocator,
     url: []const u8,
@@ -302,12 +72,15 @@ pub fn curlGetWithProxy(
     timeout_secs: []const u8,
     proxy: ?[]const u8,
 ) ![]u8 {
-    return curlGetWithProxyAndResolve(allocator, url, headers, timeout_secs, proxy, null);
+    _ = allocator;
+    _ = url;
+    _ = headers;
+    _ = timeout_secs;
+    _ = proxy;
+    return error.HttpUtilStubbed;
 }
 
 /// HTTP GET via curl subprocess with a pinned host mapping.
-///
-/// `resolve_entry` must be in curl `--resolve` format: `host:port:address`.
 pub fn curlGetWithResolve(
     allocator: Allocator,
     url: []const u8,
@@ -315,7 +88,12 @@ pub fn curlGetWithResolve(
     timeout_secs: []const u8,
     resolve_entry: []const u8,
 ) ![]u8 {
-    return curlGetWithProxyAndResolve(allocator, url, headers, timeout_secs, null, resolve_entry);
+    _ = allocator;
+    _ = url;
+    _ = headers;
+    _ = timeout_secs;
+    _ = resolve_entry;
+    return error.HttpUtilStubbed;
 }
 
 /// HTTP GET via curl subprocess (no proxy).
@@ -324,71 +102,15 @@ pub fn curlGet(allocator: Allocator, url: []const u8, headers: []const []const u
 }
 
 /// HTTP GET via curl for SSE (Server-Sent Events).
-///
-/// Uses -N (--no-buffer) to disable output buffering, allowing
-/// SSE events to be received in real-time. Also sends Accept: text/event-stream.
 pub fn curlGetSSE(
     allocator: Allocator,
     url: []const u8,
     timeout_secs: []const u8,
 ) ![]u8 {
-    var argv_buf: [40][]const u8 = undefined;
-    var argc: usize = 0;
-
-    argv_buf[argc] = "curl";
-    argc += 1;
-    argv_buf[argc] = "-sf";
-    argc += 1;
-    argv_buf[argc] = "-N";
-    argc += 1;
-    argv_buf[argc] = "--max-time";
-    argc += 1;
-    argv_buf[argc] = timeout_secs;
-    argc += 1;
-    argv_buf[argc] = "-H";
-    argc += 1;
-    argv_buf[argc] = "Accept: text/event-stream";
-    argc += 1;
-    argv_buf[argc] = url;
-    argc += 1;
-
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    child.spawn() catch |err| {
-        std.debug.print("[curlGetSSE] spawn failed: {}\n", .{err});
-        return error.CurlFailed;
-    };
-
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 4 * 1024 * 1024) catch return error.CurlReadError;
-
-    const term = child.wait() catch {
-        allocator.free(stdout);
-        return error.CurlWaitError;
-    };
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                // Exit code 28 = timeout. This is expected for SSE when no data arrives,
-                // but curl may have received some data before timing out - return it.
-                // For other exit codes, treat as error.
-                if (code != 28) {
-                    std.debug.print("[curlGetSSE] curl error: code={}\n", .{code});
-                    allocator.free(stdout);
-                    return error.CurlFailed;
-                }
-                // Timeout (code 28) - return any data we received
-            }
-        },
-        else => {
-            allocator.free(stdout);
-            return error.CurlFailed;
-        },
-    }
-
-    return stdout;
+    _ = allocator;
+    _ = url;
+    _ = timeout_secs;
+    return error.HttpUtilStubbed;
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
