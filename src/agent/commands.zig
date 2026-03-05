@@ -1512,8 +1512,9 @@ fn handleSubagentsCommand(self: anytype, arg: []const u8) ![]const u8 {
 
         const manager = findSubagentManager(self) orelse
             return try self.allocator.dupe(u8, "Subagent manager is not enabled.");
-        manager.mutex.lock();
-        defer manager.mutex.unlock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {};
+        defer manager.mutex.unlock(mutex_io);
 
         const state = manager.tasks.get(task_id) orelse
             return try std.fmt.allocPrint(self.allocator, "Task #{d} not found.", .{task_id});
