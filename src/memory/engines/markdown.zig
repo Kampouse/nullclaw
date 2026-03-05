@@ -76,11 +76,9 @@ pub const MarkdownMemory = struct {
         const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .read = true });
         defer file.close(io);
 
-        // TODO: Zig 0.16.0 - stat() API changed
-        // For now, assume empty file
-        const size: u64 = 0;
-
-        try file.seekableStream(io).seekTo(size);
+        // TODO: Zig 0.16.0 - stat() and seekTo() API changed
+        // For now, just append without seeking
+        _ = size;
 
         // If the file already has content and doesn't end with a newline,
         // prepend one to keep entries on separate lines.
@@ -195,7 +193,7 @@ pub const MarkdownMemory = struct {
         if (std.Io.Dir.cwd().openDir(io, md, .{ .iterate = true })) |*dir_handle| {
             var dir = dir_handle.*;
             defer dir.close(io);
-            var it = dir.iterate();
+            var it = dir.iterate(io);
             while (try it.next()) |entry| {
                 if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
                 const fpath = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ md, entry.name });
