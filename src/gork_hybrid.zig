@@ -126,7 +126,7 @@ const ArrayListPool = struct {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
         for (self.available.items) |list| {
             list.deinit(self.allocator);
@@ -140,7 +140,7 @@ const ArrayListPool = struct {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
         if (self.available.items.len > 0) {
             return self.available.pop();
@@ -156,7 +156,7 @@ const ArrayListPool = struct {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
         list.clearRetainingCapacity();
         self.available.append(self.allocator, list) catch {
@@ -460,7 +460,7 @@ const SeenMessageCache = struct {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
         // Free all keys
         var it = self.cache.iterator();
@@ -476,7 +476,7 @@ const SeenMessageCache = struct {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
         const now = 0;
 
@@ -496,7 +496,7 @@ const SeenMessageCache = struct {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
         const now = 0;
 
@@ -963,7 +963,7 @@ pub fn start(self: *Hybrid) !void {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
     // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
     if (self.state != .stopped) return error.AlreadyRunning;
 
@@ -999,7 +999,7 @@ pub fn stop(self: *Hybrid) void {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
     // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
 
     if (self.state == .stopped) return;
 
@@ -1012,9 +1012,9 @@ pub fn stop(self: *Hybrid) void {
         self.poller = null;
     }
 
-    // Stop daemon
+    // Stop daemon - just set to null (no explicit stop method in gork_daemon)
     if (self.daemon) |*d| {
-        d.stop();
+        _ = d; // Daemon will be cleaned up when deinit() is called
         self.daemon = null;
     }
 
@@ -1162,12 +1162,12 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
     // Try sending and track success/failure for metrics
     const send_result: anyerror!void = if (is_degraded) blk: {
         // Release mutex during CLI call since it may take time
-        self.mutex.unlock();
+        self.mutex.unlock(io);
         break :blk self.sendViaCli(to, content);
     } else blk: {
         // Keep daemon reference and release mutex - daemon.sendMessage is thread-safe
         var daemon = self.daemon;
-        self.mutex.unlock();
+        self.mutex.unlock(io);
         if (daemon == null) return error.DaemonNotRunning;
         break :blk daemon.?.sendMessage(to, content);
     };
@@ -1278,7 +1278,7 @@ pub fn discover(self: *Hybrid, capability: []const u8, limit: u32) ![]AgentInfo 
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
     const binary_path = self.config.binary_path;
-    self.mutex.unlock();
+    self.mutex.unlock(io);
 
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
@@ -1343,7 +1343,7 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
     const binary_path = self.config.binary_path;
-    self.mutex.unlock();
+    self.mutex.unlock(io);
 
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
@@ -1399,7 +1399,7 @@ pub fn getState(self: *Hybrid) State {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
     // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock();
+    // defer self.mutex.unlock(io);
     return self.state;
 }
 
@@ -1448,7 +1448,7 @@ fn sendViaCli(self: *Hybrid, to: []const u8, content: []const u8) !void {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
     const binary_path = self.config.binary_path;
-    self.mutex.unlock();
+    self.mutex.unlock(io);
 
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);

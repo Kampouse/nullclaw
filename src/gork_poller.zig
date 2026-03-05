@@ -8,6 +8,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const io = std.Options.debug_io;
+
 pub const Poller = @This();
 
 // Rate limiting constants
@@ -101,7 +103,7 @@ pub fn stop(self: *Poller) void {
     // Wait for thread to finish and cleanup
     if (self.poller_thread) |thread| {
         // Unlock mutex during join to avoid deadlock
-        self.mutex.unlock();
+        self.mutex.unlock(io);
         thread.join();
         // TODO: Zig 0.16.0 - needs io
         // // TODO: Zig 0.16.0 - needs io
