@@ -465,18 +465,18 @@ pub const SlackChannel = struct {
         defer metadata.deinit(self.allocator);
         const mw = metadata.writer(self.allocator);
         try mw.writeByte('{');
-        try mw.writeAll("\"account_id\":");
+        try mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":");
         try root.appendJsonStringW(mw, self.account_id);
-        try mw.writeAll(",\"is_dm\":");
-        try mw.writeAll(if (is_dm) "true" else "false");
-        try mw.writeAll(",\"channel_id\":");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"is_dm\":");
+        try mw.writeStreamingAll(std.Options.debug_io, if (is_dm) "true" else "false");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":");
         try root.appendJsonStringW(mw, channel_id);
         if (message_ts) |ts| {
-            try mw.writeAll(",\"message_id\":");
+            try mw.writeStreamingAll(std.Options.debug_io, ",\"message_id\":");
             try root.appendJsonStringW(mw, ts);
         }
         if (thread_ts) |tts| {
-            try mw.writeAll(",\"thread_id\":");
+            try mw.writeStreamingAll(std.Options.debug_io, ",\"thread_id\":");
             try root.appendJsonStringW(mw, tts);
         }
         try mw.writeByte('}');
@@ -579,7 +579,7 @@ pub const SlackChannel = struct {
 
             var slept: u64 = 0;
             while (slept < POLL_INTERVAL_SECS and self.running.load(.acquire)) : (slept += 1) {
-                std.Thread.sleep(std.time.ns_per_s);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
             }
         }
     }
@@ -657,11 +657,11 @@ pub const SlackChannel = struct {
             try w.writeByte('/');
         } else {
             if (raw_path[0] != '/') try w.writeByte('/');
-            try w.writeAll(raw_path);
+            try w.writeStreamingAll(std.Options.debug_io, raw_path);
         }
         if (query.len > 0) {
             try w.writeByte('?');
-            try w.writeAll(query);
+            try w.writeStreamingAll(std.Options.debug_io, query);
         }
         return .{
             .host = host,
@@ -692,9 +692,9 @@ pub const SlackChannel = struct {
         var buf: [512]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
         const w = fbs.writer();
-        try w.writeAll("{\"envelope_id\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"envelope_id\":");
         try root.appendJsonStringW(w, envelope_id);
-        try w.writeAll("}");
+        try w.writeStreamingAll(std.Options.debug_io, "}");
         try ws.writeText(fbs.getWritten());
         _ = self;
     }
@@ -800,7 +800,7 @@ pub const SlackChannel = struct {
 
             var slept: u64 = 0;
             while (slept < RECONNECT_DELAY_NS and self.running.load(.acquire)) {
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 slept += 100 * std.time.ns_per_ms;
             }
         }
@@ -860,11 +860,11 @@ pub const SlackChannel = struct {
         defer body_list.deinit(self.allocator);
 
         const bw = body_list.writer(self.allocator);
-        bw.writeAll("{\"channel_id\":") catch return;
+        bw.writeStreamingAll(std.Options.debug_io, "{\"channel_id\":") catch return;
         root.appendJsonStringW(bw, channel_id) catch return;
-        bw.writeAll(",\"thread_ts\":") catch return;
+        bw.writeStreamingAll(std.Options.debug_io, ",\"thread_ts\":") catch return;
         root.appendJsonStringW(bw, thread_ts) catch return;
-        bw.writeAll(",\"status\":") catch return;
+        bw.writeStreamingAll(std.Options.debug_io, ",\"status\":") catch return;
         root.appendJsonStringW(bw, status) catch return;
         bw.writeByte('}') catch return;
 

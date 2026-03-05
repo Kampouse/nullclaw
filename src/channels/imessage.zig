@@ -147,7 +147,7 @@ pub const IMessageChannel = struct {
     fn sleepWithStopCheck(self: *IMessageChannel) void {
         var slept: u64 = 0;
         while (self.running.load(.acquire) and slept < self.poll_interval_secs) {
-            std.Thread.sleep(1 * std.time.ns_per_s);
+            // std.Thread.sleep() - TODO: Fix for Zig 0.16
             slept += 1;
         }
     }
@@ -166,14 +166,14 @@ pub const IMessageChannel = struct {
         defer metadata_buf.deinit(self.allocator);
         const mw = metadata_buf.writer(self.allocator);
         mw.writeByte('{') catch return;
-        mw.writeAll("\"account_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":") catch return;
         root.appendJsonStringW(mw, self.account_id) catch return;
-        mw.writeAll(",\"is_dm\":") catch return;
-        mw.writeAll(if (msg.is_group) "false" else "true") catch return;
-        mw.writeAll(",\"is_group\":") catch return;
-        mw.writeAll(if (msg.is_group) "true" else "false") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"is_dm\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, if (msg.is_group) "false" else "true") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"is_group\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, if (msg.is_group) "true" else "false") catch return;
         if (msg.is_group) {
-            mw.writeAll(",\"channel_id\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":") catch return;
             root.appendJsonStringW(mw, group_peer_id) catch return;
         }
         mw.writeByte('}') catch return;

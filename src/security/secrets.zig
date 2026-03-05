@@ -239,14 +239,14 @@ pub const SecretStore = struct {
 
         // Ensure parent dir exists
         if (std.fs.path.dirname(path)) |parent| {
-            std.fs.cwd().makePath(parent) catch |err| {
+            std.fs.cwd().createDirPath(std.Options.debug_io, parent) catch |err| {
                 log.err("failed to create parent dir {s}: {}", .{ parent, err });
             };
         }
 
         const file = std.fs.cwd().createFile(path, .{}) catch return error.KeyWriteFailed;
         defer file.close();
-        file.writeAll(&hex_buf) catch return error.KeyWriteFailed;
+        file.writeStreamingAll(std.Options.debug_io, &hex_buf) catch return error.KeyWriteFailed;
 
         // Set restrictive permissions (Unix: 0600, owner-only)
         if (@import("builtin").os.tag != .windows) {

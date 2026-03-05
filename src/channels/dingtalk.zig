@@ -56,9 +56,9 @@ pub const DingTalkChannel = struct {
         var body_buf: [8192]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&body_buf);
         const w = fbs.writer();
-        try w.writeAll("{\"msgtype\":\"markdown\",\"markdown\":{\"title\":\"nullclaw\",\"text\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"msgtype\":\"markdown\",\"markdown\":{\"title\":\"nullclaw\",\"text\":");
         try root.appendJsonStringW(w, text);
-        try w.writeAll("}}");
+        try w.writeStreamingAll(std.Options.debug_io, "}}");
         const body = fbs.getWritten();
 
         var client = std.http.Client{ .allocator = self.allocator };

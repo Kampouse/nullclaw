@@ -188,11 +188,11 @@ pub const MattermostChannel = struct {
         var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(self.allocator);
         const bw = body.writer(self.allocator);
-        bw.writeAll("{\"channel_id\":") catch return;
+        bw.writeStreamingAll(std.Options.debug_io, "{\"channel_id\":") catch return;
         root.appendJsonStringW(bw, channel_id) catch return;
         if (parsed_target.thread_id) |tid| {
             if (tid.len > 0) {
-                bw.writeAll(",\"parent_id\":") catch return;
+                bw.writeStreamingAll(std.Options.debug_io, ",\"parent_id\":") catch return;
                 root.appendJsonStringW(bw, tid) catch return;
             }
         }
@@ -220,13 +220,13 @@ pub const MattermostChannel = struct {
         var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(self.allocator);
         const bw = body.writer(self.allocator);
-        try bw.writeAll("{\"channel_id\":");
+        try bw.writeStreamingAll(std.Options.debug_io, "{\"channel_id\":");
         try root.appendJsonStringW(bw, channel_id);
-        try bw.writeAll(",\"message\":");
+        try bw.writeStreamingAll(std.Options.debug_io, ",\"message\":");
         try root.appendJsonStringW(bw, text);
         if (thread_id) |tid| {
             if (tid.len > 0) {
-                try bw.writeAll(",\"root_id\":");
+                try bw.writeStreamingAll(std.Options.debug_io, ",\"root_id\":");
                 try root.appendJsonStringW(bw, tid);
             }
         }
@@ -417,7 +417,7 @@ pub const MattermostChannel = struct {
 
             var slept: u64 = 0;
             while (slept < RECONNECT_DELAY_NS and self.running.load(.acquire)) {
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 slept += 100 * std.time.ns_per_ms;
             }
         }
@@ -504,9 +504,9 @@ pub const MattermostChannel = struct {
         const w = fbs.writer();
         if (prefix.len > 0) {
             if (prefix[0] != '/') try w.writeByte('/');
-            try w.writeAll(prefix);
+            try w.writeStreamingAll(std.Options.debug_io, prefix);
         }
-        try w.writeAll("/api/v4/websocket");
+        try w.writeStreamingAll(std.Options.debug_io, "/api/v4/websocket");
         return .{
             .host = host,
             .port = port,
@@ -650,26 +650,26 @@ pub const MattermostChannel = struct {
         defer meta.deinit(self.allocator);
         const mw = meta.writer(self.allocator);
         try mw.writeByte('{');
-        try mw.writeAll("\"account_id\":");
+        try mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":");
         try root.appendJsonStringW(mw, self.account_id);
-        try mw.writeAll(",\"is_dm\":");
-        try mw.writeAll(if (kind == .direct) "true" else "false");
-        try mw.writeAll(",\"is_group\":");
-        try mw.writeAll(if (kind == .group) "true" else "false");
-        try mw.writeAll(",\"channel_id\":");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"is_dm\":");
+        try mw.writeStreamingAll(std.Options.debug_io, if (kind == .direct) "true" else "false");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"is_group\":");
+        try mw.writeStreamingAll(std.Options.debug_io, if (kind == .group) "true" else "false");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":");
         try root.appendJsonStringW(mw, channel_id);
-        try mw.writeAll(",\"channel_kind\":");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"channel_kind\":");
         try root.appendJsonStringW(mw, kind_label);
         if (team_id) |tid| {
-            try mw.writeAll(",\"team_id\":");
+            try mw.writeStreamingAll(std.Options.debug_io, ",\"team_id\":");
             try root.appendJsonStringW(mw, tid);
         }
         if (thread_id) |tid| {
-            try mw.writeAll(",\"thread_id\":");
+            try mw.writeStreamingAll(std.Options.debug_io, ",\"thread_id\":");
             try root.appendJsonStringW(mw, tid);
         }
         if (sender_name) |sname| {
-            try mw.writeAll(",\"sender_name\":");
+            try mw.writeStreamingAll(std.Options.debug_io, ",\"sender_name\":");
             try root.appendJsonStringW(mw, sname);
         }
         try mw.writeByte('}');
@@ -730,7 +730,7 @@ pub const MattermostChannel = struct {
 
         const file = std.fs.createFileAbsolute(path, .{ .read = false }) catch return null;
         defer file.close();
-        file.writeAll(data) catch return null;
+        file.writeStreamingAll(std.Options.debug_io, data) catch return null;
         return path;
     }
 

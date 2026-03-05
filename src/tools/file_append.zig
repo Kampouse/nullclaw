@@ -100,7 +100,7 @@ pub const FileAppendTool = struct {
         };
         defer file_w.close();
 
-        file_w.writeAll(new_contents) catch |err| {
+        file_w.writeStreamingAll(std.Options.debug_io, new_contents) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };

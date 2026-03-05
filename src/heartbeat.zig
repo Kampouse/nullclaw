@@ -137,7 +137,7 @@ pub const HeartbeatEngine = struct {
 
         const file = try std.fs.createFileAbsolute(path, .{});
         defer file.close();
-        try file.writeAll(default_content);
+        try file.writeStreamingAll(std.Options.debug_io, default_content);
     }
 };
 

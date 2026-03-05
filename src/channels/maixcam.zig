@@ -172,7 +172,7 @@ pub const MaixCamChannel = struct {
             if (event.confidence) |conf| {
                 try w.print("[Vision] Person detected (confidence: {d:.2})", .{conf});
             } else {
-                try w.writeAll("[Vision] Person detected");
+                try w.writeStreamingAll(std.Options.debug_io, "[Vision] Person detected");
             }
         } else if (std.mem.eql(u8, event.event_type, "object_detected")) {
             if (event.text) |label| {
@@ -182,13 +182,13 @@ pub const MaixCamChannel = struct {
                     try w.print("[Vision] Object detected: {s}", .{label});
                 }
             } else {
-                try w.writeAll("[Vision] Object detected");
+                try w.writeStreamingAll(std.Options.debug_io, "[Vision] Object detected");
             }
         } else if (std.mem.eql(u8, event.event_type, "message")) {
             if (event.text) |text| {
-                try w.writeAll(text);
+                try w.writeStreamingAll(std.Options.debug_io, text);
             } else {
-                try w.writeAll("[MaixCam] (empty message)");
+                try w.writeStreamingAll(std.Options.debug_io, "[MaixCam] (empty message)");
             }
         } else {
             try w.print("[MaixCam] {s}", .{event.event_type});
@@ -203,9 +203,9 @@ pub const MaixCamChannel = struct {
     pub fn buildOutboundJson(buf: []u8, content: []const u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll("{\"type\":\"response\",\"text\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"type\":\"response\",\"text\":");
         try root.appendJsonStringW(w, content);
-        try w.writeAll("}\n");
+        try w.writeStreamingAll(std.Options.debug_io, "}\n");
         return fbs.getWritten();
     }
 
@@ -217,7 +217,7 @@ pub const MaixCamChannel = struct {
         var i: usize = 0;
         while (i < self.clients.items.len) {
             const client = &self.clients.items[i];
-            client.stream.writeAll(data) catch {
+            client.stream.writeStreamingAll(std.Options.debug_io, data) catch {
                 log.warn("client disconnected during broadcast, removing", .{});
                 if (client.device_id) |did| self.allocator.free(did);
                 client.stream.close();
@@ -247,7 +247,7 @@ pub const MaixCamChannel = struct {
         for (self.clients.items) |*client| {
             if (client.device_id) |did| {
                 if (std.mem.eql(u8, did, device_id)) {
-                    client.stream.writeAll(data) catch {
+                    client.stream.writeStreamingAll(std.Options.debug_io, data) catch {
                         log.warn("send to device {s} failed", .{device_id});
                     };
                     return;
@@ -343,7 +343,7 @@ pub const MaixCamChannel = struct {
             var meta_buf: [128]u8 = undefined;
             var meta_fbs = std.io.fixedBufferStream(&meta_buf);
             const mw = meta_fbs.writer();
-            mw.writeAll("{\"account_id\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, "{\"account_id\":") catch return;
             root.appendJsonStringW(mw, self.config.account_id) catch return;
             mw.writeByte('}') catch return;
             const metadata = meta_fbs.getWritten();

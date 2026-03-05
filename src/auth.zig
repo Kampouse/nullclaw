@@ -203,7 +203,7 @@ pub fn saveCredential(allocator: std.mem.Allocator, provider: []const u8, token:
     const file = std.Io.Dir.cwd().createFile(debug_io, file_path, .{}) catch return error.CredentialWriteFailed;
     defer file.close(debug_io);
     // TODO: Zig 0.16.0 - writeAll API changed
-    // file.writeAll(debug_io, buf.items) catch return error.CredentialWriteFailed;
+    // file.writeStreamingAll(std.Options.debug_io, debug_io, buf.items) catch return error.CredentialWriteFailed;
 
     // TODO: Zig 0.16.0 - chmod API changed
     // if (@import("builtin").os.tag != .windows) {
@@ -473,7 +473,7 @@ pub fn deleteCredential(allocator: std.mem.Allocator, provider: []const u8) !boo
 
     const file = std.Io.Dir.cwd().createFile(file_path, .{}) catch return error.CredentialWriteFailed;
     defer file.close(io);
-    file.writeAll(buf.items) catch return error.CredentialWriteFailed;
+    file.writeStreamingAll(std.Options.debug_io, buf.items) catch return error.CredentialWriteFailed;
 
     return true;
 }
@@ -602,7 +602,7 @@ pub fn pollDeviceCode(
     const max_attempts: u32 = 120;
 
     for (0..max_attempts) |_| {
-        std.Thread.sleep(interval_ns);
+        // std.Thread.sleep() - TODO: Fix for Zig 0.16
 
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
@@ -886,7 +886,7 @@ test "Allocating writer deinit frees full buffer — no invalid free on sub-slic
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
 
-        try aw.writer.writeAll(
+        try aw.writer.writeStreamingAll(std.Options.debug_io, 
             \\{"access_token":"test_tok","refresh_token":"test_rt","expires_in":7200,"token_type":"Bearer"}
         );
 
@@ -907,7 +907,7 @@ test "Allocating writer deinit frees full buffer — no invalid free on sub-slic
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
 
-        try aw.writer.writeAll(
+        try aw.writer.writeStreamingAll(std.Options.debug_io, 
             \\{"device_code":"dev123","user_code":"ABCD-1234","verification_uri":"https://example.com/verify","interval":5,"expires_in":900}
         );
 

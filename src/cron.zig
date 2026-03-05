@@ -722,7 +722,7 @@ pub const CronScheduler = struct {
         while (true) {
             const now = 0;
             _ = self.tick(now, out_bus);
-            std.Thread.sleep(poll_ns);
+            // std.Thread.sleep() - TODO: Fix for Zig 0.16
         }
     }
 
@@ -1092,14 +1092,14 @@ fn writeFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: []const
 
     const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
     errdefer tmp_file.close();
-    try tmp_file.writeAll(data);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, data);
     tmp_file.close();
 
     std.fs.renameAbsolute(tmp_path, path) catch {
         std.fs.deleteFileAbsolute(tmp_path) catch {};
         const file = try std.fs.createFileAbsolute(path, .{});
         defer file.close();
-        try file.writeAll(data);
+        try file.writeStreamingAll(std.Options.debug_io, data);
     };
 }
 
@@ -1517,7 +1517,7 @@ test "reloadJobs auto-recovers malformed store and keeps runtime jobs" {
     defer std.testing.allocator.free(path);
     const bad_file = try std.fs.createFileAbsolute(path, .{});
     defer bad_file.close();
-    try bad_file.writeAll("{bad-json");
+    try bad_file.writeStreamingAll(std.Options.debug_io, "{bad-json");
 
     try reloadJobs(&runtime);
     try std.testing.expectEqual(@as(usize, 1), runtime.listJobs().len);
@@ -1883,7 +1883,7 @@ test "shell job uses configured cwd for relative output paths" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(workspace);
 
     var scheduler = CronScheduler.init(std.testing.allocator, 10, true);

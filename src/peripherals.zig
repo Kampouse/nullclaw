@@ -190,7 +190,7 @@ pub const SerialPeripheral = struct {
             return Peripheral.PeripheralError.IoError;
 
         // Write command to serial port
-        file.writeAll(cmd) catch return Peripheral.PeripheralError.IoError;
+        file.writeStreamingAll(std.Options.debug_io, cmd) catch return Peripheral.PeripheralError.IoError;
 
         // Read response (newline-delimited JSON)
         var resp_buf: [512]u8 = undefined;
@@ -233,7 +233,7 @@ pub const SerialPeripheral = struct {
             return Peripheral.PeripheralError.IoError;
 
         // Write command to serial port
-        file.writeAll(cmd) catch return Peripheral.PeripheralError.IoError;
+        file.writeStreamingAll(std.Options.debug_io, cmd) catch return Peripheral.PeripheralError.IoError;
 
         // Read and verify response
         var resp_buf: [512]u8 = undefined;
@@ -383,7 +383,7 @@ pub const ArduinoPeripheral = struct {
         const cmd = std.fmt.bufPrint(&cmd_buf, "{{\"id\":\"{d}\",\"cmd\":\"gpio_read\",\"args\":{{\"pin\":{d}}}}}\n", .{ self.msg_id, addr }) catch
             return Peripheral.PeripheralError.IoError;
 
-        file.writeAll(cmd) catch return Peripheral.PeripheralError.IoError;
+        file.writeStreamingAll(std.Options.debug_io, cmd) catch return Peripheral.PeripheralError.IoError;
 
         // Read response (newline-delimited JSON)
         var resp_buf: [512]u8 = undefined;
@@ -404,7 +404,7 @@ pub const ArduinoPeripheral = struct {
         const cmd = std.fmt.bufPrint(&cmd_buf, "{{\"id\":\"{d}\",\"cmd\":\"gpio_write\",\"args\":{{\"pin\":{d},\"value\":{d}}}}}\n", .{ self.msg_id, addr, data }) catch
             return Peripheral.PeripheralError.IoError;
 
-        file.writeAll(cmd) catch return Peripheral.PeripheralError.IoError;
+        file.writeStreamingAll(std.Options.debug_io, cmd) catch return Peripheral.PeripheralError.IoError;
 
         // Read and verify response
         var resp_buf: [512]u8 = undefined;
@@ -606,14 +606,14 @@ pub const RpiGpioPeripheral = struct {
         const pin_str = std.fmt.bufPrint(&pin_buf, "{d}", .{pin}) catch return;
         const export_file = std.fs.openFileAbsolute("/sys/class/gpio/export", .{ .mode = .write_only }) catch return;
         defer export_file.close();
-        export_file.writeAll(pin_str) catch {};
+        export_file.writeStreamingAll(std.Options.debug_io, pin_str) catch {};
     }
 
     /// Write a string to a sysfs file.
     fn rpiWriteFile(path: []const u8, value: []const u8) !void {
         const file = std.fs.openFileAbsolute(path, .{ .mode = .write_only }) catch return error.IoError;
         defer file.close();
-        file.writeAll(value) catch return error.IoError;
+        file.writeStreamingAll(std.Options.debug_io, value) catch return error.IoError;
     }
 
     /// Read a GPIO value (0 or 1) from a sysfs value file.

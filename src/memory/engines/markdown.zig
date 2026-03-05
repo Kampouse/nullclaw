@@ -80,7 +80,7 @@ pub const MarkdownMemory = struct {
         
         var buf: [4096]u8 = undefined;
         var writer = file.writer(io, &buf);
-        try writer.interface.writeAll(line);
+        try writer.interface.writeStreamingAll(std.Options.debug_io, line);
         try writer.interface.flush();
     }
 
@@ -472,7 +472,7 @@ test "markdown parseEntries preserves category" {
 test "markdown accepts session_id param" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);
@@ -502,7 +502,7 @@ test "markdown reads memory.md when MEMORY.md is absent" {
         .sub_path = "memory.md",
         .data = "- legacy-memory-entry",
     });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);
@@ -537,13 +537,13 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
         else => return err,
     };
     if (alt) |f| {
-        defer f.close();
-        try f.writeAll("- alt-entry");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "- alt-entry");
     }
 
     if (!has_distinct_case_files) return;
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);
@@ -570,7 +570,7 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
 test "markdown get returns latest matching entry for duplicate key" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);

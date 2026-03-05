@@ -90,7 +90,7 @@ pub const GorkQuicClient = struct {
         self.bridge_process = child;
 
         // Wait for bridge to initialize
-        std.Thread.sleep(100 * std.time.ns_per_ms);
+        // std.Thread.sleep() - TODO: Fix for Zig 0.16
 
         const elapsed = @divTrunc(0 - start_time, 1_000_000);
         self.metrics.connection_time_ms.store(@intCast(elapsed), .monotonic);
@@ -135,7 +135,7 @@ pub const GorkQuicClient = struct {
 
         // Send to bridge via stdin
         if (child.stdin) |stdin| {
-            stdin.writeAll(formatted) catch |err| {
+            stdin.writeStreamingAll(std.Options.debug_io, formatted) catch |err| {
                 std.log.err("Failed to write to bridge stdin: {}", .{err});
                 return QuicError.SendFailed;
             };

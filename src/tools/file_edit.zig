@@ -112,7 +112,7 @@ pub const FileEditTool = struct {
 
         var write_buf: [1024 * 1024]u8 = undefined;
         var writer = file_w.writer(io, &write_buf);
-        writer.interface.writeAll(new_contents) catch |err| {
+        writer.interface.writeStreamingAll(std.Options.debug_io, new_contents) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };

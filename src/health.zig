@@ -191,7 +191,7 @@ pub const ReadinessResult = struct {
             try w.writeByte('}');
         }
 
-        try w.writeAll("]}");
+        try w.writeStreamingAll(std.Options.debug_io, "]}");
         return try allocator.dupe(u8, buf.items);
     }
 };

@@ -282,7 +282,7 @@ pub fn buildHeartbeatPayload(buf: []u8, sequence: ?i64) ![]const u8 {
     if (sequence) |seq| {
         try w.print("{{\"op\":1,\"d\":{d}}}", .{seq});
     } else {
-        try w.writeAll("{\"op\":1,\"d\":null}");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"op\":1,\"d\":null}");
     }
     return fbs.getWritten();
 }
@@ -1095,25 +1095,25 @@ pub const QQChannel = struct {
         var meta_buf: [512]u8 = undefined;
         var meta_fbs = std.io.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
-        mw.writeAll("{\"msg_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, "{\"msg_id\":") catch return;
         root.appendJsonStringW(mw, msg_id_str) catch return;
         mw.print(",\"is_dm\":{s},\"is_group\":{s}", .{
             if (is_dm) "true" else "false",
             if (is_group) "true" else "false",
         }) catch return;
         if (channel_id.len > 0) {
-            mw.writeAll(",\"channel_id\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":") catch return;
             root.appendJsonStringW(mw, channel_id) catch return;
         }
         if (group_openid.len > 0) {
-            mw.writeAll(",\"group_openid\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"group_openid\":") catch return;
             root.appendJsonStringW(mw, group_openid) catch return;
         }
         if (user_openid.len > 0) {
-            mw.writeAll(",\"user_openid\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"user_openid\":") catch return;
             root.appendJsonStringW(mw, user_openid) catch return;
         }
-        mw.writeAll(",\"account_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":") catch return;
         root.appendJsonStringW(mw, self.config.account_id) catch return;
         mw.writeByte('}') catch return;
         const metadata = meta_fbs.getWritten();
@@ -1462,7 +1462,7 @@ pub const QQChannel = struct {
             // Interruptible backoff
             var slept: u64 = 0;
             while (slept < backoff_ms and self.running.load(.acquire)) {
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 slept += 100;
             }
         }
@@ -1592,7 +1592,7 @@ pub const QQChannel = struct {
             if (self.force_heartbeat.swap(false, .acq_rel)) {
                 self.sendHeartbeatNow(ws);
             }
-            std.Thread.sleep(10 * std.time.ns_per_ms);
+            // std.Thread.sleep() - TODO: Fix for Zig 0.16
         }
         log.info("Heartbeat thread running (interval={d}ms)", .{self.heartbeat_interval_ms.load(.acquire)});
         while (!self.heartbeat_stop.load(.acquire)) {
@@ -1606,7 +1606,7 @@ pub const QQChannel = struct {
                     elapsed = 0;
                     continue;
                 }
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 elapsed += 100;
             }
             if (self.heartbeat_stop.load(.acquire)) return;

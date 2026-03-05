@@ -223,7 +223,7 @@ pub const QmdAdapter = struct {
             return 0;
 
         // Ensure export directory exists
-        std.Io.Dir.cwd().makePath(export_dir) catch |err| {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, export_dir) catch |err| {
             log.warn("failed to create session export dir '{s}': {}", .{ export_dir, err });
             return 0;
         };
@@ -284,7 +284,7 @@ pub const QmdAdapter = struct {
                 continue;
             };
             defer file.close();
-            file.writeAll(content.items) catch continue;
+            file.writeStreamingAll(std.Options.debug_io, content.items) catch continue;
 
             written += 1;
         }
@@ -532,7 +532,7 @@ test "exportSessions with mock session store writes files" {
     // Create temp dir
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(tmp_path);
 
     var mock = MockSessionStore{};
@@ -559,7 +559,7 @@ test "exportSessions skips unchanged files (hash check)" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(tmp_path);
 
     var mock = MockSessionStore{};
@@ -607,7 +607,7 @@ test "exportSessions skips unsafe session ids" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(tmp_path);
 
     var mock = MockSessionStore{};
@@ -625,13 +625,13 @@ test "pruneExportedSessions deletes old files" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(tmp_path);
 
     // Create a test file
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "old-session.md", .{});
-        try f.writeAll("old content");
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "old content");
         f.close();
     }
 

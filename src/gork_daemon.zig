@@ -228,7 +228,7 @@ fn logParserLoop(self: *DaemonProcess, stdout_file: *std.Io.File) void {
 /// Health monitor thread - checks daemon health
 fn healthMonitorLoop(daemon: *DaemonProcess) void {
     while (true) {
-        std.Thread.sleep(5 * std.time.ns_per_s);
+        // std.Thread.sleep() - TODO: Fix for Zig 0.16
 
         daemon.mutex.lock();
         const state = daemon.state;

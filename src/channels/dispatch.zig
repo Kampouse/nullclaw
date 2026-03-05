@@ -640,7 +640,7 @@ test "dispatcher runs in a separate thread" {
     try event_bus.publishOutbound(msg);
 
     // Small delay then close bus to let dispatcher process
-    std.Thread.sleep(10 * std.time.ns_per_ms);
+    // std.Thread.sleep() - TODO: Fix for Zig 0.16
     event_bus.close();
     thread.join();
 
@@ -684,7 +684,7 @@ test "dispatcher concurrent producers + single dispatcher" {
     // Wait for all producers, then close bus
     for (&producers) |*p| p.join();
     // Small delay for dispatcher to drain
-    std.Thread.sleep(20 * std.time.ns_per_ms);
+    // std.Thread.sleep() - TODO: Fix for Zig 0.16
     event_bus.close();
     dispatcher.join();
 

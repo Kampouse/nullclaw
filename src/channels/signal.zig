@@ -195,8 +195,8 @@ pub const SignalChannel = struct {
     pub fn rpcUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.http_url);
-        try w.writeAll(SIGNAL_RPC_ENDPOINT);
+        try w.writeStreamingAll(std.Options.debug_io, self.http_url);
+        try w.writeStreamingAll(std.Options.debug_io, SIGNAL_RPC_ENDPOINT);
         return fbs.getWritten();
     }
 
@@ -204,12 +204,12 @@ pub const SignalChannel = struct {
     pub fn sseUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.http_url);
-        try w.writeAll(SIGNAL_SSE_ENDPOINT);
-        try w.writeAll("?account=");
+        try w.writeStreamingAll(std.Options.debug_io, self.http_url);
+        try w.writeStreamingAll(std.Options.debug_io, SIGNAL_SSE_ENDPOINT);
+        try w.writeStreamingAll(std.Options.debug_io, "?account=");
         for (self.account) |c| {
             if (c == '+') {
-                try w.writeAll("%2B");
+                try w.writeStreamingAll(std.Options.debug_io, "%2B");
             } else {
                 try w.writeByte(c);
             }
@@ -221,8 +221,8 @@ pub const SignalChannel = struct {
     pub fn sendUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.http_url);
-        try w.writeAll(SIGNAL_REST_SEND_ENDPOINT);
+        try w.writeStreamingAll(std.Options.debug_io, self.http_url);
+        try w.writeStreamingAll(std.Options.debug_io, SIGNAL_REST_SEND_ENDPOINT);
         return fbs.getWritten();
     }
 
@@ -230,14 +230,14 @@ pub const SignalChannel = struct {
     pub fn receivePollUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.http_url);
-        try w.writeAll(SIGNAL_REST_RECEIVE_ENDPOINT);
-        try w.writeAll(self.account);
-        try w.writeAll("?timeout=1");
-        try w.writeAll("&ignore_attachments=");
-        try w.writeAll(if (self.ignore_attachments) "true" else "false");
-        try w.writeAll("&ignore_stories=");
-        try w.writeAll(if (self.ignore_stories) "true" else "false");
+        try w.writeStreamingAll(std.Options.debug_io, self.http_url);
+        try w.writeStreamingAll(std.Options.debug_io, SIGNAL_REST_RECEIVE_ENDPOINT);
+        try w.writeStreamingAll(std.Options.debug_io, self.account);
+        try w.writeStreamingAll(std.Options.debug_io, "?timeout=1");
+        try w.writeStreamingAll(std.Options.debug_io, "&ignore_attachments=");
+        try w.writeStreamingAll(std.Options.debug_io, if (self.ignore_attachments) "true" else "false");
+        try w.writeStreamingAll(std.Options.debug_io, "&ignore_stories=");
+        try w.writeStreamingAll(std.Options.debug_io, if (self.ignore_stories) "true" else "false");
         return fbs.getWritten();
     }
 
@@ -245,8 +245,8 @@ pub const SignalChannel = struct {
     pub fn healthUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.http_url);
-        try w.writeAll(if (self.use_rest_api) SIGNAL_REST_HEALTH_ENDPOINT else SIGNAL_HEALTH_ENDPOINT);
+        try w.writeStreamingAll(std.Options.debug_io, self.http_url);
+        try w.writeStreamingAll(std.Options.debug_io, if (self.use_rest_api) SIGNAL_REST_HEALTH_ENDPOINT else SIGNAL_HEALTH_ENDPOINT);
         return fbs.getWritten();
     }
 
@@ -466,7 +466,7 @@ pub const SignalChannel = struct {
 
         var file = std.fs.createFileAbsolute(local_path, .{ .read = false }) catch return null;
         defer file.close();
-        try file.writeAll(decoded);
+        try file.writeStreamingAll(std.Options.debug_io, decoded);
 
         return try allocator.dupe(u8, local_path);
     }
@@ -913,7 +913,7 @@ pub const SignalChannel = struct {
             task.channel.sendTypingIndicator(task.target);
             var elapsed: u64 = 0;
             while (elapsed < TYPING_INTERVAL_NS and !task.stop_requested.load(.acquire)) {
-                std.Thread.sleep(TYPING_SLEEP_STEP_NS);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 elapsed += TYPING_SLEEP_STEP_NS;
             }
         }

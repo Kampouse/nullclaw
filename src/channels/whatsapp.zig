@@ -233,7 +233,7 @@ pub const WhatsAppChannel = struct {
         const local_path = std.fmt.bufPrint(&path_buf, "/tmp/whatsapp_{x}.dat", .{rand.int(u64)}) catch return null;
 
         if (std.fs.createFileAbsolute(local_path, .{ .read = false })) |file| {
-            file.writeAll(media_resp) catch {
+            file.writeStreamingAll(std.Options.debug_io, media_resp) catch {
                 file.close();
                 return null;
             };
@@ -272,11 +272,11 @@ pub const WhatsAppChannel = struct {
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
         const w = body_list.writer(self.allocator);
-        try w.writeAll("{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"");
-        try w.writeAll(to);
-        try w.writeAll("\",\"type\":\"text\",\"text\":{\"preview_url\":false,\"body\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"");
+        try w.writeStreamingAll(std.Options.debug_io, to);
+        try w.writeStreamingAll(std.Options.debug_io, "\",\"type\":\"text\",\"text\":{\"preview_url\":false,\"body\":");
         try root.appendJsonStringW(w, text);
-        try w.writeAll("}}");
+        try w.writeStreamingAll(std.Options.debug_io, "}}");
         const body = body_list.items;
 
         // Build auth header

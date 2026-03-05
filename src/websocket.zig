@@ -132,17 +132,17 @@ pub const WsClient = struct {
         const rw = req_fbs.writer();
         try rw.print("GET {s} HTTP/1.1\r\n", .{path});
         try rw.print("Host: {s}\r\n", .{host});
-        try rw.writeAll("Upgrade: websocket\r\n");
-        try rw.writeAll("Connection: Upgrade\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "Upgrade: websocket\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "Connection: Upgrade\r\n");
         try rw.print("Sec-WebSocket-Key: {s}\r\n", .{key_b64});
-        try rw.writeAll("Sec-WebSocket-Version: 13\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "Sec-WebSocket-Version: 13\r\n");
         for (extra_headers) |hdr| {
             try rw.print("{s}\r\n", .{hdr});
         }
-        try rw.writeAll("\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "\r\n");
         const req = req_fbs.getWritten();
 
-        try tls_state.tls_client.writer.writeAll(req);
+        try tls_state.tls_client.writer.writeStreamingAll(std.Options.debug_io, req);
         try tls_state.tls_client.writer.flush();
         try tls_state.stream_writer.interface.flush();
 
@@ -317,7 +317,7 @@ pub const WsClient = struct {
         @memcpy(header[hlen..][0..4], &mask);
         hlen += 4;
 
-        try self.tls.tls_client.writer.writeAll(header[0..hlen]);
+        try self.tls.tls_client.writer.writeStreamingAll(std.Options.debug_io, header[0..hlen]);
 
         // Write masked payload in chunks
         const chunk_buf = &self.tls.scratch;
@@ -327,7 +327,7 @@ pub const WsClient = struct {
             for (0..chunk_len) |i| {
                 chunk_buf[i] = payload[offset + i] ^ mask[(offset + i) % 4];
             }
-            try self.tls.tls_client.writer.writeAll(chunk_buf[0..chunk_len]);
+            try self.tls.tls_client.writer.writeStreamingAll(std.Options.debug_io, chunk_buf[0..chunk_len]);
             offset += chunk_len;
         }
 
@@ -434,7 +434,7 @@ pub fn buildFrame(
     }
 
     // Masking key
-    try w.writeAll(&mask_key);
+    try w.writeStreamingAll(std.Options.debug_io, &mask_key);
 
     // Masked payload
     for (payload, 0..) |b, i| {

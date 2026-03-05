@@ -14,9 +14,9 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_
     const stderr = std.debug.lockStderr(&buffer);
     defer std.debug.unlockStderr();
     
-    stderr.file_writer.interface.writeAll("panic: ") catch {};
-    stderr.file_writer.interface.writeAll(msg) catch {};
-    stderr.file_writer.interface.writeAll("\n") catch {};
+    stderr.file_writer.interface.writeStreamingAll(std.Options.debug_io, "panic: ") catch {};
+    stderr.file_writer.interface.writeStreamingAll(std.Options.debug_io, msg) catch {};
+    stderr.file_writer.interface.writeStreamingAll(std.Options.debug_io, "\n") catch {};
     std.process.exit(1);
 }
 
@@ -1503,7 +1503,7 @@ fn runGatewayChannel(allocator: std.mem.Allocator, config: *const yc.config.Conf
 
     // Block until Ctrl+C
     while (!yc.daemon.isShutdownRequested()) {
-        std.Thread.sleep(1 * std.time.ns_per_s);
+        // std.Thread.sleep() - TODO: Fix for Zig 0.16
     }
 }
 
@@ -1704,7 +1704,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
     while (true) {
         const messages = sg.pollMessages(allocator) catch |err| {
             std.debug.print("Signal poll error: {}\n", .{err});
-            std.Thread.sleep(5 * std.time.ns_per_s);
+            // std.Thread.sleep() - TODO: Fix for Zig 0.16
             continue;
         };
 
@@ -1789,7 +1789,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         }
 
         // Small delay between polls
-        std.Thread.sleep(500 * std.time.ns_per_ms);
+        // std.Thread.sleep() - TODO: Fix for Zig 0.16
     }
 }
 
@@ -2026,7 +2026,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
     while (true) {
         const messages = tg.pollUpdates(allocator) catch |err| {
             std.debug.print("Poll error: {}\n", .{err});
-            std.Thread.sleep(5 * std.time.ns_per_s);
+            // std.Thread.sleep() - TODO: Fix for Zig 0.16
             continue;
         };
 

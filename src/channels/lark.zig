@@ -309,21 +309,21 @@ pub const LarkChannel = struct {
         var content_buf: [4096]u8 = undefined;
         var content_fbs = std.io.fixedBufferStream(&content_buf);
         const cw = content_fbs.writer();
-        try cw.writeAll("{\"text\":");
+        try cw.writeStreamingAll(std.Options.debug_io, "{\"text\":");
         try root.appendJsonStringW(cw, text);
-        try cw.writeAll("}");
+        try cw.writeStreamingAll(std.Options.debug_io, "}");
         const content_json = content_fbs.getWritten();
 
         // Build outer body JSON
         var body_buf: [8192]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&body_buf);
         const w = fbs.writer();
-        try w.writeAll("{\"receive_id\":\"");
-        try w.writeAll(recipient);
-        try w.writeAll("\",\"msg_type\":\"text\",\"content\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"receive_id\":\"");
+        try w.writeStreamingAll(std.Options.debug_io, recipient);
+        try w.writeStreamingAll(std.Options.debug_io, "\",\"msg_type\":\"text\",\"content\":");
         // Escape the content JSON string for embedding
         try root.appendJsonStringW(w, content_json);
-        try w.writeAll("}");
+        try w.writeStreamingAll(std.Options.debug_io, "}");
         const body = fbs.getWritten();
 
         // Build auth header
@@ -398,9 +398,9 @@ pub const LarkChannel = struct {
     fn buildWebsocketPath(buf: []u8, app_id: []const u8, app_access_token: []const u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll("/ws/v2?app_id=");
+        try w.writeStreamingAll(std.Options.debug_io, "/ws/v2?app_id=");
         try appendUrlQueryEscaped(w, app_id);
-        try w.writeAll("&access_token=");
+        try w.writeStreamingAll(std.Options.debug_io, "&access_token=");
         try appendUrlQueryEscaped(w, app_access_token);
         return fbs.getWritten();
     }
@@ -408,18 +408,18 @@ pub const LarkChannel = struct {
     fn buildWebsocketPong(buf: []u8, ts: []const u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll("{\"type\":\"pong\",\"ts\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"type\":\"pong\",\"ts\":");
         try root.appendJsonStringW(w, ts);
-        try w.writeAll("}");
+        try w.writeStreamingAll(std.Options.debug_io, "}");
         return fbs.getWritten();
     }
 
     fn buildWebsocketAck(buf: []u8, uuid: []const u8) ![]const u8 {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll("{\"uuid\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"uuid\":");
         try root.appendJsonStringW(w, uuid);
-        try w.writeAll("}");
+        try w.writeStreamingAll(std.Options.debug_io, "}");
         return fbs.getWritten();
     }
 
@@ -473,13 +473,13 @@ pub const LarkChannel = struct {
         var meta_buf: [384]u8 = undefined;
         var meta_fbs = std.io.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
-        mw.writeAll("{\"account_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, "{\"account_id\":") catch return;
         root.appendJsonStringW(mw, self.account_id) catch return;
-        mw.writeAll(",\"peer_kind\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"peer_kind\":") catch return;
         root.appendJsonStringW(mw, if (msg.is_group) "group" else "direct") catch return;
-        mw.writeAll(",\"peer_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"peer_id\":") catch return;
         root.appendJsonStringW(mw, msg.sender) catch return;
-        mw.writeAll("}") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, "}") catch return;
         const metadata = meta_fbs.getWritten();
 
         const inbound = bus.makeInboundFull(
@@ -599,7 +599,7 @@ pub const LarkChannel = struct {
 
             var slept_ms: u64 = 0;
             while (slept_ms < 5000 and self.running.load(.acquire)) {
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 slept_ms += 100;
             }
         }

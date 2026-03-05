@@ -665,13 +665,13 @@ fn constantTimeEql(a: *const [32]u8, b: *const [32]u8) bool {
 pub fn jsonEscapeInto(writer: anytype, input: []const u8) !void {
     for (input) |c| {
         switch (c) {
-            '"' => try writer.writeAll("\\\""),
-            '\\' => try writer.writeAll("\\\\"),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
-            0x08 => try writer.writeAll("\\b"),
-            0x0C => try writer.writeAll("\\f"),
+            '"' => try writer.writeStreamingAll(std.Options.debug_io, "\\\""),
+            '\\' => try writer.writeStreamingAll(std.Options.debug_io, "\\\\"),
+            '\n' => try writer.writeStreamingAll(std.Options.debug_io, "\\n"),
+            '\r' => try writer.writeStreamingAll(std.Options.debug_io, "\\r"),
+            '\t' => try writer.writeStreamingAll(std.Options.debug_io, "\\t"),
+            0x08 => try writer.writeStreamingAll(std.Options.debug_io, "\\b"),
+            0x0C => try writer.writeStreamingAll(std.Options.debug_io, "\\f"),
             else => {
                 if (c < 0x20) {
                     try writer.print("\\u{x:0>4}", .{c});
@@ -690,8 +690,8 @@ pub fn jsonWrapField(allocator: std.mem.Allocator, key: []const u8, value: []con
     errdefer buf.deinit(allocator);
     const w = buf.writer(allocator);
     try w.writeByte('"');
-    try w.writeAll(key);
-    try w.writeAll("\":\"");
+    try w.writeStreamingAll(std.Options.debug_io, key);
+    try w.writeStreamingAll(std.Options.debug_io, "\":\"");
     try jsonEscapeInto(w, value);
     try w.writeByte('"');
     return buf.toOwnedSlice(allocator);
@@ -703,9 +703,9 @@ pub fn jsonWrapResponse(allocator: std.mem.Allocator, response: []const u8) ![]u
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
     const w = buf.writer(allocator);
-    try w.writeAll("{\"status\":\"ok\",\"response\":\"");
+    try w.writeStreamingAll(std.Options.debug_io, "{\"status\":\"ok\",\"response\":\"");
     try jsonEscapeInto(w, response);
-    try w.writeAll("\"}");
+    try w.writeStreamingAll(std.Options.debug_io, "\"}");
     return buf.toOwnedSlice(allocator);
 }
 
@@ -729,9 +729,9 @@ fn buildThreadEventsJson(
     }
 
     if (tool_results > 0) {
-        try w.writeAll("{\"type\":\"tool_summary\",\"total\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"type\":\"tool_summary\",\"total\":");
         try w.print("{d}", .{tool_results});
-        try w.writeAll(",\"failed\":");
+        try w.writeStreamingAll(std.Options.debug_io, ",\"failed\":");
         try w.print("{d}", .{failed_results});
         try w.writeByte('}');
     }
@@ -750,10 +750,10 @@ fn buildWebhookSuccessResponse(
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
     const w = buf.writer(allocator);
-    try w.writeAll("{\"status\":\"ok\",\"response\":\"");
+    try w.writeStreamingAll(std.Options.debug_io, "{\"status\":\"ok\",\"response\":\"");
     try jsonEscapeInto(w, response_text);
-    try w.writeAll("\",\"thread_events\":");
-    try w.writeAll(thread_events_json);
+    try w.writeStreamingAll(std.Options.debug_io, "\",\"thread_events\":");
+    try w.writeStreamingAll(std.Options.debug_io, thread_events_json);
     try w.writeByte('}');
     return buf.toOwnedSlice(allocator);
 }
@@ -764,9 +764,9 @@ fn jsonWrapChallenge(allocator: std.mem.Allocator, challenge: []const u8) ![]u8 
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
     const w = buf.writer(allocator);
-    try w.writeAll("{\"challenge\":\"");
+    try w.writeStreamingAll(std.Options.debug_io, "{\"challenge\":\"");
     try jsonEscapeInto(w, challenge);
-    try w.writeAll("\"}");
+    try w.writeStreamingAll(std.Options.debug_io, "\"}");
     return buf.toOwnedSlice(allocator);
 }
 
@@ -1064,7 +1064,7 @@ fn verifySlackSignature(
     defer base_buf.deinit(allocator);
     const bw = base_buf.writer(allocator);
     bw.print("v0:{s}:", .{ts_trimmed}) catch return false;
-    bw.writeAll(body) catch return false;
+    bw.writeStreamingAll(std.Options.debug_io, body) catch return false;
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [32]u8 = undefined;
@@ -1518,15 +1518,15 @@ pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, ch
     try w.print("{{\"chat_id\":{d},\"text\":\"", .{chat_id});
     for (text) |c| {
         switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
+            '"' => try w.writeStreamingAll(std.Options.debug_io, "\\\""),
+            '\\' => try w.writeStreamingAll(std.Options.debug_io, "\\\\"),
+            '\n' => try w.writeStreamingAll(std.Options.debug_io, "\\n"),
+            '\r' => try w.writeStreamingAll(std.Options.debug_io, "\\r"),
+            '\t' => try w.writeStreamingAll(std.Options.debug_io, "\\t"),
             else => try w.writeByte(c),
         }
     }
-    try w.writeAll("\"}");
+    try w.writeStreamingAll(std.Options.debug_io, "\"}");
 
     const body = body_buf.items;
 
@@ -4148,7 +4148,7 @@ test "verifySlackSignature accepts valid signature" {
     defer signed.deinit(std.testing.allocator);
     const sw = signed.writer(std.testing.allocator);
     try sw.print("v0:{s}:", .{ts});
-    try sw.writeAll(body);
+    try sw.writeStreamingAll(std.Options.debug_io, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [HmacSha256.mac_length]u8 = undefined;
@@ -4176,7 +4176,7 @@ test "verifySlackSignature rejects stale timestamp" {
     defer signed.deinit(std.testing.allocator);
     const sw = signed.writer(std.testing.allocator);
     try sw.print("v0:{s}:", .{ts});
-    try sw.writeAll(body);
+    try sw.writeStreamingAll(std.Options.debug_io, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [HmacSha256.mac_length]u8 = undefined;
@@ -4243,7 +4243,7 @@ test "findSlackConfigForRequest selects account by verified signature" {
     defer signed.deinit(std.testing.allocator);
     const sw = signed.writer(std.testing.allocator);
     try sw.print("v0:{s}:", .{ts});
-    try sw.writeAll(body);
+    try sw.writeStreamingAll(std.Options.debug_io, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac_b: [HmacSha256.mac_length]u8 = undefined;

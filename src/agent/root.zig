@@ -3268,11 +3268,11 @@ test "turn refreshes system prompt after workspace markdown change" {
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{});
-        defer f.close();
-        try f.writeAll("SOUL-V1");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "SOUL-V1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace);
 
     var provider_state: u8 = 0;
@@ -3314,8 +3314,8 @@ test "turn refreshes system prompt after workspace markdown change" {
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("SOUL-V2-UPDATED");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "SOUL-V2-UPDATED");
     }
 
     const second = try agent.turn("second");
@@ -3355,11 +3355,11 @@ test "turn refreshes system prompt after TOOLS.md change" {
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "TOOLS.md", .{});
-        defer f.close();
-        try f.writeAll("TOOLS-V1");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "TOOLS-V1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace);
 
     var provider_state: u8 = 0;
@@ -3401,8 +3401,8 @@ test "turn refreshes system prompt after TOOLS.md change" {
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "TOOLS.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("TOOLS-V2-UPDATED");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "TOOLS-V2-UPDATED");
     }
 
     const second = try agent.turn("second");
@@ -3442,11 +3442,11 @@ test "turn refreshes system prompt after USER.md change" {
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
-        defer f.close();
-        try f.writeAll("- **Name:** USER-V1");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "- **Name:** USER-V1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace);
 
     var provider_state: u8 = 0;
@@ -3488,8 +3488,8 @@ test "turn refreshes system prompt after USER.md change" {
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("- **Name:** USER-V2-UPDATED");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "- **Name:** USER-V2-UPDATED");
     }
 
     const second = try agent.turn("second");

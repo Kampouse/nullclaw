@@ -378,7 +378,7 @@ fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.fs.F
 
         if (bytes_read == 0) break;
 
-        file.writeAll(buffer[0..bytes_read]) catch |err| {
+        file.writeStreamingAll(std.Options.debug_io, buffer[0..bytes_read]) catch |err| {
             log.err("download write failed: {}", .{err});
             _ = child.kill() catch {};
             _ = child.wait() catch {};
@@ -493,7 +493,7 @@ test "downloadToFile streams from local file URL" {
 
     var src_file = try tmp_dir.dir.createFile(src_name, .{});
     defer src_file.close();
-    try src_file.writeAll(payload);
+    try src_file.writeStreamingAll(std.Options.debug_io, payload);
     try src_file.sync();
 
     const src_abs = try tmp_dir.dir.realpathAlloc(allocator, src_name);

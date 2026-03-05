@@ -206,9 +206,9 @@ fn writeMultipartToTempFile(
     defer tmp_file.close();
 
     // Write file part header
-    try tmp_file.writeAll("--");
-    try tmp_file.writeAll(boundary);
-    try tmp_file.writeAll("\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.ogg\"\r\nContent-Type: audio/ogg\r\n\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.ogg\"\r\nContent-Type: audio/ogg\r\n\r\n");
 
     // Stream audio file directly (no intermediate buffer)
     {
@@ -218,31 +218,31 @@ fn writeMultipartToTempFile(
         while (true) {
             const n = try audio_file.read(&buf);
             if (n == 0) break;
-            try tmp_file.writeAll(buf[0..n]);
+            try tmp_file.writeStreamingAll(std.Options.debug_io, buf[0..n]);
         }
     }
-    try tmp_file.writeAll("\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\n");
 
     // Write model part
-    try tmp_file.writeAll("--");
-    try tmp_file.writeAll(boundary);
-    try tmp_file.writeAll("\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n");
-    try tmp_file.writeAll(opts.model);
-    try tmp_file.writeAll("\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, opts.model);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\n");
 
     // Write language part (optional)
     if (opts.language) |lang| {
-        try tmp_file.writeAll("--");
-        try tmp_file.writeAll(boundary);
-        try tmp_file.writeAll("\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n");
-        try tmp_file.writeAll(lang);
-        try tmp_file.writeAll("\r\n");
+        try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+        try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n");
+        try tmp_file.writeStreamingAll(std.Options.debug_io, lang);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\n");
     }
 
     // Closing boundary
-    try tmp_file.writeAll("--");
-    try tmp_file.writeAll(boundary);
-    try tmp_file.writeAll("--\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--\r\n");
 }
 
 /// Parse the "text" field from a JSON response like {"text":"transcribed text here"}.
@@ -416,8 +416,8 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_
 
     {
         const f = try std.fs.createFileAbsolute(local_path_z, .{});
-        defer f.close();
-        try f.writeAll(data);
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, data);
     }
 
     return try allocator.dupe(u8, local_path);

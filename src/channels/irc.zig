@@ -169,12 +169,12 @@ pub const IrcChannel = struct {
         defer self.write_mu.unlock();
 
         if (self.tls_state) |tls| {
-            try tls.tls_client.writer.writeAll(data);
+            try tls.tls_client.writer.writeStreamingAll(std.Options.debug_io, data);
             try tls.tls_client.writer.flush();
             // Flush the underlying stream writer to push ciphertext to the socket
             try tls.stream_writer.interface.flush();
         } else if (self.stream) |stream| {
-            try stream.writeAll(data);
+            try stream.writeStreamingAll(std.Options.debug_io, data);
         } else {
             return error.IrcNotConnected;
         }
@@ -241,14 +241,14 @@ pub const IrcChannel = struct {
         defer metadata_buf.deinit(self.allocator);
         const mw = metadata_buf.writer(self.allocator);
         try mw.writeByte('{');
-        try mw.writeAll("\"account_id\":");
+        try mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":");
         try root.appendJsonStringW(mw, self.account_id);
-        try mw.writeAll(",\"is_dm\":");
-        try mw.writeAll(if (is_channel) "false" else "true");
-        try mw.writeAll(",\"is_group\":");
-        try mw.writeAll(if (is_channel) "true" else "false");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"is_dm\":");
+        try mw.writeStreamingAll(std.Options.debug_io, if (is_channel) "false" else "true");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"is_group\":");
+        try mw.writeStreamingAll(std.Options.debug_io, if (is_channel) "true" else "false");
         if (is_channel) {
-            try mw.writeAll(",\"channel_id\":");
+            try mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":");
             try root.appendJsonStringW(mw, chat_id);
         }
         try mw.writeByte('}');
@@ -407,7 +407,7 @@ pub const IrcChannel = struct {
         if (self.stream) |stream| {
             // Try to send QUIT gracefully (only for plain TCP; TLS already sent close_notify)
             if (self.tls_state == null) {
-                stream.writeAll("QUIT :nullclaw shutting down\r\n") catch |err| log.err("QUIT send failed: {}", .{err});
+                stream.writeStreamingAll(std.Options.debug_io, "QUIT :nullclaw shutting down\r\n") catch |err| log.err("QUIT send failed: {}", .{err});
             }
             stream.close();
             self.stream = null;

@@ -171,7 +171,7 @@ pub const CostTracker = struct {
 
         // Ensure parent directory exists
         if (std.fs.path.dirnamePosix(self.storage_path) orelse std.fs.path.dirnameWindows(self.storage_path)) |dir| {
-            std.Io.Dir.cwd().makePath(dir) catch {};
+            std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir) catch {};
         }
 
         const file = std.Io.Dir.cwd().createFile(self.storage_path, .{ .truncate = false }) catch return;
@@ -204,7 +204,7 @@ pub const CostTracker = struct {
         try buf.appendSlice(self.allocator, record.session_id);
         try buf.appendSlice(self.allocator, "\"}\n");
 
-        file.writeAll(buf.items) catch {};
+        file.writeStreamingAll(std.Options.debug_io, buf.items) catch {};
     }
 
     /// Get total session cost.

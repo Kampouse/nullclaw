@@ -186,12 +186,12 @@ fn joinNames(allocator: std.mem.Allocator, names: []const []const u8) ![]u8 {
 }
 
 fn appendJsonStringArray(w: anytype, names: []const []const u8) !void {
-    try w.writeAll("[");
+    try w.writeStreamingAll(std.Options.debug_io, "[");
     for (names, 0..) |name, i| {
-        if (i != 0) try w.writeAll(", ");
+        if (i != 0) try w.writeStreamingAll(std.Options.debug_io, ", ");
         try w.print("{f}", .{std.json.fmt(name, .{})});
     }
-    try w.writeAll("]");
+    try w.writeStreamingAll(std.Options.debug_io, "]");
 }
 
 pub fn buildManifestJson(

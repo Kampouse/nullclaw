@@ -139,7 +139,7 @@ test "R3: snapshot export then import roundtrip preserves all entries" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const workspace_dir = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace_dir = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace_dir);
 
     // Source memory: populate with entries
@@ -195,7 +195,7 @@ test "R3: shouldHydrate returns true when memory is empty and snapshot exists" {
     const snap_file = try tmp.dir.createFile(SNAPSHOT_FILENAME, .{});
     snap_file.close();
 
-    const workspace_dir = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace_dir = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace_dir);
 
     var mem_impl = try sqlite_mod.SqliteMemory.init(allocator, ":memory:");

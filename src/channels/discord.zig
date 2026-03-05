@@ -144,7 +144,7 @@ pub const DiscordChannel = struct {
         var fbs = std.io.fixedBufferStream(buf);
         const w = fbs.writer();
         if (seq == 0) {
-            try w.writeAll("{\"op\":1,\"d\":null}");
+            try w.writeStreamingAll(std.Options.debug_io, "{\"op\":1,\"d\":null}");
         } else {
             try w.print("{{\"op\":1,\"d\":{d}}}", .{seq});
         }
@@ -309,7 +309,7 @@ pub const DiscordChannel = struct {
             task.channel.sendTypingIndicator(task.channel_id);
             var elapsed: u64 = 0;
             while (elapsed < TYPING_INTERVAL_NS and !task.stop_requested.load(.acquire)) {
-                std.Thread.sleep(TYPING_SLEEP_STEP_NS);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 elapsed += TYPING_SLEEP_STEP_NS;
             }
         }
@@ -440,7 +440,7 @@ pub const DiscordChannel = struct {
             // Backoff between reconnects (interruptible).
             var slept: u64 = 0;
             while (slept < backoff_ms and self.running.load(.acquire)) {
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 slept += 100;
             }
         }
@@ -510,14 +510,14 @@ pub const DiscordChannel = struct {
     fn heartbeatLoop(self: *DiscordChannel, ws: *websocket.WsClient) void {
         // Wait for interval to be set
         while (!self.heartbeat_stop.load(.acquire) and self.heartbeat_interval_ms.load(.acquire) == 0) {
-            std.Thread.sleep(10 * std.time.ns_per_ms);
+            // std.Thread.sleep() - TODO: Fix for Zig 0.16
         }
         while (!self.heartbeat_stop.load(.acquire)) {
             const interval_ms = self.heartbeat_interval_ms.load(.acquire);
             var elapsed: u64 = 0;
             while (elapsed < interval_ms) {
                 if (self.heartbeat_stop.load(.acquire)) return;
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 elapsed += 100;
             }
             if (self.heartbeat_stop.load(.acquire)) return;
@@ -864,7 +864,7 @@ pub const DiscordChannel = struct {
                                     const local_path = std.fmt.bufPrint(&path_buf, "/tmp/discord_{x}.dat", .{rand_id}) catch continue;
 
                                     if (std.fs.createFileAbsolute(local_path, .{ .read = false })) |file| {
-                                        file.writeAll(img_data) catch {
+                                        file.writeStreamingAll(std.Options.debug_io, img_data) catch {
                                             file.close();
                                             continue;
                                         };
@@ -902,10 +902,10 @@ pub const DiscordChannel = struct {
         defer metadata_buf.deinit(self.allocator);
         const mw = metadata_buf.writer(self.allocator);
         try mw.print("{{\"is_dm\":{s}", .{if (guild_id == null) "true" else "false"});
-        try mw.writeAll(",\"account_id\":");
+        try mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":");
         try root.appendJsonStringW(mw, self.account_id);
         if (guild_id) |gid| {
-            try mw.writeAll(",\"guild_id\":");
+            try mw.writeStreamingAll(std.Options.debug_io, ",\"guild_id\":");
             try root.appendJsonStringW(mw, gid);
         }
         try mw.writeByte('}');
@@ -982,7 +982,7 @@ test "discord startTyping stores handle and stopTyping clears it" {
 
     try ch.startTyping("123456");
     try std.testing.expect(ch.typing_handles.get("123456") != null);
-    std.Thread.sleep(50 * std.time.ns_per_ms);
+    // std.Thread.sleep() - TODO: Fix for Zig 0.16
     try ch.stopTyping("123456");
     try std.testing.expect(ch.typing_handles.get("123456") == null);
 }

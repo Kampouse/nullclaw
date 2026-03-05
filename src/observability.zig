@@ -275,14 +275,14 @@ pub const FileObserver = struct {
             const new_file = std.fs.cwd().createFile(self.path, .{ .truncate = false }) catch return;
             defer new_file.close();
             new_file.seekFromEnd(0) catch return;
-            new_file.writeAll(line) catch {};
-            new_file.writeAll("\n") catch {};
+            new_file.writeStreamingAll(std.Options.debug_io, line) catch {};
+            new_file.writeStreamingAll(std.Options.debug_io, "\n") catch {};
             return;
         };
         defer file.close();
         file.seekFromEnd(0) catch return;
-        file.writeAll(line) catch {};
-        file.writeAll("\n") catch {};
+        file.writeStreamingAll(std.Options.debug_io, line) catch {};
+        file.writeStreamingAll(std.Options.debug_io, "\n") catch {};
     }
 
     fn fileRecordEvent(ptr: *anyopaque, event: *const ObserverEvent) void {
@@ -625,23 +625,23 @@ pub const OtelObserver = struct {
         errdefer buf.deinit(self.allocator);
         const w = buf.writer(self.allocator);
 
-        try w.writeAll("{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"");
-        try w.writeAll(self.service_name);
-        try w.writeAll("\"}}]},\"scopeSpans\":[{\"spans\":[");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"");
+        try w.writeStreamingAll(std.Options.debug_io, self.service_name);
+        try w.writeStreamingAll(std.Options.debug_io, "\"}}]},\"scopeSpans\":[{\"spans\":[");
 
         for (self.spans.items, 0..) |span, i| {
             if (i > 0) try w.writeByte(',');
-            try w.writeAll("{\"traceId\":\"");
-            try w.writeAll(&span.trace_id);
-            try w.writeAll("\",\"spanId\":\"");
-            try w.writeAll(&span.span_id);
-            try w.writeAll("\",\"name\":\"");
-            try w.writeAll(span.name);
-            try w.writeAll("\",\"startTimeUnixNano\":\"");
+            try w.writeStreamingAll(std.Options.debug_io, "{\"traceId\":\"");
+            try w.writeStreamingAll(std.Options.debug_io, &span.trace_id);
+            try w.writeStreamingAll(std.Options.debug_io, "\",\"spanId\":\"");
+            try w.writeStreamingAll(std.Options.debug_io, &span.span_id);
+            try w.writeStreamingAll(std.Options.debug_io, "\",\"name\":\"");
+            try w.writeStreamingAll(std.Options.debug_io, span.name);
+            try w.writeStreamingAll(std.Options.debug_io, "\",\"startTimeUnixNano\":\"");
             try w.print("{d}", .{span.start_ns});
-            try w.writeAll("\",\"endTimeUnixNano\":\"");
+            try w.writeStreamingAll(std.Options.debug_io, "\",\"endTimeUnixNano\":\"");
             try w.print("{d}", .{span.end_ns});
-            try w.writeAll("\",\"attributes\":[");
+            try w.writeStreamingAll(std.Options.debug_io, "\",\"attributes\":[");
 
             for (span.attributes.items, 0..) |attr, j| {
                 if (j > 0) try w.writeByte(',');
@@ -651,10 +651,10 @@ pub const OtelObserver = struct {
                 );
             }
 
-            try w.writeAll("],\"status\":{\"code\":1}}");
+            try w.writeStreamingAll(std.Options.debug_io, "],\"status\":{\"code\":1}}");
         }
 
-        try w.writeAll("]}]}]}");
+        try w.writeStreamingAll(std.Options.debug_io, "]}]}]}");
 
         return buf.toOwnedSlice(self.allocator);
     }
@@ -839,7 +839,7 @@ test "FileObserver tool_call detail is persisted as JSON string" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const path = try std.fmt.allocPrint(allocator, "{s}/obs_tool_detail.jsonl", .{base});
     defer allocator.free(path);

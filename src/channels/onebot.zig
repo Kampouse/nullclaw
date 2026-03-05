@@ -298,11 +298,11 @@ pub const OneBotChannel = struct {
             message_id,
             if (is_group) "true" else "false",
         }) catch return;
-        mw.writeAll(",\"account_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":") catch return;
         root.appendJsonStringW(mw, self.config.account_id) catch return;
         if (cq.reply_id) |rid| {
-            mw.writeAll(",\"reply_to\":\"") catch return;
-            mw.writeAll(rid) catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"reply_to\":\"") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, rid) catch return;
             mw.writeByte('"') catch return;
         }
         mw.writeByte('}') catch return;
@@ -358,16 +358,16 @@ pub const OneBotChannel = struct {
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
         const bw = body_list.writer(self.allocator);
-        try bw.writeAll("{\"action\":\"send_msg\",\"params\":{");
+        try bw.writeStreamingAll(std.Options.debug_io, "{\"action\":\"send_msg\",\"params\":{");
         try bw.print("\"message_type\":\"{s}\",", .{msg_type});
         if (std.mem.eql(u8, msg_type, "group")) {
             try bw.print("\"group_id\":{s},", .{id_str});
         } else {
             try bw.print("\"user_id\":{s},", .{id_str});
         }
-        try bw.writeAll("\"message\":");
+        try bw.writeStreamingAll(std.Options.debug_io, "\"message\":");
         try root.appendJsonStringW(bw, text);
-        try bw.writeAll("}}");
+        try bw.writeStreamingAll(std.Options.debug_io, "}}");
         const body = body_list.items;
 
         // Build headers

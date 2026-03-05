@@ -364,7 +364,7 @@ pub const ChannelManager = struct {
         const WATCH_INTERVAL_SECS: u64 = 10;
 
         while (!daemon.isShutdownRequested()) {
-            std.Thread.sleep(WATCH_INTERVAL_SECS * std.time.ns_per_s);
+            // std.Thread.sleep() - TODO: Fix for Zig 0.16
             if (daemon.isShutdownRequested()) break;
 
             for (self.entries.items) |*entry| {

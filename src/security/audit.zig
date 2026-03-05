@@ -136,24 +136,24 @@ pub const AuditEvent = struct {
             try writer.print(",\"actor\":{{\"channel\":\"{s}\"", .{a.channel});
             if (a.user_id) |uid| try writer.print(",\"user_id\":\"{s}\"", .{uid});
             if (a.username) |uname| try writer.print(",\"username\":\"{s}\"", .{uname});
-            try writer.writeAll("}");
+            try writer.writeStreamingAll(std.Options.debug_io, "}");
         }
 
         if (self.action) |act| {
-            try writer.writeAll(",\"action\":{");
+            try writer.writeStreamingAll(std.Options.debug_io, ",\"action\":{");
             var need_comma = false;
             if (act.command) |cmd| {
                 try writer.print("\"command\":\"{s}\"", .{cmd});
                 need_comma = true;
             }
             if (act.risk_level) |rl| {
-                if (need_comma) try writer.writeAll(",");
+                if (need_comma) try writer.writeStreamingAll(std.Options.debug_io, ",");
                 try writer.print("\"risk_level\":\"{s}\"", .{rl});
                 need_comma = true;
             }
-            if (need_comma) try writer.writeAll(",");
+            if (need_comma) try writer.writeStreamingAll(std.Options.debug_io, ",");
             try writer.print("\"approved\":{},\"allowed\":{}", .{ act.approved, act.allowed });
-            try writer.writeAll("}");
+            try writer.writeStreamingAll(std.Options.debug_io, "}");
         }
 
         if (self.result) |res| {
@@ -161,13 +161,13 @@ pub const AuditEvent = struct {
             if (res.exit_code) |ec| try writer.print(",\"exit_code\":{d}", .{ec});
             if (res.duration_ms) |ms| try writer.print(",\"duration_ms\":{d}", .{ms});
             if (res.err_msg) |em| try writer.print(",\"error\":\"{s}\"", .{em});
-            try writer.writeAll("}");
+            try writer.writeStreamingAll(std.Options.debug_io, "}");
         }
 
         try writer.print(",\"security\":{{\"policy_violation\":{}", .{self.security.policy_violation});
         if (self.security.rate_limit_remaining) |rlr| try writer.print(",\"rate_limit_remaining\":{d}", .{rlr});
         if (self.security.sandbox_backend) |sb| try writer.print(",\"sandbox_backend\":\"{s}\"", .{sb});
-        try writer.writeAll("}}");
+        try writer.writeStreamingAll(std.Options.debug_io, "}}");
         return fbs.getWritten();
     }
 };
@@ -225,8 +225,8 @@ pub const AuditLogger = struct {
         try file.seekFromEnd(0);
         var json_buf: [4096]u8 = undefined;
         const json = try event.writeJson(&json_buf);
-        try file.writeAll(json);
-        try file.writeAll("\n");
+        try file.writeStreamingAll(std.Options.debug_io, json);
+        try file.writeStreamingAll(std.Options.debug_io, "\n");
         try file.sync();
     }
 

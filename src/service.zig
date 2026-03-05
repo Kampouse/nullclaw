@@ -252,7 +252,7 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
 
     const file = try std.fs.createFileAbsolute(plist, .{});
     defer file.close();
-    try file.writeAll(content);
+    try file.writeStreamingAll(std.Options.debug_io, content);
 }
 
 fn installLinux(allocator: std.mem.Allocator) !void {
@@ -262,7 +262,7 @@ fn installLinux(allocator: std.mem.Allocator) !void {
     try assertLinuxSystemdUserAvailable(allocator);
 
     if (std.mem.lastIndexOfScalar(u8, unit, '/')) |idx| {
-        try std.fs.cwd().makePath(unit[0..idx]);
+        try std.fs.cwd().createDirPath(std.Options.debug_io, unit[0..idx]);
     }
 
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -292,7 +292,7 @@ fn installLinux(allocator: std.mem.Allocator) !void {
 
     const file = try std.fs.createFileAbsolute(unit, .{});
     defer file.close();
-    try file.writeAll(content);
+    try file.writeStreamingAll(std.Options.debug_io, content);
 
     try runChecked(allocator, &.{ "systemctl", "--user", "daemon-reload" });
     try runChecked(allocator, &.{ "systemctl", "--user", "enable", "nullclaw.service" });

@@ -129,7 +129,7 @@ pub fn runDoctor(
     checkChannels(allocator, config, &items);
 
     // Print grouped report
-    try writer.writeAll("nullclaw Doctor (enhanced)\n\n");
+    try writer.writeStreamingAll(std.Options.debug_io, "nullclaw Doctor (enhanced)\n\n");
 
     var current_cat: []const u8 = "";
     var ok_count: u32 = 0;
@@ -152,7 +152,7 @@ pub fn runDoctor(
 
     try writer.print("\nSummary: {d} ok, {d} warnings, {d} errors\n", .{ ok_count, warn_count, err_count });
     if (err_count > 0) {
-        try writer.writeAll("Run 'nullclaw doctor --fix' or check your config.\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "Run 'nullclaw doctor --fix' or check your config.\n");
     }
 }
 
@@ -295,7 +295,7 @@ pub fn checkWorkspace(
     defer allocator.free(probe_path);
 
     if (std.fs.createFileAbsolute(probe_path, .{})) |file| {
-        file.writeAll("probe") catch {
+        file.writeStreamingAll(std.Options.debug_io, "probe") catch {
             file.close();
             std.fs.deleteFileAbsolute(probe_path) catch {};
             try items.append(allocator, DiagItem.err(cat, "directory write probe failed"));
@@ -859,7 +859,7 @@ test "checkDaemonState parses valid JSON state" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
     const state_content =
@@ -867,7 +867,7 @@ test "checkDaemonState parses valid JSON state" {
     ;
     {
         const file = try tmp.dir.createFile(std.Options.debug_io, "daemon_state.json", .{});
-        try file.writeAll(state_content);
+        try file.writeStreamingAll(std.Options.debug_io, state_content);
         file.close();
     }
 

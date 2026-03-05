@@ -10,16 +10,16 @@ fn writeJsonStr(w: anytype, s: []const u8) !void {
     try w.writeByte('"');
     for (s) |c| {
         switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
+            '"' => try w.writeStreamingAll(std.Options.debug_io, "\\\""),
+            '\\' => try w.writeStreamingAll(std.Options.debug_io, "\\\\"),
+            '\n' => try w.writeStreamingAll(std.Options.debug_io, "\\n"),
+            '\r' => try w.writeStreamingAll(std.Options.debug_io, "\\r"),
+            '\t' => try w.writeStreamingAll(std.Options.debug_io, "\\t"),
             else => {
                 if (c < 0x20) {
                     var esc: [6]u8 = undefined;
                     const escape = std.fmt.bufPrint(&esc, "\\u{x:0>4}", .{c}) catch unreachable;
-                    try w.writeAll(escape);
+                    try w.writeStreamingAll(std.Options.debug_io, escape);
                 } else {
                     try w.writeByte(c);
                 }
@@ -301,15 +301,15 @@ pub const Config = struct {
             const rel_nl = std.mem.indexOfScalar(u8, json[start..], '\n');
             if (rel_nl) |nl| {
                 const end = start + nl;
-                try w.writeAll(json[start..end]);
-                try w.writeAll("\n");
+                try w.writeStreamingAll(std.Options.debug_io, json[start..end]);
+                try w.writeStreamingAll(std.Options.debug_io, "\n");
                 const next_start = end + 1;
                 if (next_start < json.len) {
-                    try w.writeAll(continuation_indent);
+                    try w.writeStreamingAll(std.Options.debug_io, continuation_indent);
                 }
                 start = next_start;
             } else {
-                try w.writeAll(json[start..]);
+                try w.writeStreamingAll(std.Options.debug_io, json[start..]);
                 break;
             }
         }
@@ -1215,7 +1215,7 @@ test "save includes channels section by default" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);
@@ -1240,7 +1240,7 @@ test "save writes configured telegram channel account" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);
@@ -1286,7 +1286,7 @@ test "save roundtrip preserves telegram interactive settings" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);
@@ -1335,7 +1335,7 @@ test "save roundtrip preserves diagnostics logging flags" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);
@@ -1376,7 +1376,7 @@ test "save roundtrip preserves reliability settings" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);
@@ -1461,7 +1461,7 @@ test "save roundtrip preserves extended config sections" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);
@@ -1683,7 +1683,7 @@ test "save escapes mcp_servers strings safely" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);
@@ -2647,7 +2647,7 @@ test "save and load roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
 
     var cfg = Config{
@@ -2921,7 +2921,7 @@ test "save writes provider native_tools when false" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
     defer allocator.free(config_path);

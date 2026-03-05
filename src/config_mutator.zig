@@ -227,7 +227,7 @@ fn writeAtomic(allocator: std.mem.Allocator, path: []const u8, content: []const 
         defer file.close(io);
         var write_buf: [1024 * 1024]u8 = undefined;
         var writer = file.writer(io, &write_buf);
-        try writer.interface.writeAll(content);
+        try writer.interface.writeStreamingAll(std.Options.debug_io, content);
         try writer.interface.flush();
         return;
     };
@@ -235,7 +235,7 @@ fn writeAtomic(allocator: std.mem.Allocator, path: []const u8, content: []const 
     
     var write_buf: [1024 * 1024]u8 = undefined;
     var writer = tmp_file.writer(io, &write_buf);
-    try writer.interface.writeAll(content);
+    try writer.interface.writeStreamingAll(std.Options.debug_io, content);
     try writer.interface.flush();
     
     // Note: renameAbsolute not available in sans-I/O
@@ -361,7 +361,7 @@ pub fn mutateDefaultConfig(
                 defer backup_file.close(io);
                 var write_buf: [1024 * 1024]u8 = undefined;
                 var writer = backup_file.writer(io, &write_buf);
-                writer.interface.writeAll(current.content) catch {};
+                writer.interface.writeStreamingAll(std.Options.debug_io, current.content) catch {};
                 writer.interface.flush() catch {};
                 backup_path_opt = backup_path;
             } else |_| {

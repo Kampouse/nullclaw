@@ -149,7 +149,7 @@ test "loadHistory reads file lines" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const tmp_path = try std.fs.path.join(allocator, &.{ base, "history_test" });
     defer allocator.free(tmp_path);
@@ -157,8 +157,8 @@ test "loadHistory reads file lines" {
     // Write a temporary history file
     {
         const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("hello world\nhow are you\ngoodbye\n");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "hello world\nhow are you\ngoodbye\n");
     }
 
     const history = try loadHistory(allocator, tmp_path);
@@ -176,7 +176,7 @@ test "loadHistory returns empty for missing file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const tmp_path = try std.fs.path.join(allocator, &.{ base, "nonexistent_history_file" });
     defer allocator.free(tmp_path);
@@ -192,7 +192,7 @@ test "saveHistory writes file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const tmp_path = try std.fs.path.join(allocator, &.{ base, "save_history_test" });
     defer allocator.free(tmp_path);
@@ -216,7 +216,7 @@ test "saveHistory and loadHistory roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const tmp_path = try std.fs.path.join(allocator, &.{ base, "roundtrip_history_test" });
     defer allocator.free(tmp_path);
@@ -240,15 +240,15 @@ test "loadHistory trims whitespace from entries" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const tmp_path = try std.fs.path.join(allocator, &.{ base, "trim_history_test" });
     defer allocator.free(tmp_path);
 
     {
         const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("  hello  \n\t world \t\nfoo\r\n");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "  hello  \n\t world \t\nfoo\r\n");
     }
 
     const history = try loadHistory(allocator, tmp_path);
@@ -266,15 +266,15 @@ test "loadHistory skips blank lines" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const tmp_path = try std.fs.path.join(allocator, &.{ base, "blank_history_test" });
     defer allocator.free(tmp_path);
 
     {
         const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("first\n\n   \n\nsecond\n  \nthird\n");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "first\n\n   \n\nsecond\n  \nthird\n");
     }
 
     const history = try loadHistory(allocator, tmp_path);
@@ -292,19 +292,19 @@ test "loadHistory enforces max entries limit" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
     const tmp_path = try std.fs.path.join(allocator, &.{ base, "max_history_test" });
     defer allocator.free(tmp_path);
 
     {
         const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
+        defer f.close(std.Options.debug_io);
         // Write more than MAX_HISTORY_LINES (500) entries
         for (0..600) |i| {
             var buf: [32]u8 = undefined;
             const line = std.fmt.bufPrint(&buf, "cmd-{d}\n", .{i}) catch unreachable;
-            f.writeAll(line) catch break;
+            f.writeStreamingAll(std.Options.debug_io, line) catch break;
         }
     }
 

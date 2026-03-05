@@ -177,7 +177,7 @@ test "file_read missing path param" {
 test "file_read nested path" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.makePath("sub/dir");
+    try tmp_dir.dir.createDirPath(std.Options.debug_io, std.Options.debug_io, "sub/dir");
     try tmp_dir.dir.writeFile(.{ .sub_path = "sub/dir/deep.txt", .data = "deep content" });
 
     const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");

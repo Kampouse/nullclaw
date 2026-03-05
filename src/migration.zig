@@ -213,9 +213,9 @@ fn migrateOpenclawConfig(
 
     const dst_file = try std.fs.createFileAbsolute(target_config_path, .{});
     defer dst_file.close();
-    try dst_file.writeAll(normalized);
+    try dst_file.writeStreamingAll(std.Options.debug_io, normalized);
     if (normalized.len == 0 or normalized[normalized.len - 1] != '\n') {
-        try dst_file.writeAll("\n");
+        try dst_file.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     return true;
@@ -383,7 +383,7 @@ fn copyFileAbsolute(src: []const u8, dst: []const u8) !void {
     while (true) {
         const n = src_file.read(&buf) catch return error.ReadError;
         if (n == 0) break;
-        dst_file.writeAll(buf[0..n]) catch return error.WriteError;
+        dst_file.writeStreamingAll(std.Options.debug_io, buf[0..n]) catch return error.WriteError;
     }
 }
 
@@ -669,7 +669,7 @@ test "resolveOpenclawConfigPath finds parent config for workspace layout" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir(std.Options.debug_io, ".openclaw/workspace");
+    try tmp.dir.createDirPath(std.Options.debug_io, ".openclaw/workspace");
     const cfg_file = try tmp.dir.createFile(std.Options.debug_io, ".openclaw/config.json", .{});
     cfg_file.close();
 
@@ -688,13 +688,13 @@ test "migrateOpenclawConfig copies and normalizes config json" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir(std.Options.debug_io, ".openclaw/workspace");
-    try tmp.dir.makeDir(std.Options.debug_io, ".nullclaw");
+    try tmp.dir.createDirPath(std.Options.debug_io, ".openclaw/workspace");
+    try tmp.dir.createDirPath(std.Options.debug_io, ".nullclaw");
 
     const source_cfg_rel = ".openclaw/config.json";
     const source_cfg = try tmp.dir.createFile(source_cfg_rel, .{});
     defer source_cfg.close();
-    try source_cfg.writeAll(
+    try source_cfg.writeStreamingAll(std.Options.debug_io, 
         \\{"gatewayPort":3000,"httpRequest":{"allowedDomains":["example.com"]},"session":{"idleMinutes":30}}
     );
 
@@ -783,7 +783,7 @@ test "backup and restore roundtrip" {
     // Write a "database" file
     const content = "SQLITE_MAGIC_test_data_12345";
     const src_file = try tmp_dir.dir.createFile("test.db", .{});
-    try src_file.writeAll(content);
+    try src_file.writeStreamingAll(std.Options.debug_io, content);
     src_file.close();
 
     // Get absolute paths via realpath
@@ -806,7 +806,7 @@ test "backup and restore roundtrip" {
 
     // Corrupt the "database" (simulate modification)
     const mod_file = try tmp_dir.dir.createFile("test.db", .{});
-    try mod_file.writeAll("CORRUPTED");
+    try mod_file.writeStreamingAll(std.Options.debug_io, "CORRUPTED");
     mod_file.close();
 
     // Restore from backup

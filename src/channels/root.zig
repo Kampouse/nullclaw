@@ -308,16 +308,16 @@ pub fn appendJsonStringW(writer: anytype, text: []const u8) !void {
     try writer.writeByte('"');
     for (text) |c| {
         switch (c) {
-            '"' => try writer.writeAll("\\\""),
-            '\\' => try writer.writeAll("\\\\"),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
+            '"' => try writer.writeStreamingAll(std.Options.debug_io, "\\\""),
+            '\\' => try writer.writeStreamingAll(std.Options.debug_io, "\\\\"),
+            '\n' => try writer.writeStreamingAll(std.Options.debug_io, "\\n"),
+            '\r' => try writer.writeStreamingAll(std.Options.debug_io, "\\r"),
+            '\t' => try writer.writeStreamingAll(std.Options.debug_io, "\\t"),
             else => {
                 if (c < 0x20) {
                     var esc: [6]u8 = undefined;
                     const escape = std.fmt.bufPrint(&esc, "\\u{x:0>4}", .{c}) catch unreachable;
-                    try writer.writeAll(escape);
+                    try writer.writeStreamingAll(std.Options.debug_io, escape);
                 } else {
                     try writer.writeByte(c);
                 }

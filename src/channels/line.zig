@@ -55,11 +55,11 @@ pub const LineChannel = struct {
         defer body_list.deinit(self.allocator);
         const w = body_list.writer(self.allocator);
 
-        try w.writeAll("{\"replyToken\":\"");
-        try w.writeAll(reply_token);
-        try w.writeAll("\",\"messages\":[{\"type\":\"text\",\"text\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"replyToken\":\"");
+        try w.writeStreamingAll(std.Options.debug_io, reply_token);
+        try w.writeStreamingAll(std.Options.debug_io, "\",\"messages\":[{\"type\":\"text\",\"text\":");
         try root.appendJsonStringW(w, text);
-        try w.writeAll("}]}");
+        try w.writeStreamingAll(std.Options.debug_io, "}]}");
         const body = body_list.items;
 
         var auth_buf: [512]u8 = undefined;
@@ -80,11 +80,11 @@ pub const LineChannel = struct {
         defer body_list.deinit(self.allocator);
         const w = body_list.writer(self.allocator);
 
-        try w.writeAll("{\"to\":\"");
-        try w.writeAll(user_id);
-        try w.writeAll("\",\"messages\":[{\"type\":\"text\",\"text\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"to\":\"");
+        try w.writeStreamingAll(std.Options.debug_io, user_id);
+        try w.writeStreamingAll(std.Options.debug_io, "\",\"messages\":[{\"type\":\"text\",\"text\":");
         try root.appendJsonStringW(w, text);
-        try w.writeAll("}]}");
+        try w.writeStreamingAll(std.Options.debug_io, "}]}");
         const body = body_list.items;
 
         var auth_buf: [512]u8 = undefined;

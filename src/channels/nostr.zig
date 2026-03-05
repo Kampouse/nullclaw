@@ -337,7 +337,7 @@ pub const NostrChannel = struct {
 
         if (stdin_data) |data| {
             if (child.stdin) |stdin_file| {
-                stdin_file.writeAll(data) catch {};
+                stdin_file.writeStreamingAll(std.Options.debug_io, data) catch {};
                 stdin_file.close();
                 child.stdin = null;
             }

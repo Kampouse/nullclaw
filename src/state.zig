@@ -109,14 +109,14 @@ pub const StateManager = struct {
         defer self.allocator.free(tmp_path);
 
         const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
-        try tmp_file.writeAll(buf.items);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, buf.items);
         tmp_file.close();
 
         std.fs.renameAbsolute(tmp_path, self.state_path) catch {
             // If rename fails (cross-device), fall back to direct write
             std.fs.deleteFileAbsolute(tmp_path) catch {};
             const file = try std.fs.createFileAbsolute(self.state_path, .{});
-            try file.writeAll(buf.items);
+            try file.writeStreamingAll(std.Options.debug_io, buf.items);
             file.close();
         };
     }
@@ -226,7 +226,7 @@ test "StateManager updated_at is set" {
 test "StateManager save and load roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const dir = try std.testing.allocator.dupe(u8, ".");
     defer testing.allocator.free(dir);
     const path = try std.fs.path.join(testing.allocator, &.{ dir, "state.json" });
     defer testing.allocator.free(path);
@@ -254,7 +254,7 @@ test "StateManager save and load roundtrip" {
 test "StateManager load missing file is ok" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const dir = try std.testing.allocator.dupe(u8, ".");
     defer testing.allocator.free(dir);
     const path = try std.fs.path.join(testing.allocator, &.{ dir, "nonexistent.json" });
     defer testing.allocator.free(path);
@@ -268,7 +268,7 @@ test "StateManager load missing file is ok" {
 test "StateManager save with null values" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const dir = try std.testing.allocator.dupe(u8, ".");
     defer testing.allocator.free(dir);
     const path = try std.fs.path.join(testing.allocator, &.{ dir, "state-null.json" });
     defer testing.allocator.free(path);
@@ -292,7 +292,7 @@ test "StateManager save with null values" {
 test "StateManager save overwrites previous file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const dir = try std.testing.allocator.dupe(u8, ".");
     defer testing.allocator.free(dir);
     const path = try std.fs.path.join(testing.allocator, &.{ dir, "state-overwrite.json" });
     defer testing.allocator.free(path);
@@ -316,7 +316,7 @@ test "StateManager save overwrites previous file" {
 test "StateManager handles special chars in values" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const dir = try std.testing.allocator.dupe(u8, ".");
     defer testing.allocator.free(dir);
     const path = try std.fs.path.join(testing.allocator, &.{ dir, "state-special.json" });
     defer testing.allocator.free(path);

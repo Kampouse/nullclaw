@@ -242,7 +242,7 @@ test "parseLastHygieneTimestamp supports markdown format" {
 test "runIfDue with markdown backend does not append hygiene marker twice inside interval" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
     var markdown_memory = try root.MarkdownMemory.init(std.testing.allocator, base);

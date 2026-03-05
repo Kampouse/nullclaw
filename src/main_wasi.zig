@@ -138,7 +138,7 @@ fn join_path(allocator: std.mem.Allocator, a: []const u8, b: []const u8) ![]u8 {
 fn ensure_parent_dir(path: []const u8) !void {
     const maybe_parent = std.fs.path.dirname(path);
     if (maybe_parent) |parent| {
-        std.Io.Dir.cwd().makePath(parent) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -165,7 +165,7 @@ fn write_file_truncate(path: []const u8, content: []const u8) !void {
     try ensure_parent_dir(path);
     const file = try std.Io.Dir.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
-    try file.writeAll(content);
+    try file.writeStreamingAll(std.Options.debug_io, content);
 }
 
 fn write_if_missing(path: []const u8, content: []const u8) !bool {
@@ -173,7 +173,7 @@ fn write_if_missing(path: []const u8, content: []const u8) !bool {
     try ensure_parent_dir(path);
     const file = try std.Io.Dir.cwd().createFile(path, .{ .exclusive = true });
     defer file.close();
-    try file.writeAll(content);
+    try file.writeStreamingAll(std.Options.debug_io, content);
     return true;
 }
 
@@ -192,24 +192,24 @@ fn append_line(path: []const u8, line: []const u8, allocator: std.mem.Allocator)
         const n = try file.read(&last_byte);
         if (n == 1 and last_byte[0] != '\n') {
             try file.seekTo(size);
-            try file.writeAll("\n");
+            try file.writeStreamingAll(std.Options.debug_io, "\n");
         } else {
             try file.seekTo(size);
         }
     }
 
     const line_with_newline = try std.fmt.allocPrint(allocator, "{s}\n", .{line});
-    try file.writeAll(line_with_newline);
+    try file.writeStreamingAll(std.Options.debug_io, line_with_newline);
 }
 
 fn scaffold_workspace(allocator: std.mem.Allocator, workspace: []const u8) !usize {
-    std.Io.Dir.cwd().makePath(workspace) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, workspace) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
     const memory_dir = try join_path(allocator, workspace, "memory");
-    std.Io.Dir.cwd().makePath(memory_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, memory_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };

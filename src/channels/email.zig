@@ -106,25 +106,25 @@ pub const EmailChannel = struct {
         var ehlo_buf: [256]u8 = undefined;
         var ehlo_fbs = std.io.fixedBufferStream(&ehlo_buf);
         try ehlo_fbs.writer().print("EHLO nullclaw\r\n", .{});
-        try stream.writeAll(ehlo_fbs.getWritten());
+        try stream.writeStreamingAll(std.Options.debug_io, ehlo_fbs.getWritten());
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
 
         // MAIL FROM
         var from_buf: [512]u8 = undefined;
         var from_fbs = std.io.fixedBufferStream(&from_buf);
         try from_fbs.writer().print("MAIL FROM:<{s}>\r\n", .{self.config.from_address});
-        try stream.writeAll(from_fbs.getWritten());
+        try stream.writeStreamingAll(std.Options.debug_io, from_fbs.getWritten());
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
 
         // RCPT TO
         var rcpt_buf: [512]u8 = undefined;
         var rcpt_fbs = std.io.fixedBufferStream(&rcpt_buf);
         try rcpt_fbs.writer().print("RCPT TO:<{s}>\r\n", .{recipient});
-        try stream.writeAll(rcpt_fbs.getWritten());
+        try stream.writeStreamingAll(std.Options.debug_io, rcpt_fbs.getWritten());
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
 
         // DATA
-        try stream.writeAll("DATA\r\n");
+        try stream.writeStreamingAll(std.Options.debug_io, "DATA\r\n");
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
 
         // Build email headers + body
@@ -141,15 +141,15 @@ pub const EmailChannel = struct {
             try dw.print("References: <{s}>\r\n", .{msg_id});
         }
 
-        try dw.writeAll("Content-Type: text/plain; charset=utf-8\r\n");
-        try dw.writeAll("\r\n");
-        try dw.writeAll(body);
-        try dw.writeAll("\r\n.\r\n");
-        try stream.writeAll(data_fbs.getWritten());
+        try dw.writeStreamingAll(std.Options.debug_io, "Content-Type: text/plain; charset=utf-8\r\n");
+        try dw.writeStreamingAll(std.Options.debug_io, "\r\n");
+        try dw.writeStreamingAll(std.Options.debug_io, body);
+        try dw.writeStreamingAll(std.Options.debug_io, "\r\n.\r\n");
+        try stream.writeStreamingAll(std.Options.debug_io, data_fbs.getWritten());
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
 
         // QUIT
-        try stream.writeAll("QUIT\r\n");
+        try stream.writeStreamingAll(std.Options.debug_io, "QUIT\r\n");
     }
 
     /// Send a reply email — applies Re: prefix to subject and includes threading headers.
@@ -170,7 +170,7 @@ pub const EmailChannel = struct {
         var cmd_buf: [256]u8 = undefined;
         var cmd_fbs = std.io.fixedBufferStream(&cmd_buf);
         try cmd_fbs.writer().print("A003 UID STORE {d} +FLAGS (\\Seen)\r\n", .{uid});
-        try stream.writeAll(cmd_fbs.getWritten());
+        try stream.writeStreamingAll(std.Options.debug_io, cmd_fbs.getWritten());
         // Read response (discard for now)
         var resp_buf: [1024]u8 = undefined;
         _ = stream.read(&resp_buf) catch return error.ImapError;
