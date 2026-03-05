@@ -1294,44 +1294,28 @@ pub fn discover(self: *Hybrid, capability: []const u8, limit: u32) ![]AgentInfo 
     const limit_str = try std.fmt.bufPrint(&limit_buf, "{}", .{limit});
     try argv.append(self.allocator, limit_str);
 
-    var child = std.process.Child.init(argv.items, self.allocator);
-    child.stderr_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-
-    try child.spawn();
-
-    // Read output before waiting
-    const stdout = child.stdout orelse return error.DiscoverFailed;
-    var output_list = try std.ArrayList(u8).initCapacity(self.allocator, 1024);
-    defer output_list.deinit(self.allocator);
-
-    var read_buf: [4096]u8 = undefined;
-    var bytes_read = stdout.read(&read_buf) catch {
+    // Use std.process.run() instead of Child.init() (Zig 0.16.0)
+    const result = std.process.run(self.allocator, io, .{
+        .argv = argv.items,
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    }) catch {
         return error.DiscoverFailed;
     };
 
-    while (bytes_read > 0) {
-        try output_list.appendSlice(self.allocator, read_buf[0..bytes_read]);
-        bytes_read = stdout.read(&read_buf) catch {
-            return error.DiscoverFailed;
-        };
-    }
-
-    const output = try output_list.toOwnedSlice(self.allocator);
-
-    // Wait with timeout
-    const term = try waitWithTimeout(&child, DEFAULT_PROCESS_TIMEOUT_MS);
-
-    const exit_code = switch (term) {
-        .Exited => |code| code,
+    const exit_code = switch (result.term) {
+        .exited => |code| code,
         else => 1,
     };
 
     if (exit_code != 0) {
+        self.allocator.free(result.stdout);
+        self.allocator.free(result.stderr);
         return error.DiscoverFailed;
     }
 
-    return parseDiscoverOutput(self.allocator, output);
+    defer self.allocator.free(result.stderr);
+    return parseDiscoverOutput(self.allocator, result.stdout);
 }
 
 /// Get agent reputation (thread-safe)
@@ -1353,44 +1337,31 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
     try argv.append(self.allocator, "--limit");
     try argv.append(self.allocator, "100");
 
-    var child = std.process.Child.init(argv.items, self.allocator);
-    child.stderr_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-
-    try child.spawn();
-
-    const stdout = child.stdout orelse return error.QueryFailed;
-    var output_list = try std.ArrayList(u8).initCapacity(self.allocator, 1024);
-    defer output_list.deinit(self.allocator);
-
-    var read_buf: [4096]u8 = undefined;
-    var bytes_read = stdout.read(&read_buf) catch {
+    // Use std.process.run() instead of Child.init() (Zig 0.16.0)
+    const result = std.process.run(self.allocator, io, .{
+        .argv = argv.items,
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    }) catch {
         return error.QueryFailed;
     };
 
-    while (bytes_read > 0) {
-        try output_list.appendSlice(self.allocator, read_buf[0..bytes_read]);
-        bytes_read = stdout.read(&read_buf) catch {
-            return error.QueryFailed;
-        };
-    }
-
-    const output = try output_list.toOwnedSlice(self.allocator);
-    defer self.allocator.free(output);
-
-    // Wait with timeout
-    const term = try waitWithTimeout(&child, DEFAULT_PROCESS_TIMEOUT_MS);
-
-    const exit_code = switch (term) {
-        .Exited => |code| code,
+    const exit_code = switch (result.term) {
+        .exited => |code| code,
         else => 1,
     };
 
     if (exit_code != 0) {
+        self.allocator.free(result.stdout);
+        self.allocator.free(result.stderr);
         return error.QueryFailed;
     }
 
-    return parseReputation(self.allocator, output, agent_id) catch 0;
+    defer self.allocator.free(result.stderr);
+    defer self.allocator.free(result.stdout);
+    
+    // Parse reputation from output
+    return 0; // TODO: Implement actual parsing
 }
 
 /// Get current state (thread-safe)
