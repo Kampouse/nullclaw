@@ -306,7 +306,7 @@ pub fn parseEvents(allocator: std.mem.Allocator, buffer: []const u8) ![]SseEvent
     var lines = std.mem.splitScalar(u8, buffer, '\n');
     while (lines.next()) |raw_line| {
         // Strip trailing CR for CRLF line endings
-        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const line = std.mem.trimEnd(u8, raw_line, "\r");
 
         if (line.len == 0) {
             // Empty line marks end of event — dispatch if we have data

@@ -50,6 +50,50 @@ const GatewayObservedToolEvent = struct {
     success: bool = false,
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Helper Functions for ArrayListUnmanaged (Zig 0.16: ArrayList.writer() removed)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Append JSON-escaped string to ArrayListUnmanaged
+fn appendJsonEscaped(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, input: []const u8) !void {
+    for (input) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(alloc, "\\\""),
+            '\\' => try buf.appendSlice(alloc, "\\\\"),
+            '\n' => try buf.appendSlice(alloc, "\\n"),
+            '\r' => try buf.appendSlice(alloc, "\\r"),
+            '\t' => try buf.appendSlice(alloc, "\\t"),
+            0x08 => try buf.appendSlice(alloc, "\\b"),
+            0x0C => try buf.appendSlice(alloc, "\\f"),
+            else => try buf.append(alloc, c),
+        }
+    }
+}
+
+/// Append byte to ArrayListUnmanaged
+fn appendByte(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, byte: u8) !void {
+    try buf.append(alloc, byte);
+}
+
+/// Append slice to ArrayListUnmanaged
+fn appendSlice(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, slice: []const u8) !void {
+    try buf.appendSlice(alloc, slice);
+}
+
+/// Append formatted string to ArrayListUnmanaged
+fn appendPrint(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
+    var stack_buf: [256]u8 = undefined;
+    if (std.fmt.bufPrint(&stack_buf, fmt, args)) |formatted| {
+        try buf.appendSlice(alloc, formatted);
+    } else |_| {
+        // Only NoSpaceLeft can fail for bufPrint
+        // Fallback: allocPrint for larger output
+        const alloc_fmt = try std.fmt.allocPrint(alloc, fmt, args);
+        defer alloc.free(alloc_fmt);
+        try buf.appendSlice(alloc, alloc_fmt);
+    }
+}
+
 const GatewayTurnToolEvent = struct {
     kind: GatewayObservedToolEventKind,
     tool: []const u8,
@@ -76,7 +120,7 @@ const GatewayThreadObserver = struct {
     }
 
     pub fn deinit(self: *GatewayThreadObserver) void {
-        self.mutex.lock(std.Options.debug_io);
+        self.mutex.lock(std.Options.debug_io) catch return;
         defer self.mutex.unlock(std.Options.debug_io);
         for (self.events.items) |event| {
             self.allocator.free(event.tool);
@@ -92,8 +136,9 @@ const GatewayThreadObserver = struct {
     }
 
     pub fn currentSeq(self: *GatewayThreadObserver) u64 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         return self.next_seq;
     }
 
@@ -102,8 +147,9 @@ const GatewayThreadObserver = struct {
         allocator: std.mem.Allocator,
         seq: u64,
     ) ![]GatewayTurnToolEvent {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lock(io) catch return error.MutexLockFailed;
+        defer self.mutex.unlock(io);
 
         var count: usize = 0;
         for (self.events.items) |event| {
@@ -153,7 +199,7 @@ const GatewayThreadObserver = struct {
         tool: []const u8,
         success: bool,
     ) void {
-        self.mutex.lock(std.Options.debug_io);
+        self.mutex.lock(std.Options.debug_io) catch return;
         defer self.mutex.unlock(std.Options.debug_io);
 
         const owned_tool = self.allocator.dupe(u8, tool) catch return;
@@ -688,12 +734,11 @@ pub fn jsonEscapeInto(writer: anytype, input: []const u8) !void {
 pub fn jsonWrapField(allocator: std.mem.Allocator, key: []const u8, value: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeByte('"');
-    try w.writeStreamingAll(std.Options.debug_io, key);
-    try w.writeStreamingAll(std.Options.debug_io, "\":\"");
-    try jsonEscapeInto(w, value);
-    try w.writeByte('"');
+    try appendByte(&buf, allocator, '"');
+    try appendSlice(&buf, allocator, key);
+    try appendSlice(&buf, allocator, "\":\"");
+    try appendJsonEscaped(&buf, allocator, value);
+    try appendByte(&buf, allocator, '"');
     return buf.toOwnedSlice(allocator);
 }
 
@@ -702,10 +747,9 @@ pub fn jsonWrapField(allocator: std.mem.Allocator, key: []const u8, value: []con
 pub fn jsonWrapResponse(allocator: std.mem.Allocator, response: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeStreamingAll(std.Options.debug_io, "{\"status\":\"ok\",\"response\":\"");
-    try jsonEscapeInto(w, response);
-    try w.writeStreamingAll(std.Options.debug_io, "\"}");
+    try appendSlice(&buf, allocator, "{\"status\":\"ok\",\"response\":\"");
+    try appendJsonEscaped(&buf, allocator, response);
+    try appendSlice(&buf, allocator, "\"}");
     return buf.toOwnedSlice(allocator);
 }
 
@@ -716,9 +760,8 @@ fn buildThreadEventsJson(
 ) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
 
-    try w.writeByte('[');
+    try appendByte(&buf, allocator, '[');
 
     var tool_results: usize = 0;
     var failed_results: usize = 0;
@@ -729,14 +772,14 @@ fn buildThreadEventsJson(
     }
 
     if (tool_results > 0) {
-        try w.writeStreamingAll(std.Options.debug_io, "{\"type\":\"tool_summary\",\"total\":");
-        try w.print("{d}", .{tool_results});
-        try w.writeStreamingAll(std.Options.debug_io, ",\"failed\":");
-        try w.print("{d}", .{failed_results});
-        try w.writeByte('}');
+        try appendSlice(&buf, allocator, "{\"type\":\"tool_summary\",\"total\":");
+        try appendPrint(&buf, allocator, "{d}", .{tool_results});
+        try appendSlice(&buf, allocator, ",\"failed\":");
+        try appendPrint(&buf, allocator, "{d}", .{failed_results});
+        try appendByte(&buf, allocator, '}');
     }
 
-    try w.writeByte(']');
+    try appendByte(&buf, allocator, ']');
     return buf.toOwnedSlice(allocator);
 }
 
@@ -749,12 +792,11 @@ fn buildWebhookSuccessResponse(
 ) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeStreamingAll(std.Options.debug_io, "{\"status\":\"ok\",\"response\":\"");
-    try jsonEscapeInto(w, response_text);
-    try w.writeStreamingAll(std.Options.debug_io, "\",\"thread_events\":");
-    try w.writeStreamingAll(std.Options.debug_io, thread_events_json);
-    try w.writeByte('}');
+    try appendSlice(&buf, allocator, "{\"status\":\"ok\",\"response\":\"");
+    try appendJsonEscaped(&buf, allocator, response_text);
+    try appendSlice(&buf, allocator, "\",\"thread_events\":");
+    try appendSlice(&buf, allocator, thread_events_json);
+    try appendByte(&buf, allocator, '}');
     return buf.toOwnedSlice(allocator);
 }
 
@@ -763,10 +805,9 @@ fn buildWebhookSuccessResponse(
 fn jsonWrapChallenge(allocator: std.mem.Allocator, challenge: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeStreamingAll(std.Options.debug_io, "{\"challenge\":\"");
-    try jsonEscapeInto(w, challenge);
-    try w.writeStreamingAll(std.Options.debug_io, "\"}");
+    try appendSlice(&buf, allocator, "{\"challenge\":\"");
+    try appendJsonEscaped(&buf, allocator, challenge);
+    try appendSlice(&buf, allocator, "\"}");
     return buf.toOwnedSlice(allocator);
 }
 
@@ -1062,9 +1103,8 @@ fn verifySlackSignature(
 
     var base_buf: std.ArrayListUnmanaged(u8) = .empty;
     defer base_buf.deinit(allocator);
-    const bw = base_buf.writer(allocator);
-    bw.print("v0:{s}:", .{ts_trimmed}) catch return false;
-    bw.writeStreamingAll(std.Options.debug_io, body) catch return false;
+    appendPrint(&base_buf, allocator, "v0:{s}:", .{ts_trimmed}) catch return false;
+    appendSlice(&base_buf, allocator, body) catch return false;
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [32]u8 = undefined;
@@ -1512,35 +1552,36 @@ pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, ch
     // JSON-escape the text for the body
     var body_buf: std.ArrayList(u8) = .empty;
     defer body_buf.deinit(allocator);
-    const w = body_buf.writer(allocator);
-    try w.print("{{\"chat_id\":{d},\"text\":\"", .{chat_id});
+    var fmt_buf: [128]u8 = undefined;
+    try body_buf.appendSlice(allocator, std.fmt.bufPrint(&fmt_buf, "{{\"chat_id\":{d},\"text\":\"", .{chat_id}) catch return error.OutOfMemory);
     for (text) |c| {
         switch (c) {
-            '"' => try w.writeStreamingAll(std.Options.debug_io, "\\\""),
-            '\\' => try w.writeStreamingAll(std.Options.debug_io, "\\\\"),
-            '\n' => try w.writeStreamingAll(std.Options.debug_io, "\\n"),
-            '\r' => try w.writeStreamingAll(std.Options.debug_io, "\\r"),
-            '\t' => try w.writeStreamingAll(std.Options.debug_io, "\\t"),
-            else => try w.writeByte(c),
+            '"' => try body_buf.appendSlice(allocator, "\\\""),
+            '\\' => try body_buf.appendSlice(allocator, "\\\\"),
+            '\n' => try body_buf.appendSlice(allocator, "\\n"),
+            '\r' => try body_buf.appendSlice(allocator, "\\r"),
+            '\t' => try body_buf.appendSlice(allocator, "\\t"),
+            else => try body_buf.append(allocator, c),
         }
     }
-    try w.writeStreamingAll(std.Options.debug_io, "\"}");
+    try body_buf.appendSlice(allocator, "\"}");
 
     const body = body_buf.items;
 
-    var curl_child = std.process.Child.init(
-        &[_][]const u8{
-            "curl", "-s",                             "-X", "POST",
-            "-H",   "Content-Type: application/json", "-d", body,
-            url,
-        },
-        allocator,
-    );
-    curl_child.stdout_behavior = .Pipe;
-    curl_child.stderr_behavior = .Pipe;
+    const argv = [_][]const u8{
+        "curl", "-s",                             "-X", "POST",
+        "-H",   "Content-Type: application/json", "-d", body,
+        url,
+    };
 
-    curl_child.spawn() catch return;
-    _ = curl_child.wait(std.Options.debug_io) catch {};
+    const io = std.Options.debug_io;
+    var curl_child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch return;
+
+    _ = curl_child.wait(io) catch {};
 }
 
 fn userFacingAgentError(err: anyerror) []const u8 {
@@ -4144,9 +4185,8 @@ test "verifySlackSignature accepts valid signature" {
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
-    const sw = signed.writer(std.testing.allocator);
-    try sw.print("v0:{s}:", .{ts});
-    try sw.writeStreamingAll(std.Options.debug_io, body);
+    try appendPrint(&signed, std.testing.allocator, "v0:{s}:", .{ts});
+    try appendSlice(&signed, std.testing.allocator, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [HmacSha256.mac_length]u8 = undefined;
@@ -4172,9 +4212,8 @@ test "verifySlackSignature rejects stale timestamp" {
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
-    const sw = signed.writer(std.testing.allocator);
-    try sw.print("v0:{s}:", .{ts});
-    try sw.writeStreamingAll(std.Options.debug_io, body);
+    try appendPrint(&signed, std.testing.allocator, "v0:{s}:", .{ts});
+    try appendSlice(&signed, std.testing.allocator, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [HmacSha256.mac_length]u8 = undefined;
@@ -4239,9 +4278,8 @@ test "findSlackConfigForRequest selects account by verified signature" {
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
-    const sw = signed.writer(std.testing.allocator);
-    try sw.print("v0:{s}:", .{ts});
-    try sw.writeStreamingAll(std.Options.debug_io, body);
+    try appendPrint(&signed, std.testing.allocator, "v0:{s}:", .{ts});
+    try appendSlice(&signed, std.testing.allocator, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac_b: [HmacSha256.mac_length]u8 = undefined;
@@ -4424,8 +4462,7 @@ test "GatewayState event_bus defaults to null" {
 fn escapeToString(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try jsonEscapeInto(w, input);
+    try appendJsonEscaped(&buf, allocator, input);
     return buf.toOwnedSlice(allocator);
 }
 

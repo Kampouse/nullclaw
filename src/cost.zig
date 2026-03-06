@@ -174,8 +174,8 @@ pub const CostTracker = struct {
             std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir) catch {};
         }
 
-        const file = std.Io.Dir.cwd().createFile(self.storage_path, .{ .truncate = false }) catch return;
-        defer file.close();
+        const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, self.storage_path, .{ .truncate = false }) catch return;
+        defer file.close(std.Options.debug_io);
 
         // Seek to end for append
         file.seekFromEnd(0) catch {};

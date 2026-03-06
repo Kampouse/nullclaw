@@ -584,7 +584,7 @@ pub const GeminiProvider = struct {
     /// - Empty lines, comments (`:`) → `.skip`
     /// - No `[DONE]` sentinel - stream ends when connection closes
     pub fn parseGeminiSseLine(allocator: std.mem.Allocator, line: []const u8) !GeminiSseResult {
-        const trimmed = std.mem.trimRight(u8, line, "\r");
+        const trimmed = std.mem.trimEnd(u8, line, "\r");
 
         if (trimmed.len == 0) return .skip;
         if (trimmed[0] == ':') return .skip;

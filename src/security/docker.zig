@@ -183,7 +183,7 @@ pub fn validateWorkspaceMount(path: []const u8, allowed_roots: ?[]const []const 
     if (path[0] != '/') return .not_absolute;
 
     // 4. Root check — normalize trailing slashes: treat "///" the same as "/"
-    const trimmed = std.mem.trimRight(u8, path, "/");
+    const trimmed = std.mem.trimEnd(u8, path, "/");
     if (trimmed.len == 0) return .is_root;
 
     // 5. Traversal check — look for ".." as a path component

@@ -8,6 +8,17 @@ const config_types = @import("../config_types.zig");
 const Atomic = @import("../portable_atomic.zig").Atomic;
 const util = @import("../util.zig");
 
+const io = std.Options.debug_io;
+
+// Helper function to close file descriptors across platforms
+fn closeFd(fd: std.posix.fd_t) void {
+    if (comptime builtin.os.tag == .linux) {
+        _ = std.os.linux.close(fd);
+    } else {
+        _ = std.c.close(@as(std.c.fd_t, @intCast(fd)));
+    }
+}
+
 const log = std.log.scoped(.mattermost);
 
 const SocketFd = std.posix.socket_t;
@@ -220,18 +231,17 @@ pub const MattermostChannel = struct {
 
         var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(self.allocator);
-        const bw = body.writer(self.allocator);
-        try bw.writeStreamingAll(std.Options.debug_io, "{\"channel_id\":");
-        try root.appendJsonStringW(bw, channel_id);
-        try bw.writeStreamingAll(std.Options.debug_io, ",\"message\":");
-        try root.appendJsonStringW(bw, text);
+        try body.appendSlice(self.allocator, "{\"channel_id\":");
+        try appendJsonStringArrayList(&body, self.allocator, channel_id);
+        try body.appendSlice(self.allocator, ",\"message\":");
+        try appendJsonStringArrayList(&body, self.allocator, text);
         if (thread_id) |tid| {
             if (tid.len > 0) {
-                try bw.writeStreamingAll(std.Options.debug_io, ",\"root_id\":");
-                try root.appendJsonStringW(bw, tid);
+                try body.appendSlice(self.allocator, ",\"root_id\":");
+                try appendJsonStringArrayList(&body, self.allocator, tid);
             }
         }
-        try bw.writeByte('}');
+        try body.append(self.allocator, '}');
 
         const auth_header = try std.fmt.allocPrint(self.allocator, "Authorization: Bearer {s}", .{self.bot_token});
         defer self.allocator.free(auth_header);
@@ -276,12 +286,11 @@ pub const MattermostChannel = struct {
 
         var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(self.allocator);
-        const bw = body.writer(self.allocator);
-        try bw.writeByte('[');
-        try root.appendJsonStringW(bw, bot_id);
-        try bw.writeByte(',');
-        try root.appendJsonStringW(bw, user_id);
-        try bw.writeByte(']');
+        try body.append(self.allocator, '[');
+        try appendJsonStringArrayList(&body, self.allocator, bot_id);
+        try body.append(self.allocator, ',');
+        try appendJsonStringArrayList(&body, self.allocator, user_id);
+        try body.append(self.allocator, ']');
 
         const auth_header = try std.fmt.allocPrint(self.allocator, "Authorization: Bearer {s}", .{self.bot_token});
         defer self.allocator.free(auth_header);
@@ -299,7 +308,7 @@ pub const MattermostChannel = struct {
     }
 
     fn fetchBotUserId(self: *MattermostChannel) ![]const u8 {
-        self.bot_state_mu.lock(std.Options.debug_io);
+        try self.bot_state_mu.lock(std.Options.debug_io);
         defer self.bot_state_mu.unlock(std.Options.debug_io);
         if (self.bot_user_id) |uid| return uid;
 
@@ -348,7 +357,7 @@ pub const MattermostChannel = struct {
             if (comptime builtin.os.tag == .windows) {
                 _ = std.os.windows.ws2_32.closesocket(fd);
             } else {
-                std.posix.close(fd);
+                closeFd(fd);
             }
             self.ws_fd.store(invalid_socket, .release);
         }
@@ -358,8 +367,8 @@ pub const MattermostChannel = struct {
             self.gateway_thread = null;
         }
 
-        self.bot_state_mu.lock();
-        defer self.bot_state_mu.unlock();
+        self.bot_state_mu.lock(std.Options.debug_io) catch {};
+        defer self.bot_state_mu.unlock(std.Options.debug_io);
         if (self.bot_user_id) |uid| {
             self.allocator.free(uid);
             self.bot_user_id = null;
@@ -393,6 +402,20 @@ pub const MattermostChannel = struct {
     fn vtableStopTyping(ptr: *anyopaque, recipient: []const u8) anyerror!void {
         const self: *MattermostChannel = @ptrCast(@alignCast(ptr));
         try self.stopTyping(recipient);
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     pub const vtable = root.Channel.VTable{
@@ -555,9 +578,9 @@ pub const MattermostChannel = struct {
         }
 
         const sender_id = jsonString(post_obj, "user_id") orelse return;
-        self.bot_state_mu.lock();
+        self.bot_state_mu.lock(std.Options.debug_io) catch {};
         const bot_id = self.bot_user_id;
-        self.bot_state_mu.unlock();
+        self.bot_state_mu.unlock(std.Options.debug_io);
         if (bot_id) |bid| {
             if (std.mem.eql(u8, bid, sender_id)) return;
         }

@@ -6,7 +6,17 @@ const bus = @import("../bus.zig");
 const websocket = @import("../websocket.zig");
 const util = @import("../util.zig");
 
+const io = std.Options.debug_io;
 const log = std.log.scoped(.lark);
+
+// Helper function to close file descriptors across platforms
+fn closeFd(fd: std.posix.fd_t) void {
+    if (comptime builtin.os.tag == .linux) {
+        _ = std.os.linux.close(fd);
+    } else {
+        _ = std.c.close(@as(std.c.fd_t, @intCast(fd)));
+    }
+}
 
 const SocketFd = std.posix.socket_t;
 const invalid_socket: SocketFd = switch (builtin.os.tag) {
@@ -261,7 +271,7 @@ pub const LarkChannel = struct {
         try fbs.writer().print("{{\"app_id\":\"{s}\",\"app_secret\":\"{s}\"}}", .{ self.app_id, self.app_secret });
         const body = fbs.getWritten();
 
-        var client = std.http.Client{ .allocator = self.allocator };
+        var client = std.http.Client{ .allocator = self.allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         var aw: std.Io.Writer.Allocating = .init(self.allocator);
@@ -333,7 +343,7 @@ pub const LarkChannel = struct {
         try auth_fbs.writer().print("Bearer {s}", .{token});
         const auth_value = auth_fbs.getWritten();
 
-        var client = std.http.Client{ .allocator = self.allocator };
+        var client = std.http.Client{ .allocator = self.allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         const send_result = client.fetch(.{
@@ -357,7 +367,7 @@ pub const LarkChannel = struct {
             try retry_auth_fbs.writer().print("Bearer {s}", .{new_token});
             const retry_auth_value = retry_auth_fbs.getWritten();
 
-            var retry_client = std.http.Client{ .allocator = self.allocator };
+            var retry_client = std.http.Client{ .allocator = self.allocator, .io = io };
             defer retry_client.deinit();
 
             const retry_result = retry_client.fetch(.{
@@ -437,7 +447,7 @@ pub const LarkChannel = struct {
         try body_fbs.writer().print("{{\"app_id\":\"{s}\",\"app_secret\":\"{s}\"}}", .{ self.app_id, self.app_secret });
         const body = body_fbs.getWritten();
 
-        var client = std.http.Client{ .allocator = self.allocator };
+        var client = std.http.Client{ .allocator = self.allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         var aw: std.Io.Writer.Allocating = .init(self.allocator);
@@ -633,7 +643,7 @@ pub const LarkChannel = struct {
             if (comptime builtin.os.tag == .windows) {
                 _ = std.os.windows.ws2_32.closesocket(fd);
             } else {
-                std.posix.close(fd);
+                closeFd(fd);
             }
         }
 

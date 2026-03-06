@@ -6,7 +6,17 @@ const bus_mod = @import("../bus.zig");
 const websocket = @import("../websocket.zig");
 const util = @import("../util.zig");
 
+const io = std.Options.debug_io;
 const log = std.log.scoped(.slack);
+
+// Helper function to close file descriptors across platforms
+fn closeFd(fd: std.posix.fd_t) void {
+    if (comptime builtin.os.tag == .linux) {
+        _ = std.os.linux.close(fd);
+    } else {
+        _ = std.c.close(@as(std.c.fd_t, @intCast(fd)));
+    }
+}
 
 const SocketFd = std.posix.socket_t;
 const invalid_socket: SocketFd = switch (builtin.os.tag) {
@@ -464,23 +474,22 @@ pub const SlackChannel = struct {
 
         var metadata: std.ArrayListUnmanaged(u8) = .empty;
         defer metadata.deinit(self.allocator);
-        const mw = metadata.writer(self.allocator);
-        try mw.writeByte('{');
-        try mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":");
-        try root.appendJsonStringW(mw, self.account_id);
-        try mw.writeStreamingAll(std.Options.debug_io, ",\"is_dm\":");
-        try mw.writeStreamingAll(std.Options.debug_io, if (is_dm) "true" else "false");
-        try mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":");
-        try root.appendJsonStringW(mw, channel_id);
+        try metadata.append(self.allocator, '{');
+        try metadata.appendSlice(self.allocator, "\"account_id\":");
+        try appendJsonStringArrayList(&metadata, self.allocator, self.account_id);
+        try metadata.appendSlice(self.allocator, ",\"is_dm\":");
+        try metadata.appendSlice(self.allocator, if (is_dm) "true" else "false");
+        try metadata.appendSlice(self.allocator, ",\"channel_id\":");
+        try appendJsonStringArrayList(&metadata, self.allocator, channel_id);
         if (message_ts) |ts| {
-            try mw.writeStreamingAll(std.Options.debug_io, ",\"message_id\":");
-            try root.appendJsonStringW(mw, ts);
+            try metadata.appendSlice(self.allocator, ",\"message_id\":");
+            try appendJsonStringArrayList(&metadata, self.allocator, ts);
         }
         if (thread_ts) |tts| {
-            try mw.writeStreamingAll(std.Options.debug_io, ",\"thread_id\":");
-            try root.appendJsonStringW(mw, tts);
+            try metadata.appendSlice(self.allocator, ",\"thread_id\":");
+            try appendJsonStringArrayList(&metadata, self.allocator, tts);
         }
-        try mw.writeByte('}');
+        try metadata.append(self.allocator, '}');
 
         const inbound = try bus_mod.makeInboundFull(
             self.allocator,
@@ -641,13 +650,14 @@ pub const SlackChannel = struct {
 
     fn parseSocketConnectParts(
         socket_url: []const u8,
-        host_buf: []u8,
+        _host_buf: []u8,
         path_buf: []u8,
     ) !struct { host: []const u8, port: u16, path: []const u8 } {
+        _ = _host_buf; // Reserved for future use
         const uri = std.Uri.parse(socket_url) catch return error.SlackApiError;
         if (!std.ascii.eqlIgnoreCase(uri.scheme, "wss")) return error.SlackApiError;
 
-        const host = uri.getHost(host_buf) catch return error.SlackApiError;
+        const host = uri.host orelse return error.SlackApiError;
         const port = uri.port orelse 443;
         const raw_path = componentAsSlice(uri.path);
         const query = if (uri.query) |q| componentAsSlice(q) else "";
@@ -860,7 +870,7 @@ pub const SlackChannel = struct {
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
 
-        const bw = body_list.writer(self.allocator);
+        const bw = body_list.writer();
         bw.writeStreamingAll(std.Options.debug_io, "{\"channel_id\":") catch return;
         root.appendJsonStringW(bw, channel_id) catch return;
         bw.writeStreamingAll(std.Options.debug_io, ",\"thread_ts\":") catch return;
@@ -957,7 +967,7 @@ pub const SlackChannel = struct {
             if (comptime builtin.os.tag == .windows) {
                 _ = std.os.windows.ws2_32.closesocket(fd);
             } else {
-                std.posix.close(fd);
+                closeFd(fd);
             }
             self.ws_fd.store(invalid_socket, .release);
         }
@@ -1015,6 +1025,20 @@ pub const SlackChannel = struct {
     fn vtableStopTyping(ptr: *anyopaque, recipient: []const u8) anyerror!void {
         const self: *SlackChannel = @ptrCast(@alignCast(ptr));
         try self.stopTyping(recipient);
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     pub const vtable = root.Channel.VTable{

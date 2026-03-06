@@ -228,13 +228,15 @@ pub const WhatsAppChannel = struct {
         defer allocator.free(media_resp);
 
         // Step 3: Write to tmp file
-        var rand = std.crypto.random;
+        var rand_bytes: [8]u8 = undefined;
+        std.Io.random(std.Options.debug_io, &rand_bytes);
+        const rand_id = std.mem.readInt(u64, &rand_bytes, .little);
         var path_buf: [1024]u8 = undefined;
-        const local_path = std.fmt.bufPrint(&path_buf, "/tmp/whatsapp_{x}.dat", .{rand.int(u64)}) catch return null;
+        const local_path = std.fmt.bufPrint(&path_buf, "/tmp/whatsapp_{x}.dat", .{rand_id}) catch return null;
 
-        if (std.fs.createFileAbsolute(local_path, .{ .read = false })) |file| {
+        if (std.Io.Dir.createFileAbsolute(std.Options.debug_io, local_path, .{ .read = false })) |file| {
             file.writeStreamingAll(std.Options.debug_io, media_resp) catch {
-                file.close();
+                file.close(std.Options.debug_io);
                 return null;
             };
             file.close();
@@ -271,12 +273,11 @@ pub const WhatsAppChannel = struct {
         // Build JSON body dynamically
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const w = body_list.writer(self.allocator);
-        try w.writeStreamingAll(std.Options.debug_io, "{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"");
-        try w.writeStreamingAll(std.Options.debug_io, to);
-        try w.writeStreamingAll(std.Options.debug_io, "\",\"type\":\"text\",\"text\":{\"preview_url\":false,\"body\":");
-        try root.appendJsonStringW(w, text);
-        try w.writeStreamingAll(std.Options.debug_io, "}}");
+        try body_list.appendSlice(self.allocator, "{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"");
+        try body_list.appendSlice(self.allocator, to);
+        try body_list.appendSlice(self.allocator, "\",\"type\":\"text\",\"text\":{\"preview_url\":false,\"body\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, text);
+        try body_list.appendSlice(self.allocator, "}}");
         const body = body_list.items;
 
         // Build auth header
@@ -285,7 +286,7 @@ pub const WhatsAppChannel = struct {
         try auth_fbs.writer().print("Bearer {s}", .{self.access_token});
         const auth_value = auth_fbs.getWritten();
 
-        var client = std.http.Client{ .allocator = self.allocator };
+        var client = std.http.Client{ .allocator = self.allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         const result = client.fetch(.{
@@ -325,6 +326,20 @@ pub const WhatsAppChannel = struct {
     fn vtableHealthCheck(ptr: *anyopaque) bool {
         const self: *WhatsAppChannel = @ptrCast(@alignCast(ptr));
         return self.healthCheck();
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     pub const vtable = root.Channel.VTable{

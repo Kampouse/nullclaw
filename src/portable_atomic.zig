@@ -19,7 +19,7 @@ pub fn Atomic(comptime T: type) type {
 fn MutexAtomic(comptime T: type) type {
     return struct {
         raw: T,
-        _mutex: std.Thread.Mutex = .{},
+        _mutex: std.Io.Mutex = std.Io.Mutex.init,
 
         const Self = @This();
 
@@ -29,20 +29,20 @@ fn MutexAtomic(comptime T: type) type {
 
         pub fn load(self: *const Self, comptime _: std.builtin.AtomicOrder) T {
             const m = &@constCast(self)._mutex;
-            m.lock();
-            defer m.unlock();
+            m.lockUncancelable(std.Options.debug_io);
+            defer m.unlock(std.Options.debug_io);
             return self.raw;
         }
 
         pub fn store(self: *Self, value: T, comptime _: std.builtin.AtomicOrder) void {
-            self._mutex.lock();
-            defer self._mutex.unlock();
+            self._mutex.lockUncancelable(std.Options.debug_io);
+            defer self._mutex.unlock(std.Options.debug_io);
             self.raw = value;
         }
 
         pub fn fetchAdd(self: *Self, operand: T, comptime _: std.builtin.AtomicOrder) T {
-            self._mutex.lock();
-            defer self._mutex.unlock();
+            self._mutex.lockUncancelable(std.Options.debug_io);
+            defer self._mutex.unlock(std.Options.debug_io);
             const old = self.raw;
             self.raw +%= operand;
             return old;

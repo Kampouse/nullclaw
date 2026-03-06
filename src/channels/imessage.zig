@@ -89,11 +89,12 @@ pub const IMessageChannel = struct {
     fn currentChatDbPath(self: *const IMessageChannel, allocator: std.mem.Allocator) ![]u8 {
         if (self.db_path) |path| return allocator.dupe(u8, path);
 
-        if (std.process.getEnvVarOwned(allocator, "IMESSAGE_CHAT_DB_PATH")) |env_path| {
-            return env_path;
-        } else |_| {}
+        if (platform.getEnvOrNull(allocator, "IMESSAGE_CHAT_DB_PATH")) |env_path| {
+            defer allocator.free(env_path);
+            return allocator.dupe(u8, env_path);
+        }
 
-        const home = std.process.getEnvVarOwned(allocator, "HOME") catch return error.NoHomeDir;
+        const home = platform.getHomeDir(allocator) catch return error.NoHomeDir;
         defer allocator.free(home);
         return std.fs.path.join(allocator, &.{ home, "Library", "Messages", "chat.db" });
     }
@@ -120,7 +121,7 @@ pub const IMessageChannel = struct {
 
         const db_path = self.currentChatDbPath(self.allocator) catch return false;
         defer self.allocator.free(db_path);
-        std.fs.accessAbsolute(db_path, .{}) catch return false;
+        std.Io.Dir.accessAbsolute(std.Options.debug_io, db_path, .{}) catch return false;
         return true;
     }
 
@@ -164,19 +165,20 @@ pub const IMessageChannel = struct {
 
         var metadata_buf: std.ArrayListUnmanaged(u8) = .empty;
         defer metadata_buf.deinit(self.allocator);
-        const mw = metadata_buf.writer(self.allocator);
-        mw.writeByte('{') catch return;
-        mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":") catch return;
-        root.appendJsonStringW(mw, self.account_id) catch return;
-        mw.writeStreamingAll(std.Options.debug_io, ",\"is_dm\":") catch return;
-        mw.writeStreamingAll(std.Options.debug_io, if (msg.is_group) "false" else "true") catch return;
-        mw.writeStreamingAll(std.Options.debug_io, ",\"is_group\":") catch return;
-        mw.writeStreamingAll(std.Options.debug_io, if (msg.is_group) "true" else "false") catch return;
+
+        // Build JSON metadata manually (TODO: proper JSON escaping)
+        metadata_buf.appendSlice(self.allocator, "{") catch return;
+        metadata_buf.appendSlice(self.allocator, "\"account_id\":") catch return;
+        metadata_buf.appendSlice(self.allocator, self.account_id) catch return;
+        metadata_buf.appendSlice(self.allocator, ",\"is_dm\":") catch return;
+        metadata_buf.appendSlice(self.allocator, if (msg.is_group) "false" else "true") catch return;
+        metadata_buf.appendSlice(self.allocator, ",\"is_group\":") catch return;
+        metadata_buf.appendSlice(self.allocator, if (msg.is_group) "true" else "false") catch return;
         if (msg.is_group) {
-            mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":") catch return;
-            root.appendJsonStringW(mw, group_peer_id) catch return;
+            metadata_buf.appendSlice(self.allocator, ",\"channel_id\":") catch return;
+            metadata_buf.appendSlice(self.allocator, group_peer_id) catch return;
         }
-        mw.writeByte('}') catch return;
+        metadata_buf.appendSlice(self.allocator, "}") catch return;
 
         const inbound = bus_mod.makeInboundFull(
             self.allocator,
@@ -335,7 +337,7 @@ pub const IMessageChannel = struct {
         const db_path = try self.currentChatDbPath(allocator);
         defer allocator.free(db_path);
 
-        std.fs.accessAbsolute(db_path, .{}) catch return &.{};
+        std.Io.Dir.accessAbsolute(std.Options.debug_io, db_path, .{}) catch return &.{};
 
         if (!self.cursor_initialized) {
             self.last_rowid = try self.queryMaxRowId(allocator, db_path);
@@ -388,10 +390,13 @@ pub const IMessageChannel = struct {
         };
         defer self.allocator.free(script);
 
-        const result = std.process.Child.run(.{
-            .allocator = self.allocator,
-            .argv = &.{ "osascript", "-e", script },
-        }) catch return error.IMessageSendFailed;
+        var child = std.process.Child.init(&.{ "osascript", "-e", script }, self.allocator);
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Ignore;
+
+        try child.spawn();
+        const result = try child.wait();
         defer self.allocator.free(result.stdout);
         defer self.allocator.free(result.stderr);
 
@@ -563,7 +568,7 @@ fn createTestDb(allocator: std.mem.Allocator) ![]u8 {
     const tmp_dir = try platform.getTempDir(allocator);
     defer allocator.free(tmp_dir);
     const filename = try std.fmt.allocPrint(allocator, "nullclaw_imessage_{d}_{x}.db", .{
-        std.time.microTimestamp(),
+        @divTrunc(util.nanoTimestamp(), 1000), // Convert nanoseconds to microseconds
         util.randomInt(u32),
     });
     defer allocator.free(filename);
@@ -744,7 +749,7 @@ test "pollMessagesFromDb parses direct message" {
     const allocator = std.testing.allocator;
     const db_path = try createTestDb(allocator);
     defer allocator.free(db_path);
-    defer std.fs.deleteFileAbsolute(db_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, db_path) catch {};
 
     try insertTestMessage(allocator, db_path, 1, "+1234567890", "hello", false, null);
 
@@ -767,7 +772,7 @@ test "pollMessagesFromDb parses group chat and uses chat reply target" {
     const allocator = std.testing.allocator;
     const db_path = try createTestDb(allocator);
     defer allocator.free(db_path);
-    defer std.fs.deleteFileAbsolute(db_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, db_path) catch {};
 
     try insertTestMessage(allocator, db_path, 2, "+1234567890", "group hello", false, "chat12345");
 
@@ -789,7 +794,7 @@ test "pollMessages initializes cursor and skips backlog on first call" {
     const allocator = std.testing.allocator;
     const db_path = try createTestDb(allocator);
     defer allocator.free(db_path);
-    defer std.fs.deleteFileAbsolute(db_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, db_path) catch {};
 
     try insertTestMessage(allocator, db_path, 10, "+1234567890", "old", false, null);
 

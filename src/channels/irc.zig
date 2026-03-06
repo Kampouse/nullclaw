@@ -1,9 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
 const bus_mod = @import("../bus.zig");
 const util = @import("../util.zig");
 
+const io = std.Options.debug_io;
 const log = std.log.scoped(.irc);
 
 /// IRC style prefix prepended to messages before they reach the LLM.
@@ -36,18 +38,18 @@ pub const IrcChannel = struct {
     sasl_password: ?[]const u8,
     tls: bool = true,
     use_tls: bool = false,
-    stream: ?std.net.Stream = null,
+    stream: ?std.posix.socket_t = null,
     tls_state: ?*TlsState = null,
     bus: ?*bus_mod.Bus = null,
     running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     reader_thread: ?std.Thread = null,
-    write_mu: std.Thread.Mutex = .{},
+    write_mu: std.Io.Mutex = std.Io.Mutex.init,
 
     /// Heap-allocated TLS state that wraps a TCP stream with encryption.
     /// Must be heap-allocated so that pointers remain stable for the TLS client.
     pub const TlsState = struct {
-        stream_reader: std.net.Stream.Reader,
-        stream_writer: std.net.Stream.Writer,
+        socket_reader: SocketReader,
+        socket_writer: SocketWriter,
         tls_client: std.crypto.tls.Client,
         /// Backing buffers owned by the allocator.
         read_buf: []u8,
@@ -61,6 +63,102 @@ pub const IrcChannel = struct {
             allocator.free(self.tls_read_buf);
             allocator.free(self.tls_write_buf);
             allocator.destroy(self);
+        }
+    };
+
+    /// Socket reader wrapper implementing std.Io.Reader vtable for TLS.
+    const SocketReader = struct {
+        fd: std.posix.socket_t,
+        interface: std.Io.Reader,
+
+        fn streamFn(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+            _ = limit;
+            const self: *const SocketReader = @fieldParentPtr("interface", r);
+
+            // Get writable slice from writer
+            const dest = w.writableSlice(1024) catch return error.WriteFailed;
+
+            // Read from socket using os-specific read
+            const n = osRead(self.fd, dest) catch return error.ReadFailed;
+            if (n == 0) return error.EndOfStream;
+
+            // Advance writer
+            w.advance(n);
+            return n;
+        }
+
+        fn osRead(fd: std.posix.socket_t, buf: []u8) !usize {
+            // Use posix read which provides a cross-platform interface
+            return std.posix.read(fd, buf);
+        }
+
+        const reader_vtable = std.Io.Reader.VTable{
+            .stream = streamFn,
+        };
+
+        fn init(fd: std.posix.socket_t) SocketReader {
+            return .{
+                .fd = fd,
+                .interface = .{
+                    .vtable = &reader_vtable,
+                    .buffer = &[_]u8{},
+                    .seek = 0,
+                    .end = 0,
+                },
+            };
+        }
+    };
+
+    /// Socket writer wrapper implementing std.Io.Writer vtable for TLS.
+    const SocketWriter = struct {
+        fd: std.posix.socket_t,
+        interface: std.Io.Writer,
+
+        fn drainFn(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+            _ = splat;
+            const self: *const SocketWriter = @fieldParentPtr("interface", w);
+            var total_written: usize = 0;
+
+            for (data) |buf| {
+                // Write to socket using os-specific write
+                const n = osWrite(self.fd, buf) catch return error.WriteFailed;
+                total_written += n;
+                if (n < buf.len) return total_written;
+            }
+            return total_written;
+        }
+
+        fn osWrite(fd: std.posix.socket_t, buf: []const u8) !usize {
+            // POSIX doesn't have a write() function, use OS-specific syscalls
+            if (comptime builtin.os.tag == .linux) {
+                const n = std.os.linux.write(fd, buf.ptr, buf.len);
+                if (@as(isize, @bitCast(n)) < 0) return error.WriteFailed;
+                return n;
+            } else if (comptime builtin.os.tag == .macos) {
+                // macOS: Use the BSD write syscall via C extern
+                const macos_write = struct {
+                    extern "c" fn write(c_int, [*]const u8, usize) isize;
+                };
+                const n = macos_write.write(@as(c_int, @intCast(fd)), buf.ptr, buf.len);
+                if (n < 0) return error.WriteFailed;
+                return @intCast(n);
+            } else {
+                @compileError("Unsupported OS for socket write");
+            }
+        }
+
+        const writer_vtable = std.Io.Writer.VTable{
+            .drain = drainFn,
+        };
+
+        fn init(fd: std.posix.socket_t) SocketWriter {
+            return .{
+                .fd = fd,
+                .interface = .{
+                    .vtable = &writer_vtable,
+                    .buffer = &[_]u8{},
+                },
+            };
         }
     };
 
@@ -166,16 +264,29 @@ pub const IrcChannel = struct {
     /// Write bytes through TLS or plain TCP depending on connection mode.
     /// Abstracts away the write path so callers do not need to check use_tls.
     pub fn ircWriteAll(self: *IrcChannel, data: []const u8) !void {
-        self.write_mu.lock();
-        defer self.write_mu.unlock();
+        self.write_mu.lockUncancelable(std.Options.debug_io);
+        defer self.write_mu.unlock(std.Options.debug_io);
 
         if (self.tls_state) |tls| {
-            try tls.tls_client.writer.writeStreamingAll(std.Options.debug_io, data);
+            try tls.tls_client.writer.writeAll(data);
             try tls.tls_client.writer.flush();
-            // Flush the underlying stream writer to push ciphertext to the socket
-            try tls.stream_writer.interface.flush();
         } else if (self.stream) |stream| {
-            try stream.writeStreamingAll(std.Options.debug_io, data);
+            // stream is a socket fd, use OS-specific write syscall
+            const os_write = struct {
+                fn sys(fd: std.posix.socket_t, buf: []const u8) !void {
+                    if (comptime builtin.os.tag == .linux) {
+                        const n = std.os.linux.write(fd, buf.ptr, buf.len);
+                        if (@as(isize, @bitCast(n)) < 0) return error.WriteFailed;
+                    } else if (comptime builtin.os.tag == .macos) {
+                        const macos_write = struct {
+                            extern "c" fn write(c_int, [*]const u8, usize) isize;
+                        };
+                        const n = macos_write.write(@as(c_int, @intCast(fd)), buf.ptr, buf.len);
+                        if (n < 0) return error.WriteFailed;
+                    }
+                }
+            }.sys;
+            os_write(stream, data) catch return error.IoError;
         } else {
             return error.IrcNotConnected;
         }
@@ -190,7 +301,11 @@ pub const IrcChannel = struct {
             };
         }
         if (self.stream) |stream| {
-            return stream.read(out);
+            // stream is a socket fd, use posix read directly
+            return std.posix.read(stream, out) catch |err| switch (err) {
+                error.EndOfStream => 0,
+                else => err,
+            };
         }
         return error.IrcNotConnected;
     }
@@ -346,17 +461,17 @@ pub const IrcChannel = struct {
     /// When use_tls is true, wraps the TCP stream with std.crypto.tls.Client
     /// for TLS encryption. Otherwise connects via plain TCP.
     pub fn connect(self: *IrcChannel) !void {
-        const addr = try std.net.Address.resolveIp(self.host, self.port);
-        const stream = try std.net.tcpConnectToAddress(addr);
-        self.stream = stream;
+        const addr = try std.Io.net.IpAddress.resolve(std.Options.debug_io, self.host, self.port);
+        const stream = try addr.connect(std.Options.debug_io, .{ .mode = .stream });
+        self.stream = stream.socket.handle;
 
         if (self.use_tls) {
-            try self.initTls(stream);
+            try self.initTls(stream.socket.handle);
         }
     }
 
     /// Initialize TLS over an existing TCP stream.
-    fn initTls(self: *IrcChannel, stream: std.net.Stream) !void {
+    fn initTls(self: *IrcChannel, stream_fd: std.posix.socket_t) !void {
         const tls_buf_len = std.crypto.tls.Client.min_buffer_len;
 
         // Allocate buffers for stream and TLS I/O
@@ -369,7 +484,7 @@ pub const IrcChannel = struct {
         const tls_write_buf = try self.allocator.alloc(u8, tls_buf_len);
         errdefer self.allocator.free(tls_write_buf);
 
-        // Heap-allocate TlsState so pointers remain stable
+        // Heap-allocate TlsState so pointers remain stable for TLS client
         const tls = try self.allocator.create(TlsState);
         errdefer self.allocator.destroy(tls);
 
@@ -377,17 +492,29 @@ pub const IrcChannel = struct {
         tls.write_buf = write_buf;
         tls.tls_read_buf = tls_read_buf;
         tls.tls_write_buf = tls_write_buf;
-        tls.stream_reader = stream.reader(read_buf);
-        tls.stream_writer = stream.writer(write_buf);
+
+        // Initialize socket reader/writer wrappers
+        tls.socket_reader = SocketReader.init(stream_fd);
+        tls.socket_writer = SocketWriter.init(stream_fd);
+
+        // Generate entropy for TLS
+        var entropy: [240]u8 = undefined; // std.crypto.tls.Client.entropy_len
+        std.Io.random(std.Options.debug_io, &entropy);
+
+        // Get current time for TLS (seconds since Unix epoch)
+        const timestamp_ns = std.Io.Clock.real.now(std.Options.debug_io);
+        const realtime_now: i64 = @intCast(@divTrunc(timestamp_ns.nanoseconds, 1_000_000_000));
 
         tls.tls_client = std.crypto.tls.Client.init(
-            tls.stream_reader.interface(),
-            &tls.stream_writer.interface,
+            &tls.socket_reader.interface,
+            &tls.socket_writer.interface,
             .{
                 .host = if (self.tls) .{ .explicit = self.host } else .no_verification,
                 .ca = .no_verification,
                 .read_buffer = tls_read_buf,
                 .write_buffer = tls_write_buf,
+                .entropy = &entropy,
+                .realtime_now_seconds = realtime_now,
                 .allow_truncation_attacks = true,
             },
         ) catch return error.TlsInitializationFailed;
@@ -406,11 +533,15 @@ pub const IrcChannel = struct {
         }
 
         if (self.stream) |stream| {
-            // Try to send QUIT gracefully (only for plain TCP; TLS already sent close_notify)
-            if (self.tls_state == null) {
-                stream.writeStreamingAll(std.Options.debug_io, "QUIT :nullclaw shutting down\r\n") catch |err| log.err("QUIT send failed: {}", .{err});
+            // Close the socket using OS-specific syscall
+            if (comptime builtin.os.tag == .linux) {
+                _ = std.os.linux.close(stream);
+            } else if (comptime builtin.os.tag == .macos) {
+                const macos_close = struct {
+                    extern "c" fn close(c_int) c_int;
+                };
+                _ = macos_close.close(@as(c_int, @intCast(stream)));
             }
-            stream.close();
             self.stream = null;
         }
     }
@@ -592,7 +723,7 @@ pub fn splitIrcMessage(allocator: std.mem.Allocator, message: []const u8, max_by
 
     var line_it = std.mem.splitScalar(u8, message, '\n');
     while (line_it.next()) |raw_line| {
-        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const line = std.mem.trimEnd(u8, raw_line, "\r");
         if (line.len == 0) continue;
 
         if (line.len <= max_bytes) {

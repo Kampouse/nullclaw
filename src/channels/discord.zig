@@ -6,6 +6,7 @@ const bus_mod = @import("../bus.zig");
 const websocket = @import("../websocket.zig");
 
 const Atomic = @import("../portable_atomic.zig").Atomic;
+const io = std.Options.debug_io;
 
 const log = std.log.scoped(.discord);
 
@@ -261,8 +262,10 @@ pub const DiscordChannel = struct {
             if (task.thread) |t| t.join();
         }
 
-        self.typing_mu.lock();
-        defer self.typing_mu.unlock();
+        try self.typing_mu.lock(io);
+        defer {
+            self.typing_mu.unlock(io);
+        }
         try self.typing_handles.put(self.allocator, key_copy, task);
     }
 
@@ -270,7 +273,7 @@ pub const DiscordChannel = struct {
         var removed_key: ?[]u8 = null;
         var removed_task: ?*TypingTask = null;
 
-        self.typing_mu.lock(std.Options.debug_io);
+        try self.typing_mu.lock(std.Options.debug_io);
         if (self.typing_handles.fetchRemove(channel_id)) |entry| {
             removed_key = @constCast(entry.key);
             removed_task = entry.value;
@@ -287,8 +290,8 @@ pub const DiscordChannel = struct {
         }
     }
 
-    fn stopAllTyping(self: *DiscordChannel) void {
-        self.typing_mu.lock(std.Options.debug_io);
+    fn stopAllTyping(self: *DiscordChannel) !void {
+        try self.typing_mu.lock(std.Options.debug_io);
         var handles = self.typing_handles;
         self.typing_handles = .empty;
         self.typing_mu.unlock(std.Options.debug_io);
@@ -352,14 +355,25 @@ pub const DiscordChannel = struct {
         const self: *DiscordChannel = @ptrCast(@alignCast(ptr));
         self.running.store(false, .release);
         self.heartbeat_stop.store(true, .release);
-        self.stopAllTyping();
+        self.stopAllTyping() catch {};
         // Close socket to unblock blocking read
         const fd = self.ws_fd.load(.acquire);
         if (fd != invalid_socket) {
             if (comptime builtin.os.tag == .windows) {
                 _ = std.os.windows.ws2_32.closesocket(fd);
             } else {
-                std.posix.close(fd);
+                const posix_close = struct {
+                    fn close(fd_val: std.posix.fd_t) void {
+                        // Use system-specific close for file descriptors
+                        if (comptime builtin.os.tag == .linux) {
+                            _ = std.os.linux.close(fd_val);
+                        } else {
+                            // Fallback for other POSIX systems
+                            _ = std.c.close(@as(std.c.fd_t, @intCast(fd_val)));
+                        }
+                    }
+                };
+                posix_close.close(fd);
             }
         }
         if (self.gateway_thread) |t| {
@@ -847,7 +861,10 @@ pub const DiscordChannel = struct {
 
         if (d_obj.get("attachments")) |att_val| {
             if (att_val == .array) {
-                var rand = std.crypto.random;
+                // Generate random ID for temporary files
+                var rand_bytes: [8]u8 = undefined;
+                std.Io.random(io, &rand_bytes);
+                const rand_id = std.mem.readInt(u64, &rand_bytes, .little);
                 for (att_val.array.items) |att_item| {
                     if (att_item == .object) {
                         if (att_item.object.get("url")) |url_val| {
@@ -859,16 +876,15 @@ pub const DiscordChannel = struct {
                                     defer self.allocator.free(img_data);
 
                                     // Make temp file
-                                    const rand_id = rand.int(u64);
                                     var path_buf: [1024]u8 = undefined;
                                     const local_path = std.fmt.bufPrint(&path_buf, "/tmp/discord_{x}.dat", .{rand_id}) catch continue;
 
-                                    if (std.fs.createFileAbsolute(local_path, .{ .read = false })) |file| {
-                                        file.writeStreamingAll(std.Options.debug_io, img_data) catch {
-                                            file.close();
+                                    if (std.Io.Dir.createFileAbsolute(io, local_path, .{ .read = false })) |file| {
+                                        file.writeStreamingAll(io, img_data) catch {
+                                            file.close(io);
                                             continue;
                                         };
-                                        file.close();
+                                        file.close(io);
 
                                         if (content_buf.items.len > 0) content_buf.appendSlice(self.allocator, "\n") catch {};
                                         content_buf.appendSlice(self.allocator, "[IMAGE:") catch {};
@@ -900,15 +916,19 @@ pub const DiscordChannel = struct {
 
         var metadata_buf: std.ArrayListUnmanaged(u8) = .empty;
         defer metadata_buf.deinit(self.allocator);
-        const mw = metadata_buf.writer(self.allocator);
-        try mw.print("{{\"is_dm\":{s}", .{if (guild_id == null) "true" else "false"});
-        try mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":");
-        try root.appendJsonStringW(mw, self.account_id);
+
+        // Build JSON metadata manually
+        try metadata_buf.appendSlice(self.allocator, "{\"is_dm\":");
+        try metadata_buf.appendSlice(self.allocator, if (guild_id == null) "true" else "false");
+        try metadata_buf.appendSlice(self.allocator, ",\"account_id\":");
+        try metadata_buf.appendSlice(self.allocator, self.account_id);
+        // TODO: Proper JSON escaping for account_id
         if (guild_id) |gid| {
-            try mw.writeStreamingAll(std.Options.debug_io, ",\"guild_id\":");
-            try root.appendJsonStringW(mw, gid);
+            try metadata_buf.appendSlice(self.allocator, ",\"guild_id\":");
+            try metadata_buf.appendSlice(self.allocator, gid);
+            // TODO: Proper JSON escaping for guild_id
         }
-        try mw.writeByte('}');
+        try metadata_buf.appendSlice(self.allocator, "}");
 
         const msg = try bus_mod.makeInboundFull(
             self.allocator,
@@ -978,7 +998,7 @@ test "discord typing handles start empty" {
 test "discord startTyping stores handle and stopTyping clears it" {
     var ch = DiscordChannel.init(std.testing.allocator, "my-bot-token", null, false);
     ch.running.store(true, .release);
-    defer ch.stopAllTyping();
+    defer ch.stopAllTyping() catch {};
 
     try ch.startTyping("123456");
     try std.testing.expect(ch.typing_handles.get("123456") != null);

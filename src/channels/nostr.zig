@@ -5,6 +5,7 @@ const config_types = @import("../config_types.zig");
 const bus = @import("../bus.zig");
 const secrets = @import("../security/secrets.zig");
 
+const io = std.Options.debug_io;
 const log = std.log.scoped(.nostr);
 
 /// DM protocol for protocol mirroring — reply using the same protocol the sender used.
@@ -35,7 +36,7 @@ pub const NostrChannel = struct {
     /// Accessed from both reader thread (writes) and outbound dispatcher (reads),
     /// so guard all map access with sender_protocols_mu.
     sender_protocols: std.StringHashMapUnmanaged(DmProtocol),
-    sender_protocols_mu: std.atomic.Mutex,
+    sender_protocols_mu: std.Io.Mutex = std.Io.Mutex.init,
     /// Recently-seen inner rumor IDs (kind:14 event id → arrival unix timestamp).
     /// Suppresses duplicate deliveries when the same rumor arrives via multiple relays.
     seen_rumor_ids: std.StringHashMapUnmanaged(i64),
@@ -54,7 +55,6 @@ pub const NostrChannel = struct {
             .reader_thread = null,
             .running = std.atomic.Value(bool).init(false),
             .sender_protocols = .empty,
-            .sender_protocols_mu = .{},
             .seen_rumor_ids = .empty,
             .listen_start_at = 0,
             .started = false,
@@ -76,8 +76,8 @@ pub const NostrChannel = struct {
         }
 
         // Free heap-allocated keys in sender_protocols map.
-        self.sender_protocols_mu.lock();
-        defer self.sender_protocols_mu.unlock();
+        self.sender_protocols_mu.lockUncancelable(io);
+        defer self.sender_protocols_mu.unlock(io);
         var it = self.sender_protocols.keyIterator();
         while (it.next()) |key_ptr| {
             self.allocator.free(key_ptr.*);
@@ -561,8 +561,8 @@ pub const NostrChannel = struct {
     /// Record which DM protocol a sender used, for protocol mirroring.
     /// If the sender already has an entry, update in-place (no allocation).
     pub fn recordSenderProtocol(self: *NostrChannel, sender_hex: []const u8, protocol: DmProtocol) !void {
-        self.sender_protocols_mu.lock();
-        defer self.sender_protocols_mu.unlock();
+        self.sender_protocols_mu.lockUncancelable(io);
+        defer self.sender_protocols_mu.unlock(io);
         if (self.sender_protocols.getPtr(sender_hex)) |ptr| {
             ptr.* = protocol;
         } else {
@@ -574,8 +574,8 @@ pub const NostrChannel = struct {
 
     /// Get the DM protocol a sender last used. Defaults to NIP-17 if unknown.
     pub fn getSenderProtocol(self: *NostrChannel, sender_hex: []const u8) DmProtocol {
-        self.sender_protocols_mu.lock();
-        defer self.sender_protocols_mu.unlock();
+        self.sender_protocols_mu.lockUncancelable(io);
+        defer self.sender_protocols_mu.unlock(io);
         return self.sender_protocols.get(sender_hex) orelse .nip17;
     }
 

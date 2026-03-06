@@ -750,7 +750,7 @@ pub const CronScheduler = struct {
                         log.err("cron job '{s}' failed to start: {}", .{ job.id, err });
                         job.last_status = "error";
                         job.last_run_secs = now;
-                        job.last_output = error.NotImplemented;
+                        job.last_output = null;
                         // Deliver error notification
                         if (out_bus) |b| {
                             _ = deliverResult(self.allocator, job.delivery, "cron job failed to start", false, b) catch {};
@@ -1966,14 +1966,16 @@ test "collectChildOutputWithTimeout disables timeout when set to zero" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
-    var child = std.process.Child.init(&.{ platform.getShell(), platform.getShellFlag(), "echo ready" }, allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    // child already spawned
+    const argv = &.{ platform.getShell(), platform.getShellFlag(), "echo ready" };
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
     errdefer {
-        _ = child.kill(std.Options.debug_io) catch {};
-        _ = child.wait(std.Options.debug_io) catch {};
+        _ = child.kill(io) catch {};
+        _ = child.wait(io) catch {};
     }
 
     var stdout: std.ArrayList(u8) = .empty;
@@ -2003,14 +2005,16 @@ test "collectChildOutputWithTimeout kills process after deadline" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
-    var child = std.process.Child.init(&.{ platform.getShell(), platform.getShellFlag(), "sleep 2; echo never" }, allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    // child already spawned
+    const argv = &.{ platform.getShell(), platform.getShellFlag(), "sleep 2; echo never" };
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
     errdefer {
-        _ = child.kill(std.Options.debug_io) catch {};
-        _ = child.wait(std.Options.debug_io) catch {};
+        _ = child.kill(io) catch {};
+        _ = child.wait(io) catch {};
     }
 
     var stdout: std.ArrayList(u8) = .empty;

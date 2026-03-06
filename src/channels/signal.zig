@@ -138,7 +138,7 @@ pub const SignalChannel = struct {
     sse_next_retry_at: i64 = 0,
 
     /// Typing indicator management (mirrors Discord implementation).
-    typing_mu: std.Thread.Mutex = .{},
+    typing_mu: std.Io.Mutex = std.Io.Mutex.init,
     typing_handles: std.StringHashMapUnmanaged(*TypingTask) = .empty,
 
     const TypingTask = struct {
@@ -459,13 +459,14 @@ pub const SignalChannel = struct {
         try std.base64.standard.Decoder.decode(decoded, base64_data);
 
         // Generate temp file
-        var rand = std.crypto.random;
-        const rand_id = rand.int(u64);
+        var rand_bytes: [8]u8 = undefined;
+        std.Io.random(std.Options.debug_io, &rand_bytes);
+        const rand_id = std.mem.readInt(u64, &rand_bytes, .little);
         var path_buf: [1024]u8 = undefined;
         const local_path = try std.fmt.bufPrint(&path_buf, "/tmp/signal_{x}.dat", .{rand_id});
 
-        var file = std.fs.createFileAbsolute(local_path, .{ .read = false }) catch return null;
-        defer file.close();
+        var file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, local_path, .{ .read = false }) catch return null;
+        defer file.close(std.Options.debug_io);
         try file.writeStreamingAll(std.Options.debug_io, decoded);
 
         return try allocator.dupe(u8, local_path);
@@ -607,7 +608,7 @@ pub const SignalChannel = struct {
             };
 
             // Trim trailing whitespace before the marker
-            const before = std.mem.trimRight(u8, text[cursor..open_pos], " \t\n\r");
+            const before = std.mem.trimEnd(u8, text[cursor..open_pos], " \t\n\r");
             try remaining.appendSlice(allocator, before);
 
             const close_pos = std.mem.indexOfPos(u8, text, open_pos + 7, "]") orelse {
@@ -865,8 +866,8 @@ pub const SignalChannel = struct {
             if (task.thread) |t| t.join();
         }
 
-        self.typing_mu.lock();
-        defer self.typing_mu.unlock();
+        self.typing_mu.lock(std.Options.debug_io) catch {};
+        defer self.typing_mu.unlock(std.Options.debug_io);
         try self.typing_handles.put(self.allocator, key_copy, task);
     }
 
@@ -874,12 +875,12 @@ pub const SignalChannel = struct {
         var removed_key: ?[]u8 = null;
         var removed_task: ?*TypingTask = null;
 
-        self.typing_mu.lock();
+        self.typing_mu.lock(std.Options.debug_io) catch {};
         if (self.typing_handles.fetchRemove(target)) |entry| {
             removed_key = @constCast(entry.key);
             removed_task = entry.value;
         }
-        self.typing_mu.unlock();
+        self.typing_mu.unlock(std.Options.debug_io);
 
         if (removed_task) |task| {
             task.stop_requested.store(true, .release);
@@ -892,10 +893,10 @@ pub const SignalChannel = struct {
     }
 
     fn stopAllTyping(self: *SignalChannel) void {
-        self.typing_mu.lock();
+        self.typing_mu.lock(std.Options.debug_io) catch {};
         var handles = self.typing_handles;
         self.typing_handles = .empty;
-        self.typing_mu.unlock();
+        self.typing_mu.unlock(std.Options.debug_io);
 
         var it = handles.iterator();
         while (it.next()) |entry| {

@@ -598,7 +598,7 @@ fn extractCompletedToolCalls(allocator: std.mem.Allocator, root_obj: std.json.Ob
 /// - "response.completed" / "response.done" → done
 /// - "error" / "response.failed" → error
 pub fn parseCodexSseEvent(allocator: std.mem.Allocator, line: []const u8) !CodexSseResult {
-    const trimmed = std.mem.trimRight(u8, line, "\r");
+    const trimmed = std.mem.trimEnd(u8, line, "\r");
     if (trimmed.len == 0) return .skip;
     if (trimmed[0] == ':') return .skip;
 

@@ -3,6 +3,8 @@ const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
 const util = @import("../util.zig");
 
+const io = std.Options.debug_io;
+
 /// Email channel — IMAP polling for inbound, SMTP for outbound.
 pub const EmailChannel = struct {
     allocator: std.mem.Allocator,
@@ -95,38 +97,53 @@ pub const EmailChannel = struct {
         }
 
         // Connect to SMTP server via TCP
-        const addr = std.net.Address.resolveIp(self.config.smtp_host, self.config.smtp_port) catch return error.SmtpConnectError;
-        const stream = std.net.tcpConnectToAddress(addr) catch return error.SmtpConnectError;
-        defer stream.close();
+        const addr = try std.Io.net.IpAddress.resolve(io, self.config.smtp_host, self.config.smtp_port);
+        const stream = try addr.connect(io, .{ .mode = .stream });
+        defer stream.close(io);
+
+        // Create reader and writer
+        var read_buf: [4096]u8 = undefined;
+        var write_buf: [4096]u8 = undefined;
+        var reader = std.Io.net.Stream.reader(stream, io, &read_buf);
+        var writer = std.Io.net.Stream.writer(stream, io, &write_buf);
 
         // Read greeting
         var greeting_buf: [1024]u8 = undefined;
-        _ = stream.read(&greeting_buf) catch return error.SmtpError;
+        var read_vec: [1][]u8 = .{&greeting_buf};
+        _ = reader.interface.readVec(&read_vec) catch return error.SmtpError;
 
         // EHLO
         var ehlo_buf: [256]u8 = undefined;
         var ehlo_fbs = util.fixedBufferStream(&ehlo_buf);
         try ehlo_fbs.writer().print("EHLO nullclaw\r\n", .{});
-        try stream.writeStreamingAll(std.Options.debug_io, ehlo_fbs.getWritten());
-        _ = stream.read(&greeting_buf) catch return error.SmtpError;
+        try writer.interface.writeAll(ehlo_fbs.getWritten());
+        var read_vec2: [1][]u8 = .{&greeting_buf};
+        _ = reader.interface.readVec(&read_vec2) catch return error.SmtpError;
+        _ = reader.interface.readVec(&read_vec) catch return error.SmtpError;
 
         // MAIL FROM
         var from_buf: [512]u8 = undefined;
         var from_fbs = util.fixedBufferStream(&from_buf);
         try from_fbs.writer().print("MAIL FROM:<{s}>\r\n", .{self.config.from_address});
-        try stream.writeStreamingAll(std.Options.debug_io, from_fbs.getWritten());
-        _ = stream.read(&greeting_buf) catch return error.SmtpError;
+        try writer.interface.writeAll(from_fbs.getWritten());
+        var read_vec3: [1][]u8 = .{&greeting_buf};
+        _ = reader.interface.readVec(&read_vec3) catch return error.SmtpError;
+        _ = reader.interface.readVec(&read_vec) catch return error.SmtpError;
 
         // RCPT TO
         var rcpt_buf: [512]u8 = undefined;
         var rcpt_fbs = util.fixedBufferStream(&rcpt_buf);
         try rcpt_fbs.writer().print("RCPT TO:<{s}>\r\n", .{recipient});
-        try stream.writeStreamingAll(std.Options.debug_io, rcpt_fbs.getWritten());
-        _ = stream.read(&greeting_buf) catch return error.SmtpError;
+        try writer.interface.writeAll(rcpt_fbs.getWritten());
+        var read_vec4: [1][]u8 = .{&greeting_buf};
+        _ = reader.interface.readVec(&read_vec4) catch return error.SmtpError;
+        _ = reader.interface.readVec(&read_vec) catch return error.SmtpError;
 
         // DATA
-        try stream.writeStreamingAll(std.Options.debug_io, "DATA\r\n");
-        _ = stream.read(&greeting_buf) catch return error.SmtpError;
+        try writer.interface.writeAll("DATA\r\n");
+        var read_vec5: [1][]u8 = .{&greeting_buf};
+        _ = reader.interface.readVec(&read_vec5) catch return error.SmtpError;
+        _ = reader.interface.readVec(&read_vec) catch return error.SmtpError;
 
         // Build email headers + body
         var data_buf: [16384]u8 = undefined;
@@ -142,15 +159,16 @@ pub const EmailChannel = struct {
             try dw.print("References: <{s}>\r\n", .{msg_id});
         }
 
-        try dw.writeStreamingAll(std.Options.debug_io, "Content-Type: text/plain; charset=utf-8\r\n");
-        try dw.writeStreamingAll(std.Options.debug_io, "\r\n");
-        try dw.writeStreamingAll(std.Options.debug_io, body);
-        try dw.writeStreamingAll(std.Options.debug_io, "\r\n.\r\n");
-        try stream.writeStreamingAll(std.Options.debug_io, data_fbs.getWritten());
-        _ = stream.read(&greeting_buf) catch return error.SmtpError;
+        try dw.writeAll("Content-Type: text/plain; charset=utf-8\r\n");
+        try dw.writeAll("\r\n");
+        try dw.writeAll(body);
+        try dw.writeAll("\r\n.\r\n");
+        try writer.interface.writeAll(data_fbs.getWritten());
+        var read_vec6: [1][]u8 = .{&greeting_buf};
+        _ = reader.interface.readVec(&read_vec6) catch return error.SmtpError;
 
         // QUIT
-        try stream.writeStreamingAll(std.Options.debug_io, "QUIT\r\n");
+        try writer.interface.writeAll("QUIT\r\n");
     }
 
     /// Send a reply email — applies Re: prefix to subject and includes threading headers.
@@ -166,7 +184,7 @@ pub const EmailChannel = struct {
     }
 
     /// Send IMAP UID STORE command to mark a message as \Seen.
-    pub fn markMessageSeen(self: *EmailChannel, stream: std.net.Stream, uid: u32) !void {
+    pub fn markMessageSeen(self: *EmailChannel, stream: std.Io.net.Stream, uid: u32) !void {
         _ = self;
         var cmd_buf: [256]u8 = undefined;
         var cmd_fbs = util.fixedBufferStream(&cmd_buf);

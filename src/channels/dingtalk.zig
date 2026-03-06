@@ -62,7 +62,7 @@ pub const DingTalkChannel = struct {
         try w.writeStreamingAll(std.Options.debug_io, "}}");
         const body = fbs.getWritten();
 
-        var client = std.http.Client{ .allocator = self.allocator };
+        var client = std.http.Client{ .allocator = self.allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         const result = client.fetch(.{

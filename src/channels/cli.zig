@@ -18,7 +18,7 @@ pub const CliChannel = struct {
 
     pub fn sendMessage(_: *CliChannel, _: []const u8, message: []const u8) !void {
         var out_buf: [4096]u8 = undefined;
-        var bw = std.Io.File.stdout().writer(&out_buf);
+        var bw = std.Io.File.stdout().writer(std.Options.debug_io, &out_buf);
         const w = &bw.interface;
         try w.print("{s}\n", .{message});
         try w.flush();
@@ -156,7 +156,7 @@ test "loadHistory reads file lines" {
 
     // Write a temporary history file
     {
-        const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
         defer f.close(std.Options.debug_io);
         try f.writeStreamingAll(std.Options.debug_io, "hello world\nhow are you\ngoodbye\n");
     }
@@ -246,7 +246,7 @@ test "loadHistory trims whitespace from entries" {
     defer allocator.free(tmp_path);
 
     {
-        const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
         defer f.close(std.Options.debug_io);
         try f.writeStreamingAll(std.Options.debug_io, "  hello  \n\t world \t\nfoo\r\n");
     }
@@ -272,7 +272,7 @@ test "loadHistory skips blank lines" {
     defer allocator.free(tmp_path);
 
     {
-        const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
         defer f.close(std.Options.debug_io);
         try f.writeStreamingAll(std.Options.debug_io, "first\n\n   \n\nsecond\n  \nthird\n");
     }
@@ -298,7 +298,7 @@ test "loadHistory enforces max entries limit" {
     defer allocator.free(tmp_path);
 
     {
-        const f = try std.Io.Dir.cwd().createFile(tmp_path, .{ .truncate = true });
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
         defer f.close(std.Options.debug_io);
         // Write more than MAX_HISTORY_LINES (500) entries
         for (0..600) |i| {

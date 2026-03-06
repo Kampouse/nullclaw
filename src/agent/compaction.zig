@@ -14,6 +14,8 @@ const ChatMessage = providers.ChatMessage;
 const Agent = @import("root.zig").Agent;
 const OwnedMessage = Agent.OwnedMessage;
 
+const io = std.Options.debug_io;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════════════════
@@ -502,6 +504,13 @@ fn makeTestAgent(allocator: std.mem.Allocator) !Agent {
     };
 }
 
+/// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
+fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
+    const result = try dir.realPathFileAlloc(std.Options.debug_io, ".", allocator);
+    // Convert from [:0]u8 to []u8 (drop the sentinel)
+    return result[0 .. result.len - 1];
+}
+
 test "tokenEstimate empty history" {
     const allocator = std.testing.allocator;
     var agent = try makeTestAgent(allocator);
@@ -688,8 +697,8 @@ test "readWorkspaceContextForSummary wraps AGENTS critical sections" {
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
-        defer f.close();
-        try f.writeAll(
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io,
             \\## Session Startup
             \\- read AGENTS.md
             \\- read SOUL.md
@@ -699,7 +708,7 @@ test "readWorkspaceContextForSummary wraps AGENTS critical sections" {
         );
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const context = try readWorkspaceContextForSummary(std.testing.allocator, workspace);
@@ -714,7 +723,7 @@ test "readWorkspaceContextForSummary returns empty when AGENTS missing" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const context = try readWorkspaceContextForSummary(std.testing.allocator, workspace);
@@ -731,7 +740,7 @@ test "readWorkspaceContextForSummary blocks AGENTS symlink escape" {
     var outside_tmp = std.testing.tmpDir(.{});
     defer outside_tmp.cleanup();
 
-    try outside_tmp.dir.writeFile(.{
+    try outside_tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "outside-agents.md",
         .data =
         \\## Session Startup
@@ -742,14 +751,14 @@ test "readWorkspaceContextForSummary blocks AGENTS symlink escape" {
         ,
     });
 
-    const outside_path = try outside_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const outside_path = try dirRealpathAlloc(std.testing.allocator, outside_tmp.dir);
     defer std.testing.allocator.free(outside_path);
     const outside_agents = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "outside-agents.md" });
     defer std.testing.allocator.free(outside_agents);
 
-    try ws_tmp.dir.symLink(outside_agents, "AGENTS.md", .{});
+    try ws_tmp.dir.symLink(io, outside_agents, "AGENTS.md", .{});
 
-    const workspace = try ws_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, ws_tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const context = try readWorkspaceContextForSummary(std.testing.allocator, workspace);

@@ -148,10 +148,9 @@ pub const MatrixChannel = struct {
 
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const w = body_list.writer(self.allocator);
-        try w.writeStreamingAll(std.Options.debug_io, "{\"msgtype\":\"m.text\",\"body\":");
-        try root.appendJsonStringW(w, chunk);
-        try w.writeStreamingAll(std.Options.debug_io, "}");
+        try body_list.appendSlice(self.allocator, "{\"msgtype\":\"m.text\",\"body\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, chunk);
+        try body_list.appendSlice(self.allocator, "}");
 
         const auth_header = try self.authHeader(self.allocator);
         defer self.allocator.free(auth_header);
@@ -498,6 +497,20 @@ pub const MatrixChannel = struct {
     fn vtableStopTyping(ptr: *anyopaque, recipient: []const u8) anyerror!void {
         const self: *MatrixChannel = @ptrCast(@alignCast(ptr));
         try self.stopTyping(recipient);
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     pub const vtable = root.Channel.VTable{

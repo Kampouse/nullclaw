@@ -358,17 +358,18 @@ pub const OneBotChannel = struct {
         // Build JSON body dynamically
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const bw = body_list.writer(self.allocator);
-        try bw.writeStreamingAll(std.Options.debug_io, "{\"action\":\"send_msg\",\"params\":{");
-        try bw.print("\"message_type\":\"{s}\",", .{msg_type});
+        try body_list.appendSlice(self.allocator, "{\"action\":\"send_msg\",\"params\":{");
+
+        var buf: [256]u8 = undefined;
+        try body_list.appendSlice(self.allocator, std.fmt.bufPrint(&buf, "\"message_type\":\"{s}\",", .{msg_type}) catch return error.OnebotSendError);
         if (std.mem.eql(u8, msg_type, "group")) {
-            try bw.print("\"group_id\":{s},", .{id_str});
+            try body_list.appendSlice(self.allocator, std.fmt.bufPrint(&buf, "\"group_id\":{s},", .{id_str}) catch return error.OnebotSendError);
         } else {
-            try bw.print("\"user_id\":{s},", .{id_str});
+            try body_list.appendSlice(self.allocator, std.fmt.bufPrint(&buf, "\"user_id\":{s},", .{id_str}) catch return error.OnebotSendError);
         }
-        try bw.writeStreamingAll(std.Options.debug_io, "\"message\":");
-        try root.appendJsonStringW(bw, text);
-        try bw.writeStreamingAll(std.Options.debug_io, "}}");
+        try body_list.appendSlice(self.allocator, "\"message\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, text);
+        try body_list.appendSlice(self.allocator, "}}");
         const body = body_list.items;
 
         // Build headers
@@ -416,6 +417,20 @@ pub const OneBotChannel = struct {
     fn vtableHealthCheck(ptr: *anyopaque) bool {
         const self: *OneBotChannel = @ptrCast(@alignCast(ptr));
         return self.healthCheck();
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     pub const vtable = root.Channel.VTable{

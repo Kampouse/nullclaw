@@ -54,13 +54,12 @@ pub const LineChannel = struct {
     pub fn replyMessage(self: *LineChannel, reply_token: []const u8, text: []const u8) !void {
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const w = body_list.writer(self.allocator);
 
-        try w.writeStreamingAll(std.Options.debug_io, "{\"replyToken\":\"");
-        try w.writeStreamingAll(std.Options.debug_io, reply_token);
-        try w.writeStreamingAll(std.Options.debug_io, "\",\"messages\":[{\"type\":\"text\",\"text\":");
-        try root.appendJsonStringW(w, text);
-        try w.writeStreamingAll(std.Options.debug_io, "}]}");
+        try body_list.appendSlice(self.allocator, "{\"replyToken\":\"");
+        try body_list.appendSlice(self.allocator, reply_token);
+        try body_list.appendSlice(self.allocator, "\",\"messages\":[{\"type\":\"text\",\"text\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, text);
+        try body_list.appendSlice(self.allocator, "}]}");
         const body = body_list.items;
 
         var auth_buf: [512]u8 = undefined;
@@ -79,13 +78,12 @@ pub const LineChannel = struct {
     pub fn pushMessage(self: *LineChannel, user_id: []const u8, text: []const u8) !void {
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const w = body_list.writer(self.allocator);
 
-        try w.writeStreamingAll(std.Options.debug_io, "{\"to\":\"");
-        try w.writeStreamingAll(std.Options.debug_io, user_id);
-        try w.writeStreamingAll(std.Options.debug_io, "\",\"messages\":[{\"type\":\"text\",\"text\":");
-        try root.appendJsonStringW(w, text);
-        try w.writeStreamingAll(std.Options.debug_io, "}]}");
+        try body_list.appendSlice(self.allocator, "{\"to\":\"");
+        try body_list.appendSlice(self.allocator, user_id);
+        try body_list.appendSlice(self.allocator, "\",\"messages\":[{\"type\":\"text\",\"text\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, text);
+        try body_list.appendSlice(self.allocator, "}]}");
         const body = body_list.items;
 
         var auth_buf: [512]u8 = undefined;
@@ -266,6 +264,20 @@ pub const LineChannel = struct {
     fn vtableSend(ptr: *anyopaque, target: []const u8, message: []const u8, _: []const []const u8) anyerror!void {
         const self: *LineChannel = @ptrCast(@alignCast(ptr));
         try self.sendMessage(target, message);
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     fn vtableName(ptr: *anyopaque) []const u8 {

@@ -126,11 +126,47 @@ pub fn saveTelegramUpdateOffset(
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
 
+    // Custom writer for ArrayList (Zig 0.16: ArrayList.writer() removed)
+    const Writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            // Use bufPrint for formatted output
+            var stack_buf: [256]u8 = undefined;
+            if (std.fmt.bufPrint(&stack_buf, fmt, args)) |formatted| {
+                try self.buffer.appendSlice(self.alloc, formatted);
+            } else |_| {
+                // Only NoSpaceLeft can fail for bufPrint
+                // Fallback: allocPrint for larger output
+                const alloc_fmt = try std.fmt.allocPrint(self.alloc, fmt, args);
+                defer self.alloc.free(alloc_fmt);
+                try self.buffer.appendSlice(self.alloc, alloc_fmt);
+            }
+        }
+    };
+
+    const writer = Writer{ .buffer = &buf, .alloc = allocator };
+    const w = &writer;
+
     try buf.appendSlice(allocator, "{\n");
-    try std.fmt.format(buf.writer(allocator), "  \"version\": {d},\n", .{TELEGRAM_OFFSET_STORE_VERSION});
-    try std.fmt.format(buf.writer(allocator), "  \"last_update_id\": {d},\n", .{update_id});
+    try w.print("  \"version\": {d},\n", .{TELEGRAM_OFFSET_STORE_VERSION});
+    try w.print("  \"last_update_id\": {d},\n", .{update_id});
     if (extractTelegramBotId(bot_token)) |bot_id| {
-        try std.fmt.format(buf.writer(allocator), "  \"bot_id\": \"{s}\"\n", .{bot_id});
+        try w.print("  \"bot_id\": \"{s}\"\n", .{bot_id});
     } else {
         try buf.appendSlice(allocator, "  \"bot_id\": null\n");
     }
@@ -145,7 +181,7 @@ pub fn saveTelegramUpdateOffset(
         try tmp_file.writeStreamingAll(std.Options.debug_io, buf.items);
     }
 
-    std.Io.Dir.renameAbsolute(std.Options.debug_io, tmp_path, path) catch {
+    std.Io.Dir.renameAbsolute(tmp_path, path, std.Options.debug_io) catch {
         std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
         const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{});
         defer file.close(std.Options.debug_io);

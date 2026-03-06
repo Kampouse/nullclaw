@@ -21,7 +21,7 @@ pub const SseLineResult = union(enum) {
 /// - Empty lines, comments (`:`) → `.skip`
 pub fn parseSseLine(allocator: std.mem.Allocator, line: []const u8) !SseLineResult {
     // const data_prefix = "data: "; // unused in Zig 0.16.0 stub
-    const trimmed = std.mem.trimRight(u8, line, "\r");
+    const trimmed = std.mem.trimEnd(u8, line, "\r");
 
     if (trimmed.len == 0) return .skip;
     if (trimmed[0] == ':') return .skip;

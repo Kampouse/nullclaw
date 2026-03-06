@@ -33,8 +33,8 @@ pub const Frame = struct {
 /// Heap-allocated TLS state.
 /// Must be heap-allocated so internal pointers remain stable after init.
 pub const TlsState = struct {
-    stream_reader: std.net.Stream.Reader,
-    stream_writer: std.net.Stream.Writer,
+    stream_reader: std.io.GenericReader(std.posix.socket_t, std.posix.ReadError, std.posix.read),
+    stream_writer: std.io.GenericWriter(std.posix.socket_t, std.posix.WriteError, std.posix.write),
     tls_client: std.crypto.tls.Client,
     read_buf: []u8,
     write_buf: []u8,
@@ -55,9 +55,9 @@ pub const TlsState = struct {
 /// `write_mu` serializes concurrent writes (heartbeat + gateway threads).
 pub const WsClient = struct {
     allocator: std.mem.Allocator,
-    stream: std.net.Stream,
+    stream: std.posix.socket_t,
     tls: *TlsState,
-    write_mu: std.Thread.Mutex,
+    write_mu: std.Io.Mutex,
 
     /// Connect to wss://host:port/path.
     /// `extra_headers`: additional HTTP request headers (without trailing CRLF).
@@ -186,7 +186,7 @@ pub const WsClient = struct {
             .allocator = allocator,
             .stream = stream,
             .tls = tls_state,
-            .write_mu = .{},
+            .write_mu = std.Io.Mutex.init,
         };
     }
 

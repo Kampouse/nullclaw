@@ -887,7 +887,7 @@ test "Allocating writer deinit frees full buffer — no invalid free on sub-slic
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
 
-        try aw.writer.writeStreamingAll(std.Options.debug_io,
+        try aw.writer.writeAll(
             \\{"access_token":"test_tok","refresh_token":"test_rt","expires_in":7200,"token_type":"Bearer"}
         );
 
@@ -908,7 +908,7 @@ test "Allocating writer deinit frees full buffer — no invalid free on sub-slic
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
 
-        try aw.writer.writeStreamingAll(std.Options.debug_io,
+        try aw.writer.writeAll(
             \\{"device_code":"dev123","user_code":"ABCD-1234","verification_uri":"https://example.com/verify","interval":5,"expires_in":900}
         );
 

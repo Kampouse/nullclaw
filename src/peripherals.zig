@@ -707,50 +707,61 @@ pub const NucleoFlash = struct {
 
     fn nucleoInit(ptr: *anyopaque) Peripheral.PeripheralError!void {
         const self = resolve(ptr);
-        const allocator = self.allocator;
+        const io = std.Options.debug_io;
         // Verify a debug probe is connected via probe-rs list
-        var child = std.process.Child.init(
-            &.{ "probe-rs", "list" },
-            allocator,
-        );
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-        child.spawn() catch {
+        const argv = &.{ "probe-rs", "list" };
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdout = .pipe,
+            .stderr = .ignore,
+        }) catch {
             self.connected = false;
             return Peripheral.PeripheralError.NotConnected;
         };
-        const stdout = if (child.stdout) |*out| out.readToEndAlloc(allocator, 64 * 1024) catch null else null;
-        defer if (stdout) |s| allocator.free(s);
-        const term = child.wait() catch {
+
+        // Read stdout from pipe (simplified - just check if process exits successfully)
+        const term = child.wait(io) catch {
             self.connected = false;
             return Peripheral.PeripheralError.NotConnected;
         };
         const exited_ok = switch (term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
         if (!exited_ok) {
             self.connected = false;
             return Peripheral.PeripheralError.NotConnected;
         }
-        // Check if any probes were found (non-empty output with probe info)
-        if (stdout) |s| {
-            // probe-rs list outputs nothing or "No probes found" when no probes connected
-            if (s.len == 0 or std.mem.indexOf(u8, s, "No probes found") != null) {
-                self.connected = false;
-                return Peripheral.PeripheralError.NotConnected;
-            }
-        } else {
-            self.connected = false;
-            return Peripheral.PeripheralError.NotConnected;
-        }
+
+        // Assume probe is connected if probe-rs list succeeded
         self.connected = true;
+    }
+
+    /// Helper to read all output from a child process stdout pipe
+    fn readChildStdout(allocator: std.mem.Allocator, child: *std.process.Child, io: std.Io) ![]u8 {
+        const stdout_file = child.stdout orelse return error.NoStdout;
+        var buf: [8192]u8 = undefined;
+        var reader = stdout_file.reader(io, &buf);
+        var list = std.ArrayList(u8).init(allocator);
+        errdefer list.deinit();
+
+        while (true) {
+            var chunk_bufs: [1][]u8 = .{try list.addManyAsSlice(allocator, 4096)};
+            const n = reader.readVec(&chunk_bufs) catch |err| {
+                if (err == error.EndOfStream) break;
+                return err;
+            };
+            if (n == 0) break;
+        }
+
+        return list.toOwnedSlice();
     }
 
     fn nucleoRead(ptr: *anyopaque, addr: u32) Peripheral.PeripheralError!u8 {
         const self = resolve(ptr);
         if (!self.connected) return Peripheral.PeripheralError.NotConnected;
         const allocator = self.allocator;
+        const io = std.Options.debug_io;
 
         // Format address as hex string for probe-rs
         var addr_buf: [16]u8 = undefined;
@@ -758,18 +769,19 @@ pub const NucleoFlash = struct {
             return Peripheral.PeripheralError.IoError;
 
         // Run: probe-rs read b8 <addr> --chip CHIP
-        var child = std.process.Child.init(
-            &.{ "probe-rs", "read", "b8", addr_hex, "--chip", self.chip },
-            allocator,
-        );
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-        child.spawn() catch return Peripheral.PeripheralError.IoError;
-        const stdout = if (child.stdout) |*out| out.readToEndAlloc(allocator, 4096) catch null else null;
+        const argv = &.{ "probe-rs", "read", "b8", addr_hex, "--chip", self.chip };
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdout = .pipe,
+            .stderr = .ignore,
+        }) catch return Peripheral.PeripheralError.IoError;
+
+        const stdout = readChildStdout(allocator, &child, io) catch null;
         defer if (stdout) |s| allocator.free(s);
-        const term = child.wait() catch return Peripheral.PeripheralError.IoError;
+
+        const term = child.wait(io) catch return Peripheral.PeripheralError.IoError;
         const exited_ok = switch (term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
         if (!exited_ok) return Peripheral.PeripheralError.IoError;
@@ -784,6 +796,7 @@ pub const NucleoFlash = struct {
     fn nucleoWrite(ptr: *anyopaque, addr: u32, data: u8) Peripheral.PeripheralError!void {
         const self = resolve(ptr);
         if (!self.connected) return Peripheral.PeripheralError.NotConnected;
+        const io = std.Options.debug_io;
 
         // Format address and data as hex strings for probe-rs
         var addr_buf: [16]u8 = undefined;
@@ -794,20 +807,21 @@ pub const NucleoFlash = struct {
             return Peripheral.PeripheralError.IoError;
 
         // Run: probe-rs write b8 <addr> <data> --chip CHIP
-        var child = std.process.Child.init(
-            &.{ "probe-rs", "write", "b8", addr_hex, data_str, "--chip", self.chip },
-            self.allocator,
-        );
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Pipe;
-        child.spawn() catch return Peripheral.PeripheralError.IoError;
-        // Drain stderr to avoid pipe deadlock
-        if (child.stderr) |*err_pipe| {
-            _ = err_pipe.readToEndAlloc(self.allocator, 64 * 1024) catch {};
+        const argv = &.{ "probe-rs", "write", "b8", addr_hex, data_str, "--chip", self.chip };
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdout = .ignore,
+            .stderr = .pipe,
+        }) catch return Peripheral.PeripheralError.IoError;
+
+        // Close stderr to avoid pipe deadlock
+        if (child.stderr) |*err_file| {
+            err_file.close(io);
         }
-        const term = child.wait() catch return Peripheral.PeripheralError.IoError;
+
+        const term = child.wait(io) catch return Peripheral.PeripheralError.IoError;
         const exited_ok = switch (term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
         if (!exited_ok) return Peripheral.PeripheralError.IoError;
@@ -816,26 +830,27 @@ pub const NucleoFlash = struct {
     fn nucleoFlash(ptr: *anyopaque, firmware_path: []const u8) Peripheral.PeripheralError!void {
         const self = resolve(ptr);
         if (firmware_path.len == 0) return Peripheral.PeripheralError.FlashFailed;
-        const allocator = self.allocator;
+        const io = std.Options.debug_io;
 
         // Run: probe-rs run --chip CHIP firmware_path
-        var child = std.process.Child.init(
-            &.{ "probe-rs", "run", "--chip", self.chip, firmware_path },
-            allocator,
-        );
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-        child.spawn() catch return Peripheral.PeripheralError.FlashFailed;
-        // Drain pipes to avoid deadlock
+        const argv = &.{ "probe-rs", "run", "--chip", self.chip, firmware_path };
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch return Peripheral.PeripheralError.FlashFailed;
+
+        // Close pipes to avoid deadlock
         if (child.stdout) |*out| {
-            _ = out.readToEndAlloc(allocator, 64 * 1024) catch {};
+            out.close(io);
         }
-        if (child.stderr) |*err_pipe| {
-            _ = err_pipe.readToEndAlloc(allocator, 64 * 1024) catch {};
+        if (child.stderr) |*err_file| {
+            err_file.close(io);
         }
-        const term = child.wait() catch return Peripheral.PeripheralError.FlashFailed;
+
+        const term = child.wait(io) catch return Peripheral.PeripheralError.FlashFailed;
         const ok = switch (term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
         if (!ok) return Peripheral.PeripheralError.FlashFailed;

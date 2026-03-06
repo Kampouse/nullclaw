@@ -421,7 +421,7 @@ pub fn parseUdevLine(line: []const u8) ?DeviceEvent {
     var subsystem: []const u8 = "unknown";
 
     if (std.mem.lastIndexOf(u8, rest, "(")) |paren_start| {
-        device_path = std.mem.trimRight(u8, rest[0..paren_start], " ");
+        device_path = std.mem.trimEnd(u8, rest[0..paren_start], " ");
         const after_paren = rest[paren_start + 1 ..];
         if (std.mem.indexOf(u8, after_paren, ")")) |paren_end| {
             subsystem = after_paren[0..paren_end];

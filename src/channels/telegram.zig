@@ -8,6 +8,15 @@ const config_types = @import("../config_types.zig");
 const interaction_choices = @import("../interactions/choices.zig");
 const Atomic = @import("../portable_atomic.zig").Atomic;
 
+const io = std.Options.debug_io;
+
+/// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
+fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
+    const result = try dir.realPathFileAlloc(io, ".", allocator);
+    // Convert from [:0]u8 to []u8 (drop the sentinel)
+    return result[0 .. result.len - 1];
+}
+
 const log = std.log.scoped(.telegram);
 const MEDIA_GROUP_FLUSH_SECS: u64 = 3;
 const TEMP_MEDIA_SWEEP_INTERVAL_POLLS: u32 = 20;
@@ -292,21 +301,21 @@ fn nextPendingMediaDeadline(group_ids: []const ?[]const u8, received_at: []const
 }
 
 fn sweepTempMediaFilesInDir(dir_path: []const u8, now_secs: i64, ttl_secs: i64) void {
-    var dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch return;
-    defer dir.close();
+    var dir = std.Io.Dir.openDirAbsolute(io, dir_path, .{ .iterate = true }) catch return;
+    defer dir.close(io);
 
     var iter = dir.iterate();
-    while (iter.next() catch null) |entry| {
+    while (iter.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.startsWith(u8, entry.name, "nullclaw_doc_") and
             !std.mem.startsWith(u8, entry.name, "nullclaw_photo_"))
             continue;
 
-        const stat = dir.statFile(entry.name) catch continue;
-        const mtime_secs: i64 = @intCast(@divFloor(stat.mtime, std.time.ns_per_s));
+        const stat = dir.statFile(io, entry.name, .{}) catch continue;
+        const mtime_secs: i64 = @intCast(@divFloor(stat.mtime.nanoseconds, std.time.ns_per_s));
         if ((now_secs - mtime_secs) < ttl_secs) continue;
 
-        dir.deleteFile(entry.name) catch continue;
+        dir.deleteFile(io, entry.name) catch continue;
     }
 }
 
@@ -1278,13 +1287,13 @@ pub const TelegramChannel = struct {
         argv_buf[argc] = url;
         argc += 1;
 
-        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_buf[0..argc] });
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-        // child already spawned
+        var child = try std.process.spawn(io, .{ .argv = argv_buf[0..argc], .stdin = .inherit, .stdout = .pipe, .stderr = .inherit });
 
-        _ = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch return error.CurlReadError;
-        const term = child.wait(std.Options.debug_io) catch return error.CurlWaitError;
+        // Close stdout (we don't need the output)
+        if (child.stdout) |stdout| {
+            stdout.close(io);
+        }
+        const term = try child.wait(io);
         switch (term) {
             .Exited => |code| if (code != 0) return error.CurlFailed,
             else => return error.CurlFailed,
@@ -2642,12 +2651,12 @@ fn downloadTelegramPhoto(allocator: std.mem.Allocator, bot_token: []const u8, fi
     const local_path = path_fbs.getWritten();
 
     // Write file
-    const file = std.fs.createFileAbsolute(local_path, .{}) catch |err| {
+    const file = std.Io.Dir.createFileAbsolute(io, local_path, .{}) catch |err| {
         log.warn("downloadTelegramPhoto: file create failed: {}", .{err});
         return null;
     };
-    defer file.close();
-    file.writeStreamingAll(std.Options.debug_io, data) catch return null;
+    defer file.close(io);
+    file.writeStreamingAll(io, data) catch return null;
 
     return allocator.dupe(u8, local_path) catch null;
 }
@@ -2731,12 +2740,12 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, fil
     const local_path = path_fbs.getWritten();
 
     // Write file
-    const file = std.fs.createFileAbsolute(local_path, .{}) catch |err| {
+    const file = std.Io.Dir.createFileAbsolute(io, local_path, .{}) catch |err| {
         log.warn("downloadTelegramFile: file create failed: {}", .{err});
         return null;
     };
-    defer file.close();
-    file.writeStreamingAll(std.Options.debug_io, data) catch return null;
+    defer file.close(io);
+    file.writeStreamingAll(io, data) catch return null;
 
     return allocator.dupe(u8, local_path) catch null;
 }
@@ -3953,23 +3962,23 @@ test "telegram sweepTempMediaFilesInDir removes only stale nullclaw temp media f
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile(.{ .sub_path = "nullclaw_doc_old.txt", .data = "doc" });
-    try tmp_dir.dir.writeFile(.{ .sub_path = "nullclaw_photo_old.jpg", .data = "photo" });
-    try tmp_dir.dir.writeFile(.{ .sub_path = "keep.txt", .data = "keep" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "nullclaw_doc_old.txt", .data = "doc" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "nullclaw_photo_old.jpg", .data = "photo" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "keep.txt", .data = "keep" });
 
-    const abs_tmp = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const abs_tmp = try dirRealpathAlloc(std.testing.allocator, tmp_dir.dir);
     defer std.testing.allocator.free(abs_tmp);
 
     // TTL < 0 forces matched temp files to be treated as stale for test determinism.
     sweepTempMediaFilesInDir(abs_tmp, util.timestampUnix(), -1);
 
-    const keep_stat = try tmp_dir.dir.statFile("keep.txt");
+    const keep_stat = try tmp_dir.dir.statFile(io, "keep.txt", .{});
     try std.testing.expect(keep_stat.size > 0);
 
-    const doc_stat = tmp_dir.dir.statFile("nullclaw_doc_old.txt");
+    const doc_stat = tmp_dir.dir.statFile(io, "nullclaw_doc_old.txt", .{});
     try std.testing.expectError(error.FileNotFound, doc_stat);
 
-    const photo_stat = tmp_dir.dir.statFile("nullclaw_photo_old.jpg");
+    const photo_stat = tmp_dir.dir.statFile(io, "nullclaw_photo_old.jpg", .{});
     try std.testing.expectError(error.FileNotFound, photo_stat);
 }
 

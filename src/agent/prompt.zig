@@ -101,6 +101,13 @@ fn openWorkspaceFileWithGuards(
     };
 }
 
+/// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
+fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
+    const result = try dir.realPathFileAlloc(io, ".", allocator);
+    // Convert from [:0]u8 to []u8 (drop the sentinel)
+    return result[0 .. result.len - 1];
+}
+
 /// Conversation context for the current turn (Signal-specific for now).
 pub const ConversationContext = struct {
     channel: ?[]const u8 = null,
@@ -195,12 +202,12 @@ test "buildSystemPrompt includes AGENTS operational guidance" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
-        defer f.close();
-        try f.writeAll("Session Startup\n- Read SOUL.md");
+        const f = try tmp.dir.createFile(io, "AGENTS.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io, "Session Startup\n- Read SOUL.md");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(allocator, .{
@@ -233,15 +240,15 @@ test "buildSystemPrompt blocks AGENTS symlink escape outside workspace" {
     var outside_tmp = std.testing.tmpDir(.{});
     defer outside_tmp.cleanup();
 
-    try outside_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "outside-agents.md", .data = "outside-secret-rules" });
-    const outside_path = try outside_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    try outside_tmp.dir.writeFile(io, .{ .sub_path = "outside-agents.md", .data = "outside-secret-rules" });
+    const outside_path = try dirRealpathAlloc(std.testing.allocator, outside_tmp.dir);
     defer std.testing.allocator.free(outside_path);
     const outside_agents = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "outside-agents.md" });
     defer std.testing.allocator.free(outside_agents);
 
-    try ws_tmp.dir.symLink(outside_agents, "AGENTS.md", .{});
+    try ws_tmp.dir.symLink(io, outside_agents, "AGENTS.md", .{});
 
-    const workspace = try ws_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, ws_tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(std.testing.allocator, .{
@@ -258,7 +265,7 @@ test "buildSystemPrompt blocks AGENTS symlink escape outside workspace" {
 fn buildToolsSection(w: anytype, tools: []const Tool) !void {
     try w.writeAll("## Tools\n\n");
     for (tools) |t| {
-        try std.fmt.format(w, "- **{s}**: {s}\n  Parameters: `{s}`\n", .{
+        try w.print("- **{s}**: {s}\n  Parameters: `{s}`\n", .{
             t.name(),
             t.description(),
             t.parametersJson(),
@@ -347,9 +354,9 @@ fn appendSkillsSection(
             try w.writeAll("## Skills\n\n");
             has_always = true;
         }
-        try std.fmt.format(w, "### Skill: {s}\n\n", .{skill.name});
+        try w.print("### Skill: {s}\n\n", .{skill.name});
         if (skill.description.len > 0) {
-            try std.fmt.format(w, "{s}\n\n", .{skill.description});
+            try w.print("{s}\n\n", .{skill.description});
         }
         if (skill.instructions.len > 0) {
             try w.writeAll(skill.instructions);
@@ -406,7 +413,7 @@ fn appendDateTimeSection(w: anytype) !void {
     const hour = day_seconds.getHoursIntoDay();
     const minute = day_seconds.getMinutesIntoHour();
 
-    try std.fmt.format(w, "## Current Date & Time\n\n{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2} UTC\n\n", .{
+    try w.print("## Current Date & Time\n\n{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2} UTC\n\n", .{
         year, month, day, hour, minute,
     });
 }
@@ -420,7 +427,7 @@ fn injectWorkspaceFile(
 ) !void {
     const opened = openWorkspaceFileWithGuards(allocator, workspace_dir, filename);
     if (opened == null) {
-        try std.fmt.format(w, "### {s}\n\n[File not found: {s}]\n\n", .{ filename, filename });
+        try w.print("### {s}\n\n[File not found: {s}]\n\n", .{ filename, filename });
         return;
     }
     var guarded = opened.?;
@@ -437,7 +444,7 @@ fn appendWorkspaceFileContent(
 ) !void {
     // Read up to BOOTSTRAP_MAX_CHARS + some margin
     const content = file.readToEndAlloc(allocator, BOOTSTRAP_MAX_CHARS + 1024) catch {
-        try std.fmt.format(w, "### {s}\n\n[Could not read: {s}]\n\n", .{ filename, filename });
+        try w.print("### {s}\n\n[Could not read: {s}]\n\n", .{ filename, filename });
         return;
     };
     defer allocator.free(content);
@@ -453,11 +460,11 @@ fn appendPromptSectionContent(
     const trimmed = std.mem.trim(u8, content, " \t\r\n");
     if (trimmed.len == 0) return;
 
-    try std.fmt.format(w, "### {s}\n\n", .{filename});
+    try w.print("### {s}\n\n", .{filename});
 
     if (trimmed.len > BOOTSTRAP_MAX_CHARS) {
         try w.writeAll(trimmed[0..BOOTSTRAP_MAX_CHARS]);
-        try std.fmt.format(w, "\n\n[... truncated at {d} chars -- use `read` for full file]\n\n", .{BOOTSTRAP_MAX_CHARS});
+        try w.print("\n\n[... truncated at {d} chars -- use `read` for full file]\n\n", .{BOOTSTRAP_MAX_CHARS});
     } else {
         try w.writeAll(trimmed);
         try w.writeAll("\n\n");
@@ -567,12 +574,12 @@ test "buildSystemPrompt injects memory.md when MEMORY.md is absent" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "memory.md", .{});
-        defer f.close();
-        try f.writeAll("alt-memory");
+        const f = try tmp.dir.createFile(io, "memory.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"alt-memory");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(std.testing.allocator, .{
@@ -593,12 +600,12 @@ test "buildSystemPrompt injects BOOTSTRAP.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "BOOTSTRAP.md", .{});
-        defer f.close();
-        try f.writeAll("bootstrap-welcome-line");
+        const f = try tmp.dir.createFile(io, "BOOTSTRAP.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"bootstrap-welcome-line");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(std.testing.allocator, .{
@@ -617,12 +624,12 @@ test "buildSystemPrompt injects HEARTBEAT.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "HEARTBEAT.md", .{});
-        defer f.close();
-        try f.writeAll("- heartbeat-check-item");
+        const f = try tmp.dir.createFile(io, "HEARTBEAT.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- heartbeat-check-item");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(std.testing.allocator, .{
@@ -641,12 +648,12 @@ test "buildSystemPrompt injects IDENTITY.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
-        defer f.close();
-        try f.writeAll("- **Name:** identity-test-bot");
+        const f = try tmp.dir.createFile(io, "IDENTITY.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- **Name:** identity-test-bot");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(std.testing.allocator, .{
@@ -665,12 +672,12 @@ test "buildSystemPrompt injects USER.md when present" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
-        defer f.close();
-        try f.writeAll("- **Name:** user-test\n- **Timezone:** UTC");
+        const f = try tmp.dir.createFile(io, "USER.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- **Name:** user-test\n- **Timezone:** UTC");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(std.testing.allocator, .{
@@ -689,12 +696,12 @@ test "workspacePromptFingerprint is stable when files are unchanged" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{});
-        defer f.close();
-        try f.writeAll("soul-v1");
+        const f = try tmp.dir.createFile(io, "SOUL.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"soul-v1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const fp1 = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -707,20 +714,20 @@ test "workspacePromptFingerprint changes when tracked file changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{});
-        defer f.close();
-        try f.writeAll("short");
+        const f = try tmp.dir.createFile(io, "SOUL.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"short");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("longer-content-after-change");
+        const f = try tmp.dir.createFile(io, "SOUL.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"longer-content-after-change");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -732,20 +739,20 @@ test "workspacePromptFingerprint changes when MEMORY.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
-        defer f.close();
-        try f.writeAll("memory-v1");
+        const f = try tmp.dir.createFile(io, "MEMORY.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"memory-v1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("memory-v2-updated");
+        const f = try tmp.dir.createFile(io, "MEMORY.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"memory-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -757,20 +764,20 @@ test "workspacePromptFingerprint changes when memory.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "memory.md", .{});
-        defer f.close();
-        try f.writeAll("alt-memory-v1");
+        const f = try tmp.dir.createFile(io, "memory.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"alt-memory-v1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "memory.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("alt-memory-v2-updated");
+        const f = try tmp.dir.createFile(io, "memory.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"alt-memory-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -782,20 +789,20 @@ test "workspacePromptFingerprint changes when BOOTSTRAP.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "BOOTSTRAP.md", .{});
-        defer f.close();
-        try f.writeAll("bootstrap-v1");
+        const f = try tmp.dir.createFile(io, "BOOTSTRAP.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"bootstrap-v1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "BOOTSTRAP.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("bootstrap-v2-updated");
+        const f = try tmp.dir.createFile(io, "BOOTSTRAP.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"bootstrap-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -807,20 +814,20 @@ test "workspacePromptFingerprint changes when HEARTBEAT.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "HEARTBEAT.md", .{});
-        defer f.close();
-        try f.writeAll("- check-1");
+        const f = try tmp.dir.createFile(io, "HEARTBEAT.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- check-1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "HEARTBEAT.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("- check-2-updated");
+        const f = try tmp.dir.createFile(io, "HEARTBEAT.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- check-2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -832,20 +839,20 @@ test "workspacePromptFingerprint changes when IDENTITY.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
-        defer f.close();
-        try f.writeAll("- **Name:** v1");
+        const f = try tmp.dir.createFile(io, "IDENTITY.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- **Name:** v1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("- **Name:** v2-updated");
+        const f = try tmp.dir.createFile(io, "IDENTITY.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- **Name:** v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -857,20 +864,20 @@ test "workspacePromptFingerprint changes when AGENTS.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
-        defer f.close();
-        try f.writeAll("startup-v1");
+        const f = try tmp.dir.createFile(io, "AGENTS.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"startup-v1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("startup-v2-updated");
+        const f = try tmp.dir.createFile(io, "AGENTS.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"startup-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -882,20 +889,20 @@ test "workspacePromptFingerprint changes when USER.md changes" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
-        defer f.close();
-        try f.writeAll("- **Name:** v1");
+        const f = try tmp.dir.createFile(io, "USER.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- **Name:** v1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const before = try workspacePromptFingerprint(std.testing.allocator, workspace);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("- **Name:** v2-updated");
+        const f = try tmp.dir.createFile(io, "USER.md", .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io,"- **Name:** v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -907,9 +914,9 @@ test "buildSystemPrompt includes both MEMORY.md and memory.md when distinct" {
     defer tmp.cleanup();
 
     {
-        const primary = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
-        defer primary.close();
-        try primary.writeAll("primary-memory");
+        const primary = try tmp.dir.createFile(io, "MEMORY.md", .{});
+        defer primary.close(io);
+        try primary.writeStreamingAll(io, "primary-memory");
     }
 
     var has_distinct_case_files = true;
@@ -921,11 +928,11 @@ test "buildSystemPrompt includes both MEMORY.md and memory.md when distinct" {
         else => return err,
     };
     if (alt) |f| {
-        defer f.close();
-        try f.writeAll("alt-memory");
+        defer f.close(io);
+        try f.writeStreamingAll(io,"alt-memory");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const prompt = try buildSystemPrompt(std.testing.allocator, .{
@@ -944,10 +951,57 @@ test "buildSystemPrompt includes both MEMORY.md and memory.md when distinct" {
 }
 
 test "appendDateTimeSection outputs UTC timestamp" {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
-    const w = buf.writer(std.testing.allocator);
-    try appendDateTimeSection(w);
+    const allocator = std.testing.allocator;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
+    defer buf.deinit(allocator);
+
+    // Create a simple writer that works with std.fmt.format
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try writer.writeAll("## Current Date & Time\n\n");
+    const timestamp = util.timestampUnix();
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch_seconds.getDaySeconds();
+
+    const year = year_day.year;
+    const month = @intFromEnum(month_day.month);
+    const day = month_day.day_index + 1;
+    const hour = day_seconds.getHoursIntoDay();
+    const minute = day_seconds.getMinutesIntoHour();
+
+    var fmt_buf: [64]u8 = undefined;
+    const date_str = try std.fmt.bufPrint(&fmt_buf, "{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2} UTC\n\n", .{
+        year, month, day, hour, minute,
+    });
+    try writer.writeAll(date_str);
 
     const output = buf.items;
     try std.testing.expect(std.mem.indexOf(u8, output, "## Current Date & Time") != null);
@@ -958,10 +1012,37 @@ test "appendDateTimeSection outputs UTC timestamp" {
 
 test "appendSkillsSection with no skills produces nothing" {
     const allocator = std.testing.allocator;
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, "/tmp/nullclaw-prompt-test-no-skills");
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, "/tmp/nullclaw-prompt-test-no-skills");
 
     try std.testing.expectEqual(@as(usize, 0), buf.items.len);
 }
@@ -972,22 +1053,49 @@ test "appendSkillsSection renders summary XML for always=false skill" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/greeter");
+    try tmp.dir.createDir(io, "skills/greeter", .default_file);
 
     // always defaults to false — should render as summary XML
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/greeter/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"greeter\", \"version\": \"1.0.0\", \"description\": \"Greets the user\", \"author\": \"dev\"}");
+        const f = try tmp.dir.createFile(io, "skills/greeter/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"greeter\", \"version\": \"1.0.0\", \"description\": \"Greets the user\", \"author\": \"dev\"}");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, base);
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, base);
 
     const output = buf.items;
     // Summary skills should appear as self-closing XML tags
@@ -1006,20 +1114,47 @@ test "appendSkillsSection escapes XML attributes in summary output" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/xml-escape");
+    try tmp.dir.createDir(io, "skills/xml-escape", .default_file);
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/xml-escape/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"xml-escape\", \"description\": \"Use \\\"quotes\\\" & <tags>\"}");
+        const f = try tmp.dir.createFile(io, "skills/xml-escape/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"xml-escape\", \"description\": \"Use \\\"quotes\\\" & <tags>\"}");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, base);
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, base);
 
     const output = buf.items;
     try std.testing.expect(std.mem.indexOf(u8, output, "&quot;") != null);
@@ -1033,20 +1168,47 @@ test "appendSkillsSection supports markdown-only installed skill" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/md-only");
+    try tmp.dir.createDir(io, "skills/md-only", .default_file);
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/md-only/SKILL.md", .{});
-        defer f.close();
-        try f.writeAll("# Markdown only skill");
+        const f = try tmp.dir.createFile(io, "skills/md-only/SKILL.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"# Markdown only skill");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, base);
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, base);
 
     const output = buf.items;
     try std.testing.expect(std.mem.indexOf(u8, output, "name=\"md-only\"") != null);
@@ -1060,27 +1222,54 @@ test "appendSkillsSection renders full instructions for always=true skill" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/commit");
+    try tmp.dir.createDir(io, "skills/commit", .default_file);
 
     // always=true skill with instructions
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/commit/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"commit\", \"description\": \"Git commit helper\", \"always\": true}");
+        const f = try tmp.dir.createFile(io, "skills/commit/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"commit\", \"description\": \"Git commit helper\", \"always\": true}");
     }
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/commit/SKILL.md", .{});
-        defer f.close();
-        try f.writeAll("Always stage before committing.");
+        const f = try tmp.dir.createFile(io, "skills/commit/SKILL.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"Always stage before committing.");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, base);
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, base);
 
     const output = buf.items;
     // Full instructions should be in the output
@@ -1097,35 +1286,62 @@ test "appendSkillsSection renders mixed always=true and always=false" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/full-skill");
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/lazy-skill");
+    try tmp.dir.createDir(io, "skills/full-skill", .default_file);
+    try tmp.dir.createDir(io, "skills/lazy-skill", .default_file);
 
     // always=true skill
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/full-skill/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"full-skill\", \"description\": \"Full loader\", \"always\": true}");
+        const f = try tmp.dir.createFile(io, "skills/full-skill/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"full-skill\", \"description\": \"Full loader\", \"always\": true}");
     }
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/full-skill/SKILL.md", .{});
-        defer f.close();
-        try f.writeAll("Full instructions here.");
+        const f = try tmp.dir.createFile(io, "skills/full-skill/SKILL.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"Full instructions here.");
     }
 
     // always=false skill (default)
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/lazy-skill/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"lazy-skill\", \"description\": \"Lazy loader\"}");
+        const f = try tmp.dir.createFile(io, "skills/lazy-skill/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"lazy-skill\", \"description\": \"Lazy loader\"}");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, base);
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, base);
 
     const output = buf.items;
     // Full skill should be in ## Skills section
@@ -1144,22 +1360,49 @@ test "appendSkillsSection renders unavailable skill with missing deps" {
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/docker-deploy");
+    try tmp.dir.createDir(io, "skills/docker-deploy", .default_file);
 
     // Skill requiring nonexistent binary and env
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/docker-deploy/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"docker-deploy\", \"description\": \"Deploy with docker\", \"requires_bins\": [\"nullclaw_fake_docker_xyz\"], \"requires_env\": [\"NULLCLAW_FAKE_TOKEN_XYZ\"]}");
+        const f = try tmp.dir.createFile(io, "skills/docker-deploy/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"docker-deploy\", \"description\": \"Deploy with docker\", \"requires_bins\": [\"nullclaw_fake_docker_xyz\"], \"requires_env\": [\"NULLCLAW_FAKE_TOKEN_XYZ\"]}");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, base);
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, base);
 
     const output = buf.items;
     // Should render as unavailable in XML
@@ -1177,27 +1420,54 @@ test "appendSkillsSection unavailable always=true skill renders in XML not full"
     defer tmp.cleanup();
 
     // Setup
-    try tmp.dir.makeDir(std.Options.debug_io, "skills/broken-always");
+    try tmp.dir.createDir(io, "skills/broken-always", .default_file);
 
     // always=true but requires nonexistent binary — should be unavailable
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/broken-always/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"broken-always\", \"description\": \"Broken always skill\", \"always\": true, \"requires_bins\": [\"nullclaw_nonexistent_xyz_aaa\"]}");
+        const f = try tmp.dir.createFile(io, "skills/broken-always/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"broken-always\", \"description\": \"Broken always skill\", \"always\": true, \"requires_bins\": [\"nullclaw_nonexistent_xyz_aaa\"]}");
     }
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "skills/broken-always/SKILL.md", .{});
-        defer f.close();
-        try f.writeAll("These instructions should NOT appear in prompt.");
+        const f = try tmp.dir.createFile(io, "skills/broken-always/SKILL.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"These instructions should NOT appear in prompt.");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf = std.ArrayList(u8).initCapacity(allocator, 8192) catch unreachable;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try appendSkillsSection(allocator, w, base);
+
+    const writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            var print_buf: [1024]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&print_buf, fmt, args);
+            try self.buffer.appendSlice(self.alloc, formatted);
+        }
+    }{
+        .buffer = &buf,
+        .alloc = allocator,
+    };
+
+    try appendSkillsSection(allocator, writer, base);
 
     const output = buf.items;
     // Even though always=true, since unavailable it should render as XML summary
@@ -1213,21 +1483,21 @@ test "installSkill end-to-end appears in buildSystemPrompt" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makeDir(std.Options.debug_io, "workspace");
-    try tmp.dir.makeDir(std.Options.debug_io, "source");
+    try tmp.dir.createDir(io, "workspace", .default_file);
+    try tmp.dir.createDir(io, "source", .default_file);
 
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "source/skill.json", .{});
-        defer f.close();
-        try f.writeAll("{\"name\": \"e2e-installed-skill\", \"description\": \"Installed via installSkill\"}");
+        const f = try tmp.dir.createFile(io, "source/skill.json", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"{\"name\": \"e2e-installed-skill\", \"description\": \"Installed via installSkill\"}");
     }
     {
-        const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.md", .{});
-        defer f.close();
-        try f.writeAll("Follow the installed skill instructions.");
+        const f = try tmp.dir.createFile(io, "source/SKILL.md", .{});
+        defer f.close(io);
+        try f.writeStreamingAll(io,"Follow the installed skill instructions.");
     }
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
     const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
     defer allocator.free(workspace);

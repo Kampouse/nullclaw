@@ -453,9 +453,7 @@ test "readBrainDb with corrupt file returns no memories table" {
     defer tmp.cleanup();
 
     try tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "corrupt.db", .data = "not a sqlite database" });
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, "corrupt.db");
-    defer std.testing.allocator.free(path);
-    const pathZ = try std.testing.allocator.dupeZ(u8, path);
+    const pathZ = try tmp.dir.realPathFileAlloc(std.Options.debug_io, "corrupt.db", std.testing.allocator);
     defer std.testing.allocator.free(pathZ);
 
     const result = readBrainDb(std.testing.allocator, pathZ.ptr);

@@ -6,6 +6,7 @@ const config_types = @import("../config_types.zig");
 const bus = @import("../bus.zig");
 const websocket = @import("../websocket.zig");
 
+const io = std.Options.debug_io;
 const log = std.log.scoped(.qq);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -229,8 +230,8 @@ pub const StringDedupSet = struct {
     pub fn isDuplicate(self: *StringDedupSet, allocator: std.mem.Allocator, message_id: []const u8) !bool {
         if (message_id.len == 0) return false;
 
-        self.mu.lock();
-        defer self.mu.unlock();
+        try self.mu.lock(io);
+        defer self.mu.unlock(io);
 
         if (self.seen.contains(message_id)) {
             return true;
@@ -367,10 +368,14 @@ pub fn buildSendBody(
         try root.json_util.appendJsonString(&body_list, allocator, mid);
     }
     if (msg_type) |mt| {
-        try body_list.writer(allocator).print(",\"msg_type\":{d}", .{mt});
+        var buf: [64]u8 = undefined;
+        const mt_str = try std.fmt.bufPrint(&buf, ",\"msg_type\":{d}", .{mt});
+        try body_list.appendSlice(allocator, mt_str);
     }
     if (msg_seq) |seq| {
-        try body_list.writer(allocator).print(",\"msg_seq\":{d}", .{seq});
+        var buf: [64]u8 = undefined;
+        const seq_str = try std.fmt.bufPrint(&buf, ",\"msg_seq\":{d}", .{seq});
+        try body_list.appendSlice(allocator, seq_str);
     }
     try body_list.appendSlice(allocator, "}");
 
@@ -409,7 +414,9 @@ pub fn buildMediaSendBody(
         try root.json_util.appendJsonString(&body_list, allocator, mid);
     }
     if (msg_seq) |seq| {
-        try body_list.writer(allocator).print(",\"msg_seq\":{d}", .{seq});
+        var buf: [64]u8 = undefined;
+        const seq_str = try std.fmt.bufPrint(&buf, ",\"msg_seq\":{d}", .{seq});
+        try body_list.appendSlice(allocator, seq_str);
     }
     try body_list.appendSlice(allocator, "}");
 
@@ -773,7 +780,7 @@ pub const QQChannel = struct {
     /// Ensure a valid access_token is available, fetching or refreshing as needed.
     /// Returns a caller-owned copy of the token to avoid lifetime races with stop().
     fn ensureAccessToken(self: *QQChannel) ![]u8 {
-        self.token_mu.lock(std.Options.debug_io);
+        try self.token_mu.lock(std.Options.debug_io);
         defer self.token_mu.unlock(std.Options.debug_io);
 
         const now = util.timestampUnix();
@@ -1390,7 +1397,16 @@ pub const QQChannel = struct {
             if (comptime builtin.os.tag == .windows) {
                 _ = std.os.windows.ws2_32.closesocket(fd);
             } else {
-                std.posix.close(fd);
+                const posix_close = struct {
+                    fn close(fd_val: std.posix.fd_t) void {
+                        if (comptime builtin.os.tag == .linux) {
+                            _ = std.os.linux.close(fd_val);
+                        } else {
+                            _ = std.c.close(@as(std.c.fd_t, @intCast(fd_val)));
+                        }
+                    }
+                };
+                posix_close.close(fd);
             }
         }
         if (self.gateway_thread) |t| {
@@ -1401,8 +1417,8 @@ pub const QQChannel = struct {
             self.allocator.free(sid);
             self.session_id = null;
         }
-        self.token_mu.lock();
-        defer self.token_mu.unlock();
+        self.token_mu.lockUncancelable(io);
+        defer self.token_mu.unlock(io);
         if (self.access_token) |tok| {
             self.allocator.free(tok);
             self.access_token = null;

@@ -384,7 +384,7 @@ pub const ChannelManager = struct {
                             log.info("Restarting {s} gateway (attempt {d})", .{ entry.name, entry.supervised.restart_count });
                             state.markError("channels", "gateway health check failed");
                             entry.channel.stop();
-                            std.Thread.sleep(entry.supervised.currentBackoffMs() * std.time.ns_per_ms);
+                            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = @as(i96, entry.supervised.currentBackoffMs()) * std.time.ns_per_ms }, .real) catch {};
                             entry.channel.start() catch |err| {
                                 log.err("Failed to restart {s} gateway: {}", .{ entry.name, err });
                                 continue;
@@ -428,7 +428,7 @@ pub const ChannelManager = struct {
                         self.stopPollingThread(entry);
 
                         // Backoff
-                        std.Thread.sleep(entry.supervised.currentBackoffMs() * std.time.ns_per_ms);
+                        std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = @as(i96, entry.supervised.currentBackoffMs()) * std.time.ns_per_ms }, .real) catch {};
 
                         // Respawn
                         if (self.runtime) |rt| {

@@ -26,7 +26,7 @@ pub const State = struct {
 pub const StateManager = struct {
     allocator: Allocator,
     state_path: []const u8, // owned
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = std.Io.Mutex.init,
     state: State = .{},
 
     pub fn init(allocator: Allocator, state_path: []const u8) Allocator.Error!StateManager {

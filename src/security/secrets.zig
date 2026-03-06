@@ -307,8 +307,9 @@ test "hex decode invalid chars fails" {
 test "secret store encrypt decrypt roundtrip" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const secret = "sk-my-secret-api-key-12345";
@@ -328,8 +329,9 @@ test "secret store encrypt decrypt roundtrip" {
 test "secret store encrypt empty returns empty" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const result = try store.encryptSecret(std.testing.allocator, "");
@@ -340,8 +342,9 @@ test "secret store encrypt empty returns empty" {
 test "secret store decrypt plaintext passthrough" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const result = try store.decryptSecret(std.testing.allocator, "sk-plaintext-key");
@@ -352,8 +355,9 @@ test "secret store decrypt plaintext passthrough" {
 test "secret store disabled returns plaintext" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, false);
     const result = try store.encryptSecret(std.testing.allocator, "sk-secret");
@@ -370,8 +374,9 @@ test "secret store is encrypted detects prefix" {
 test "secret store encrypting same value produces different ciphertext" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const e1 = try store.encryptSecret(std.testing.allocator, "secret");
@@ -414,8 +419,9 @@ test "secret store different dirs cannot decrypt each other" {
 test "secret store same dir interop" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store1 = SecretStore.init(tmp_path, true);
     const store2 = SecretStore.init(tmp_path, true);
@@ -433,8 +439,9 @@ test "secret store same dir interop" {
 test "secret store unicode roundtrip" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const secret = "sk-\xc3\xa9mojis-\xf0\x9f\xa6\x80-test";
@@ -450,8 +457,9 @@ test "secret store unicode roundtrip" {
 test "secret store key file created on first encrypt" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
 
@@ -471,8 +479,9 @@ test "secret store key file created on first encrypt" {
 test "secret store tampered ciphertext detected" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const encrypted = try store.encryptSecret(std.testing.allocator, "sensitive-data");
@@ -508,8 +517,9 @@ test "secret store tampered ciphertext detected" {
 test "secret store truncated ciphertext returns error" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     // Trigger key creation first
@@ -524,8 +534,9 @@ test "secret store truncated ciphertext returns error" {
 test "secret store corrupt hex returns error" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     // Trigger key creation
@@ -654,8 +665,9 @@ test "secret store is encrypted short strings" {
 test "secret store encrypt decrypt multiple values same store" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
 
