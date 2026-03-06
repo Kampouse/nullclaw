@@ -270,12 +270,12 @@ pub const DiscordChannel = struct {
         var removed_key: ?[]u8 = null;
         var removed_task: ?*TypingTask = null;
 
-        self.typing_mu.lock();
+        self.typing_mu.lock(std.Options.debug_io);
         if (self.typing_handles.fetchRemove(channel_id)) |entry| {
             removed_key = @constCast(entry.key);
             removed_task = entry.value;
         }
-        self.typing_mu.unlock();
+        self.typing_mu.unlock(std.Options.debug_io);
 
         if (removed_task) |task| {
             task.stop_requested.store(true, .release);
@@ -288,10 +288,10 @@ pub const DiscordChannel = struct {
     }
 
     fn stopAllTyping(self: *DiscordChannel) void {
-        self.typing_mu.lock();
+        self.typing_mu.lock(std.Options.debug_io);
         var handles = self.typing_handles;
         self.typing_handles = .empty;
-        self.typing_mu.unlock();
+        self.typing_mu.unlock(std.Options.debug_io);
 
         var it = handles.iterator();
         while (it.next()) |entry| {

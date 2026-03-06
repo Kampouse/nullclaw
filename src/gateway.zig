@@ -76,8 +76,8 @@ const GatewayThreadObserver = struct {
     }
 
     pub fn deinit(self: *GatewayThreadObserver) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
         for (self.events.items) |event| {
             self.allocator.free(event.tool);
         }
@@ -153,8 +153,8 @@ const GatewayThreadObserver = struct {
         tool: []const u8,
         success: bool,
     ) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
 
         const owned_tool = self.allocator.dupe(u8, tool) catch return;
 

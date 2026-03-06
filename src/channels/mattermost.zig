@@ -299,8 +299,8 @@ pub const MattermostChannel = struct {
     }
 
     fn fetchBotUserId(self: *MattermostChannel) ![]const u8 {
-        self.bot_state_mu.lock();
-        defer self.bot_state_mu.unlock();
+        self.bot_state_mu.lock(std.Options.debug_io);
+        defer self.bot_state_mu.unlock(std.Options.debug_io);
         if (self.bot_user_id) |uid| return uid;
 
         const url = try std.fmt.allocPrint(self.allocator, "{s}/api/v4/users/me", .{self.base_url});
