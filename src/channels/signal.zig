@@ -193,7 +193,7 @@ pub const SignalChannel = struct {
 
     /// Build the JSON-RPC URL.
     pub fn rpcUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.http_url);
         try w.writeStreamingAll(std.Options.debug_io, SIGNAL_RPC_ENDPOINT);
@@ -202,7 +202,7 @@ pub const SignalChannel = struct {
 
     /// Build the SSE events URL (with account query param).
     pub fn sseUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.http_url);
         try w.writeStreamingAll(std.Options.debug_io, SIGNAL_SSE_ENDPOINT);
@@ -219,7 +219,7 @@ pub const SignalChannel = struct {
 
     /// Build REST send URL.
     pub fn sendUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.http_url);
         try w.writeStreamingAll(std.Options.debug_io, SIGNAL_REST_SEND_ENDPOINT);
@@ -228,7 +228,7 @@ pub const SignalChannel = struct {
 
     /// Build REST receive polling URL.
     pub fn receivePollUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.http_url);
         try w.writeStreamingAll(std.Options.debug_io, SIGNAL_REST_RECEIVE_ENDPOINT);
@@ -243,7 +243,7 @@ pub const SignalChannel = struct {
 
     /// Build the health check URL.
     pub fn healthUrl(self: *const SignalChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.http_url);
         try w.writeStreamingAll(std.Options.debug_io, if (self.use_rest_api) SIGNAL_REST_HEALTH_ENDPOINT else SIGNAL_HEALTH_ENDPOINT);

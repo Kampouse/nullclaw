@@ -265,7 +265,7 @@ pub const StringDedupSet = struct {
 /// Build the IDENTIFY payload for QQ Gateway WebSocket.
 /// Format: {"op":2,"d":{"token":"QQBot {access_token}","intents":N,"shard":[0,1]}}
 pub fn buildIdentifyPayload(buf: []u8, access_token: []const u8, intents: u32) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{{\"op\":2,\"d\":{{\"token\":\"QQBot {s}\",\"intents\":{d},\"shard\":[0,1]}}}}", .{
         access_token,
@@ -277,7 +277,7 @@ pub fn buildIdentifyPayload(buf: []u8, access_token: []const u8, intents: u32) !
 /// Build a heartbeat payload.
 /// Format: {"op":1,"d":N} where N is the last sequence number (or null).
 pub fn buildHeartbeatPayload(buf: []u8, sequence: ?i64) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     if (sequence) |seq| {
         try w.print("{{\"op\":1,\"d\":{d}}}", .{seq});
@@ -289,7 +289,7 @@ pub fn buildHeartbeatPayload(buf: []u8, sequence: ?i64) ![]const u8 {
 
 /// Build the REST API URL for sending a message to a channel.
 pub fn buildSendUrl(buf: []u8, base: []const u8, channel_id: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/channels/{s}/messages", .{ base, channel_id });
     return fbs.getWritten();
@@ -297,7 +297,7 @@ pub fn buildSendUrl(buf: []u8, base: []const u8, channel_id: []const u8) ![]cons
 
 /// Build the REST API URL for sending a DM (direct message).
 pub fn buildDmUrl(buf: []u8, base: []const u8, guild_id: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/dms/{s}/messages", .{ base, guild_id });
     return fbs.getWritten();
@@ -306,7 +306,7 @@ pub fn buildDmUrl(buf: []u8, base: []const u8, guild_id: []const u8) ![]const u8
 /// Build the REST API URL for sending a group message.
 /// Format: {base}/v2/groups/{group_openid}/messages
 pub fn buildGroupSendUrl(buf: []u8, base: []const u8, group_openid: []const u8) ![]const u8 {
-    var fbs = std.io.FixedBufferStream.init(buf);
+    var fbs = util.FixedBufferStream.init(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/groups/{s}/messages", .{ base, group_openid });
     return fbs.getWritten();
@@ -315,7 +315,7 @@ pub fn buildGroupSendUrl(buf: []u8, base: []const u8, group_openid: []const u8) 
 /// Build the REST API URL for sending a C2C (private) message.
 /// Format: {base}/v2/users/{user_openid}/messages
 pub fn buildC2cSendUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/users/{s}/messages", .{ base, user_openid });
     return fbs.getWritten();
@@ -324,7 +324,7 @@ pub fn buildC2cSendUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![]
 /// Build the REST API URL for uploading a group media file descriptor.
 /// Format: {base}/v2/groups/{group_openid}/files
 pub fn buildGroupFilesUrl(buf: []u8, base: []const u8, group_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/groups/{s}/files", .{ base, group_openid });
     return fbs.getWritten();
@@ -333,7 +333,7 @@ pub fn buildGroupFilesUrl(buf: []u8, base: []const u8, group_openid: []const u8)
 /// Build the REST API URL for uploading a C2C media file descriptor.
 /// Format: {base}/v2/users/{user_openid}/files
 pub fn buildC2cFilesUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/users/{s}/files", .{ base, user_openid });
     return fbs.getWritten();
@@ -342,7 +342,7 @@ pub fn buildC2cFilesUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![
 /// Build the REST API URL for resolving gateway endpoint.
 /// Format: {base}/gateway
 pub fn buildGatewayResolveUrl(buf: []u8, base: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/gateway", .{base});
     return fbs.getWritten();
@@ -418,7 +418,7 @@ pub fn buildMediaSendBody(
 
 /// Build auth header value: "Authorization: QQBot {access_token}"
 pub fn buildAuthHeader(buf: []u8, access_token: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("Authorization: QQBot {s}", .{access_token});
     return fbs.getWritten();
@@ -1093,7 +1093,7 @@ pub const QQChannel = struct {
 
         // Build metadata JSON
         var meta_buf: [512]u8 = undefined;
-        var meta_fbs = std.io.fixedBufferStream(&meta_buf);
+        var meta_fbs = util.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
         mw.writeStreamingAll(std.Options.debug_io, "{\"msg_id\":") catch return;
         root.appendJsonStringW(mw, msg_id_str) catch return;

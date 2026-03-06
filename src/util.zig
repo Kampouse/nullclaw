@@ -76,6 +76,90 @@ pub fn randomInt(comptime T: type) T {
     return std.mem.readInt(T, &bytes, .little);
 }
 
+// ── FixedBufferStream Compatibility Layer for Zig 0.16.0 ───────────────
+
+/// FixedBufferStream provides a buffer stream compatible with Zig 0.16.0's IO interface.
+/// This replaces the removed std.io.fixedBufferStream functionality.
+pub const FixedBufferStream = struct {
+    buf: []u8,
+    pos: usize = 0,
+
+    const Self = @This();
+
+    /// Create a new FixedBufferStream backed by the provided buffer.
+    pub fn init(buf: []u8) Self {
+        return .{ .buf = buf, .pos = 0 };
+    }
+
+    /// Get a writer for this stream (compatible with Zig 0.16.0's IO interface).
+    pub fn writer(self: *Self) Writer {
+        return .{ .context = self };
+    }
+
+    /// Get the written portion of the buffer.
+    pub fn getWritten(self: *const Self) []const u8 {
+        return self.buf[0..self.pos];
+    }
+
+    /// Write bytes to the buffer. Returns error.OutOfMemory if buffer is full.
+    pub fn write(self: *Self, bytes: []const u8) error{OutOfMemory}!usize {
+        if (self.pos + bytes.len > self.buf.len) {
+            return error.OutOfMemory;
+        }
+        @memcpy(self.buf[self.pos .. self.pos + bytes.len], bytes);
+        self.pos += bytes.len;
+        return bytes.len;
+    }
+
+    /// Write all bytes to the buffer (compatibility method).
+    pub fn writeAll(self: *Self, bytes: []const u8) error{OutOfMemory}!void {
+        const n = try self.write(bytes);
+        if (n != bytes.len) return error.OutOfMemory;
+    }
+
+    /// Write a byte to the buffer.
+    pub fn writeByte(self: *Self, byte: u8) error{OutOfMemory}!void {
+        if (self.pos >= self.buf.len) return error.OutOfMemory;
+        self.buf[self.pos] = byte;
+        self.pos += 1;
+    }
+
+    /// Print formatted string to the buffer.
+    pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) error{OutOfMemory}!void {
+        const result = std.fmt.bufPrint(self.buf[self.pos..], fmt, args) catch return error.OutOfMemory;
+        self.pos += result.len;
+    }
+
+    /// Writer interface for Zig 0.16.0.
+    pub const Writer = struct {
+        context: *Self,
+
+        pub const Error = error{OutOfMemory};
+
+        pub fn write(self: Writer, bytes: []const u8) Error!usize {
+            return self.context.write(bytes);
+        }
+
+        pub fn writeAll(self: Writer, bytes: []const u8) Error!void {
+            return self.context.writeAll(bytes);
+        }
+
+        pub fn writeByte(self: Writer, byte: u8) Error!void {
+            return self.context.writeByte(byte);
+        }
+
+        pub fn print(self: Writer, comptime fmt: []const u8, args: anytype) Error!void {
+            return self.context.print(fmt, args);
+        }
+    };
+};
+
+/// Convenience function to create a FixedBufferStream (Zig 0.16.0 compatible).
+/// Replaces std.io.fixedBufferStream which was removed in Zig 0.16.0.
+pub fn fixedBufferStream(buf: []u8) FixedBufferStream {
+    return FixedBufferStream.init(buf);
+}
+
 // ── JSON helpers ────────────────────────────────────────────────
 
 /// Append a string to an ArrayList with JSON escaping (quotes, backslashes, control chars).

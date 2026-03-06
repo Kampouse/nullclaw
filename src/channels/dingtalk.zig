@@ -54,7 +54,7 @@ pub const DingTalkChannel = struct {
     pub fn sendMessage(self: *DingTalkChannel, webhook_url: []const u8, text: []const u8) !void {
         // Build JSON body: {"msgtype":"markdown","markdown":{"title":"nullclaw","text":"..."}}
         var body_buf: [8192]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&body_buf);
+        var fbs = util.fixedBufferStream(&body_buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, "{\"msgtype\":\"markdown\",\"markdown\":{\"title\":\"nullclaw\",\"text\":");
         try root.appendJsonStringW(w, text);

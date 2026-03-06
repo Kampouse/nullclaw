@@ -503,7 +503,7 @@ pub const SlackChannel = struct {
 
     fn pollChannelHistory(self: *SlackChannel, channel_id: []const u8) !void {
         var url_buf: [1024]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&url_buf);
+        var fbs = util.fixedBufferStream(&url_buf);
         const w = fbs.writer();
         const oldest = self.channelLastTs(channel_id);
         try w.print("{s}/conversations.history?channel={s}&oldest={s}&inclusive=false&limit=100", .{ API_BASE, channel_id, oldest });
@@ -651,7 +651,7 @@ pub const SlackChannel = struct {
         const raw_path = componentAsSlice(uri.path);
         const query = if (uri.query) |q| componentAsSlice(q) else "";
 
-        var fbs = std.io.fixedBufferStream(path_buf);
+        var fbs = util.fixedBufferStream(path_buf);
         const w = fbs.writer();
         if (raw_path.len == 0) {
             try w.writeByte('/');
@@ -690,7 +690,7 @@ pub const SlackChannel = struct {
 
     fn ackSocketEnvelope(self: *SlackChannel, ws: *websocket.WsClient, envelope_id: []const u8) !void {
         var buf: [512]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
+        var fbs = util.fixedBufferStream(&buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, "{\"envelope_id\":");
         try root.appendJsonStringW(w, envelope_id);
@@ -834,7 +834,7 @@ pub const SlackChannel = struct {
 
         // Build auth header: "Authorization: Bearer xoxb-..."
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         try auth_fbs.writer().print("Authorization: Bearer {s}", .{self.normalizedBotToken()});
         const auth_header = auth_fbs.getWritten();
 
@@ -869,7 +869,7 @@ pub const SlackChannel = struct {
         bw.writeByte('}') catch return;
 
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         auth_fbs.writer().print("Authorization: Bearer {s}", .{self.normalizedBotToken()}) catch return;
         const auth_header = auth_fbs.getWritten();
 

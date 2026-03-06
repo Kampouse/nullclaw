@@ -292,7 +292,7 @@ pub const OneBotChannel = struct {
 
         // Build metadata JSON
         var meta_buf: [256]u8 = undefined;
-        var meta_fbs = std.io.fixedBufferStream(&meta_buf);
+        var meta_fbs = util.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
         mw.print("{{\"message_id\":{d},\"is_group\":{s}", .{
             message_id,
@@ -350,7 +350,7 @@ pub const OneBotChannel = struct {
         // Build API URL
         var url_buf: [512]u8 = undefined;
         const api_base = deriveHttpBase(self.config.url);
-        var url_fbs = std.io.fixedBufferStream(&url_buf);
+        var url_fbs = util.fixedBufferStream(&url_buf);
         try url_fbs.writer().print("{s}/send_msg", .{api_base});
         const url = url_fbs.getWritten();
 
@@ -375,7 +375,7 @@ pub const OneBotChannel = struct {
         var header_storage: [512]u8 = undefined;
         var headers: []const []const u8 = &.{};
         if (self.config.access_token) |token| {
-            var hdr_fbs = std.io.fixedBufferStream(&header_storage);
+            var hdr_fbs = util.fixedBufferStream(&header_storage);
             try hdr_fbs.writer().print("Authorization: Bearer {s}", .{token});
             headers_buf[0] = hdr_fbs.getWritten();
             headers = &headers_buf;

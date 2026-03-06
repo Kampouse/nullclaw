@@ -246,7 +246,7 @@ pub const MattermostChannel = struct {
 
     fn resolveUserIdByUsername(self: *MattermostChannel, username: []const u8) ![]u8 {
         var url_buf: [2048]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&url_buf);
+        var fbs = util.fixedBufferStream(&url_buf);
         const w = fbs.writer();
         try w.print("{s}/api/v4/users/username/", .{self.base_url});
         try appendUrlEncoded(w, username);
@@ -500,7 +500,7 @@ pub const MattermostChannel = struct {
             prefix = prefix[0 .. prefix.len - 1];
         }
 
-        var fbs = std.io.fixedBufferStream(path_buf);
+        var fbs = util.fixedBufferStream(path_buf);
         const w = fbs.writer();
         if (prefix.len > 0) {
             if (prefix[0] != '/') try w.writeByte('/');

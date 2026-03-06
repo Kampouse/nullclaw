@@ -76,7 +76,7 @@ pub const MatrixChannel = struct {
     }
 
     fn buildWhoAmIUrl(self: *const MatrixChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
         try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/account/whoami");
@@ -84,7 +84,7 @@ pub const MatrixChannel = struct {
     }
 
     fn buildSyncUrl(self: *const MatrixChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
         try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/sync?timeout=30000");
@@ -96,7 +96,7 @@ pub const MatrixChannel = struct {
     }
 
     fn buildSendUrl(self: *const MatrixChannel, buf: []u8, room_id: []const u8, txn_id: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
         try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/rooms/");
@@ -107,7 +107,7 @@ pub const MatrixChannel = struct {
     }
 
     fn buildTypingUrl(self: *const MatrixChannel, buf: []u8, room_id: []const u8, user_id: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
         try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/rooms/");

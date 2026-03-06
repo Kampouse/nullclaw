@@ -101,7 +101,7 @@ pub fn transcribeFile(
     const tmp_dir = platform.getTempDir(allocator) catch return error.FileReadFailed;
     defer allocator.free(tmp_dir);
     var tmp_path_buf: [256]u8 = undefined;
-    var tmp_fbs = std.io.fixedBufferStream(&tmp_path_buf);
+    var tmp_fbs = util.fixedBufferStream(&tmp_path_buf);
     tmp_fbs.writer().print("{s}/nullclaw_voice_{d}.bin", .{ tmp_dir, getPid() }) catch
         return error.FileReadFailed;
     const tmp_path_len = tmp_fbs.pos;
@@ -115,13 +115,13 @@ pub fn transcribeFile(
 
     // Build headers
     var content_type_buf: [128]u8 = undefined;
-    var ct_fbs = std.io.fixedBufferStream(&content_type_buf);
+    var ct_fbs = util.fixedBufferStream(&content_type_buf);
     ct_fbs.writer().print("Content-Type: multipart/form-data; boundary={s}", .{&boundary}) catch
         return error.BoundaryGenerationFailed;
     const content_type_hdr = ct_fbs.getWritten();
 
     var auth_buf: [256]u8 = undefined;
-    var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+    var auth_fbs = util.fixedBufferStream(&auth_buf);
     auth_fbs.writer().print("Authorization: Bearer {s}", .{api_key}) catch
         return error.ApiRequestFailed;
     const auth_hdr = auth_fbs.getWritten();
@@ -266,7 +266,7 @@ fn curlPostFromFile(
 ) ![]u8 {
     // Build data-binary arg: @/path/to/file
     var data_arg_buf: [300]u8 = undefined;
-    var data_fbs = std.io.fixedBufferStream(&data_arg_buf);
+    var data_fbs = util.fixedBufferStream(&data_arg_buf);
     try data_fbs.writer().print("@{s}", .{file_path});
     const data_arg = data_fbs.getWritten();
 
@@ -365,7 +365,7 @@ pub fn transcribeTelegramVoice(
 /// Call Telegram getFile API and extract the file_path from the response.
 fn getFilePath(allocator: std.mem.Allocator, bot_token: []const u8, file_id: []const u8) ![]u8 {
     var url_buf: [512]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&url_buf);
+    var fbs = util.fixedBufferStream(&url_buf);
     try fbs.writer().print("https://api.telegram.org/bot{s}/getFile", .{bot_token});
     const url = fbs.getWritten();
 
@@ -393,7 +393,7 @@ fn getFilePath(allocator: std.mem.Allocator, bot_token: []const u8, file_id: []c
 /// Download a file from Telegram and save to temp dir. Returns the local path (owned).
 fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_file_path: []const u8) ![]u8 {
     var url_buf: [1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&url_buf);
+    var fbs = util.fixedBufferStream(&url_buf);
     try fbs.writer().print("https://api.telegram.org/file/bot{s}/{s}", .{ bot_token, tg_file_path });
     const url = fbs.getWritten();
 
@@ -405,7 +405,7 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_
     defer allocator.free(tmp_dir);
     const pid = getPid();
     var path_buf: [256]u8 = undefined;
-    var path_fbs = std.io.fixedBufferStream(&path_buf);
+    var path_fbs = util.fixedBufferStream(&path_buf);
     try path_fbs.writer().print("{s}/nullclaw_tg_voice_{d}.ogg", .{ tmp_dir, pid });
     const local_path = path_fbs.getWritten();
 

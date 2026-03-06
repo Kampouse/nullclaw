@@ -104,21 +104,21 @@ pub const EmailChannel = struct {
 
         // EHLO
         var ehlo_buf: [256]u8 = undefined;
-        var ehlo_fbs = std.io.fixedBufferStream(&ehlo_buf);
+        var ehlo_fbs = util.fixedBufferStream(&ehlo_buf);
         try ehlo_fbs.writer().print("EHLO nullclaw\r\n", .{});
         try stream.writeStreamingAll(std.Options.debug_io, ehlo_fbs.getWritten());
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
 
         // MAIL FROM
         var from_buf: [512]u8 = undefined;
-        var from_fbs = std.io.fixedBufferStream(&from_buf);
+        var from_fbs = util.fixedBufferStream(&from_buf);
         try from_fbs.writer().print("MAIL FROM:<{s}>\r\n", .{self.config.from_address});
         try stream.writeStreamingAll(std.Options.debug_io, from_fbs.getWritten());
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
 
         // RCPT TO
         var rcpt_buf: [512]u8 = undefined;
-        var rcpt_fbs = std.io.fixedBufferStream(&rcpt_buf);
+        var rcpt_fbs = util.fixedBufferStream(&rcpt_buf);
         try rcpt_fbs.writer().print("RCPT TO:<{s}>\r\n", .{recipient});
         try stream.writeStreamingAll(std.Options.debug_io, rcpt_fbs.getWritten());
         _ = stream.read(&greeting_buf) catch return error.SmtpError;
@@ -129,7 +129,7 @@ pub const EmailChannel = struct {
 
         // Build email headers + body
         var data_buf: [16384]u8 = undefined;
-        var data_fbs = std.io.fixedBufferStream(&data_buf);
+        var data_fbs = util.fixedBufferStream(&data_buf);
         const dw = data_fbs.writer();
         try dw.print("From: {s}\r\n", .{self.config.from_address});
         try dw.print("To: {s}\r\n", .{recipient});
@@ -155,7 +155,7 @@ pub const EmailChannel = struct {
     /// Send a reply email — applies Re: prefix to subject and includes threading headers.
     pub fn sendReply(self: *EmailChannel, recipient: []const u8, original_subject: []const u8, message: []const u8) !void {
         var buf: [16384]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
+        var fbs = util.fixedBufferStream(&buf);
         if (hasReplyPrefix(original_subject)) {
             try fbs.writer().print("Subject: {s}\n{s}", .{ original_subject, message });
         } else {
@@ -168,7 +168,7 @@ pub const EmailChannel = struct {
     pub fn markMessageSeen(self: *EmailChannel, stream: std.net.Stream, uid: u32) !void {
         _ = self;
         var cmd_buf: [256]u8 = undefined;
-        var cmd_fbs = std.io.fixedBufferStream(&cmd_buf);
+        var cmd_fbs = util.fixedBufferStream(&cmd_buf);
         try cmd_fbs.writer().print("A003 UID STORE {d} +FLAGS (\\Seen)\r\n", .{uid});
         try stream.writeStreamingAll(std.Options.debug_io, cmd_fbs.getWritten());
         // Read response (discard for now)

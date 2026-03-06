@@ -250,13 +250,13 @@ pub const LarkChannel = struct {
 
         // Build URL: base ++ "/auth/v3/tenant_access_token/internal"
         var url_buf: [256]u8 = undefined;
-        var url_fbs = std.io.fixedBufferStream(&url_buf);
+        var url_fbs = util.fixedBufferStream(&url_buf);
         try url_fbs.writer().print("{s}/auth/v3/tenant_access_token/internal", .{base});
         const url = url_fbs.getWritten();
 
         // Build JSON body
         var body_buf: [512]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&body_buf);
+        var fbs = util.fixedBufferStream(&body_buf);
         try fbs.writer().print("{{\"app_id\":\"{s}\",\"app_secret\":\"{s}\"}}", .{ self.app_id, self.app_secret });
         const body = fbs.getWritten();
 
@@ -301,13 +301,13 @@ pub const LarkChannel = struct {
 
         // Build URL
         var url_buf: [256]u8 = undefined;
-        var url_fbs = std.io.fixedBufferStream(&url_buf);
+        var url_fbs = util.fixedBufferStream(&url_buf);
         try url_fbs.writer().print("{s}/im/v1/messages?receive_id_type=chat_id", .{base});
         const url = url_fbs.getWritten();
 
         // Build inner content JSON: {"text":"..."}
         var content_buf: [4096]u8 = undefined;
-        var content_fbs = std.io.fixedBufferStream(&content_buf);
+        var content_fbs = util.fixedBufferStream(&content_buf);
         const cw = content_fbs.writer();
         try cw.writeStreamingAll(std.Options.debug_io, "{\"text\":");
         try root.appendJsonStringW(cw, text);
@@ -316,7 +316,7 @@ pub const LarkChannel = struct {
 
         // Build outer body JSON
         var body_buf: [8192]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&body_buf);
+        var fbs = util.fixedBufferStream(&body_buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, "{\"receive_id\":\"");
         try w.writeStreamingAll(std.Options.debug_io, recipient);
@@ -328,7 +328,7 @@ pub const LarkChannel = struct {
 
         // Build auth header
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         try auth_fbs.writer().print("Bearer {s}", .{token});
         const auth_value = auth_fbs.getWritten();
 
@@ -352,7 +352,7 @@ pub const LarkChannel = struct {
             defer self.allocator.free(new_token);
 
             var retry_auth_buf: [512]u8 = undefined;
-            var retry_auth_fbs = std.io.fixedBufferStream(&retry_auth_buf);
+            var retry_auth_fbs = util.fixedBufferStream(&retry_auth_buf);
             try retry_auth_fbs.writer().print("Bearer {s}", .{new_token});
             const retry_auth_value = retry_auth_fbs.getWritten();
 
@@ -396,7 +396,7 @@ pub const LarkChannel = struct {
     }
 
     fn buildWebsocketPath(buf: []u8, app_id: []const u8, app_access_token: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, "/ws/v2?app_id=");
         try appendUrlQueryEscaped(w, app_id);
@@ -406,7 +406,7 @@ pub const LarkChannel = struct {
     }
 
     fn buildWebsocketPong(buf: []u8, ts: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, "{\"type\":\"pong\",\"ts\":");
         try root.appendJsonStringW(w, ts);
@@ -415,7 +415,7 @@ pub const LarkChannel = struct {
     }
 
     fn buildWebsocketAck(buf: []u8, uuid: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, "{\"uuid\":");
         try root.appendJsonStringW(w, uuid);
@@ -427,12 +427,12 @@ pub const LarkChannel = struct {
         const base = self.apiBase();
 
         var url_buf: [256]u8 = undefined;
-        var url_fbs = std.io.fixedBufferStream(&url_buf);
+        var url_fbs = util.fixedBufferStream(&url_buf);
         try url_fbs.writer().print("{s}/auth/v3/app_access_token/internal", .{base});
         const url = url_fbs.getWritten();
 
         var body_buf: [512]u8 = undefined;
-        var body_fbs = std.io.fixedBufferStream(&body_buf);
+        var body_fbs = util.fixedBufferStream(&body_buf);
         try body_fbs.writer().print("{{\"app_id\":\"{s}\",\"app_secret\":\"{s}\"}}", .{ self.app_id, self.app_secret });
         const body = body_fbs.getWritten();
 
@@ -471,7 +471,7 @@ pub const LarkChannel = struct {
         const session_key = std.fmt.bufPrint(&key_buf, "lark:{s}", .{msg.sender}) catch "lark:unknown";
 
         var meta_buf: [384]u8 = undefined;
-        var meta_fbs = std.io.fixedBufferStream(&meta_buf);
+        var meta_fbs = util.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
         mw.writeStreamingAll(std.Options.debug_io, "{\"account_id\":") catch return;
         root.appendJsonStringW(mw, self.account_id) catch return;

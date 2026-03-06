@@ -125,7 +125,7 @@ pub const AuditEvent = struct {
     /// Write a JSON representation of the event into a buffer.
     /// Returns the slice of the buffer that was written.
     pub fn writeJson(self: *const AuditEvent, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const writer = fbs.writer();
         try writer.print(
             "{{\"timestamp_s\":{d},\"event_id\":{d},\"event_type\":\"{s}\"",

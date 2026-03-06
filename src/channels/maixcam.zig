@@ -165,7 +165,7 @@ pub const MaixCamChannel = struct {
 
     /// Format a device event into a human-readable content string for the bus.
     pub fn formatEventContent(buf: []u8, event: DeviceEvent) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
 
         if (std.mem.eql(u8, event.event_type, "person_detected")) {
@@ -201,7 +201,7 @@ pub const MaixCamChannel = struct {
 
     /// Build an outbound JSON message to send to devices.
     pub fn buildOutboundJson(buf: []u8, content: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.writeStreamingAll(std.Options.debug_io, "{\"type\":\"response\",\"text\":");
         try root.appendJsonStringW(w, content);
@@ -334,14 +334,14 @@ pub const MaixCamChannel = struct {
 
         // Build session key
         var sk_buf: [256]u8 = undefined;
-        var sk_fbs = std.io.fixedBufferStream(&sk_buf);
+        var sk_fbs = util.fixedBufferStream(&sk_buf);
         sk_fbs.writer().print("maixcam:{s}", .{event.device_id}) catch return;
         const session_key = sk_fbs.getWritten();
 
         // Publish to bus
         if (self.event_bus) |b| {
             var meta_buf: [128]u8 = undefined;
-            var meta_fbs = std.io.fixedBufferStream(&meta_buf);
+            var meta_fbs = util.fixedBufferStream(&meta_buf);
             const mw = meta_fbs.writer();
             mw.writeStreamingAll(std.Options.debug_io, "{\"account_id\":") catch return;
             root.appendJsonStringW(mw, self.config.account_id) catch return;

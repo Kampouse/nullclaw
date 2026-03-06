@@ -261,7 +261,7 @@ pub const WhatsAppChannel = struct {
     pub fn sendMessage(self: *WhatsAppChannel, recipient: []const u8, text: []const u8) !void {
         // Build URL
         var url_buf: [256]u8 = undefined;
-        var url_fbs = std.io.fixedBufferStream(&url_buf);
+        var url_fbs = util.fixedBufferStream(&url_buf);
         try url_fbs.writer().print("https://graph.facebook.com/{s}/{s}/messages", .{ API_VERSION, self.phone_number_id });
         const url = url_fbs.getWritten();
 
@@ -281,7 +281,7 @@ pub const WhatsAppChannel = struct {
 
         // Build auth header
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         try auth_fbs.writer().print("Bearer {s}", .{self.access_token});
         const auth_value = auth_fbs.getWritten();
 

@@ -128,7 +128,7 @@ pub const WsClient = struct {
         _ = std.base64.standard.Encoder.encode(&key_b64, &key_raw);
 
         var req_buf: [4096]u8 = undefined;
-        var req_fbs = std.io.fixedBufferStream(&req_buf);
+        var req_fbs = util.fixedBufferStream(&req_buf);
         const rw = req_fbs.writer();
         try rw.print("GET {s} HTTP/1.1\r\n", .{path});
         try rw.print("Host: {s}\r\n", .{host});
@@ -406,7 +406,7 @@ pub fn buildFrame(
     payload: []const u8,
     mask_key: [4]u8,
 ) !usize {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
 
     // Byte 0: FIN=1, RSV=0, opcode

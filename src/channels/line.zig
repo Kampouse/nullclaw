@@ -63,7 +63,7 @@ pub const LineChannel = struct {
         const body = body_list.items;
 
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         try auth_fbs.writer().print("Authorization: Bearer {s}", .{self.config.access_token});
         const auth_header = auth_fbs.getWritten();
 
@@ -88,7 +88,7 @@ pub const LineChannel = struct {
         const body = body_list.items;
 
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         try auth_fbs.writer().print("Authorization: Bearer {s}", .{self.config.access_token});
         const auth_header = auth_fbs.getWritten();
 

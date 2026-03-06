@@ -94,7 +94,7 @@ pub const DiscordChannel = struct {
 
     /// Build a Discord REST API URL for sending to a channel.
     pub fn sendUrl(buf: []u8, channel_id: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.print("https://discord.com/api/v10/channels/{s}/messages", .{channel_id});
         return fbs.getWritten();
@@ -102,7 +102,7 @@ pub const DiscordChannel = struct {
 
     /// Build a Discord REST API URL for triggering typing in a channel.
     pub fn typingUrl(buf: []u8, channel_id: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.print("https://discord.com/api/v10/channels/{s}/typing", .{channel_id});
         return fbs.getWritten();
@@ -129,7 +129,7 @@ pub const DiscordChannel = struct {
     /// Build IDENTIFY JSON payload (op=2).
     /// Example: {"op":2,"d":{"token":"Bot TOKEN","intents":37377,"properties":{"os":"linux","browser":"nullclaw","device":"nullclaw"}}}
     pub fn buildIdentifyJson(buf: []u8, token: []const u8, intents: u32) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.print(
             "{{\"op\":2,\"d\":{{\"token\":\"Bot {s}\",\"intents\":{d},\"properties\":{{\"os\":\"linux\",\"browser\":\"nullclaw\",\"device\":\"nullclaw\"}}}}}}",
@@ -141,7 +141,7 @@ pub const DiscordChannel = struct {
     /// Build HEARTBEAT JSON payload (op=1).
     /// seq==0 → {"op":1,"d":null}, else {"op":1,"d":42}
     pub fn buildHeartbeatJson(buf: []u8, seq: i64) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         if (seq == 0) {
             try w.writeStreamingAll(std.Options.debug_io, "{\"op\":1,\"d\":null}");
@@ -154,7 +154,7 @@ pub const DiscordChannel = struct {
     /// Build RESUME JSON payload (op=6).
     /// {"op":6,"d":{"token":"Bot TOKEN","session_id":"SESSION","seq":42}}
     pub fn buildResumeJson(buf: []u8, token: []const u8, session_id: []const u8, seq: i64) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.print(
             "{{\"op\":6,\"d\":{{\"token\":\"Bot {s}\",\"session_id\":\"{s}\",\"seq\":{d}}}}}",
@@ -231,7 +231,7 @@ pub const DiscordChannel = struct {
         const url = typingUrl(&url_buf, channel_id) catch return;
 
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         auth_fbs.writer().print("Authorization: Bot {s}", .{self.token}) catch return;
         const auth_header = auth_fbs.getWritten();
 
@@ -329,7 +329,7 @@ pub const DiscordChannel = struct {
 
         // Build auth header value: "Authorization: Bot <token>"
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         try auth_fbs.writer().print("Authorization: Bot {s}", .{self.token});
         const auth_header = auth_fbs.getWritten();
 

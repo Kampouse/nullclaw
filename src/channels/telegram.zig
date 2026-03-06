@@ -510,7 +510,7 @@ pub const TelegramChannel = struct {
 
     /// Build the Telegram API URL for a method.
     pub fn apiUrl(self: *const TelegramChannel, buf: []u8, method: []const u8) ![]const u8 {
-        var fbs = std.io.FixedBufferStream.init(buf);
+        var fbs = util.FixedBufferStream.init(buf);
         const w = fbs.writer();
         try w.print("https://api.telegram.org/bot{s}/{s}", .{ self.bot_token, method });
         return fbs.getWritten();
@@ -522,7 +522,7 @@ pub const TelegramChannel = struct {
         chat_id: []const u8,
         text: []const u8,
     ) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
         try w.print("{{\"chat_id\":{s},\"text\":\"{s}\"}}", .{ chat_id, text });
         return fbs.getWritten();
@@ -1220,7 +1220,7 @@ pub const TelegramChannel = struct {
 
         // Build file form field: field=@path (local files) or field=URL (remote URLs)
         var file_arg_buf: [1024]u8 = undefined;
-        var file_fbs = std.io.fixedBufferStream(&file_arg_buf);
+        var file_fbs = util.fixedBufferStream(&file_arg_buf);
         if (std.mem.startsWith(u8, media_path, "http://") or
             std.mem.startsWith(u8, media_path, "https://"))
         {
@@ -1232,7 +1232,7 @@ pub const TelegramChannel = struct {
 
         // Build chat_id form field
         var chatid_arg_buf: [128]u8 = undefined;
-        var chatid_fbs = std.io.fixedBufferStream(&chatid_arg_buf);
+        var chatid_fbs = util.fixedBufferStream(&chatid_arg_buf);
         try chatid_fbs.writer().print("chat_id={s}", .{chat_id});
         const chatid_arg = chatid_fbs.getWritten();
 
@@ -1267,7 +1267,7 @@ pub const TelegramChannel = struct {
         // Optional caption
         var caption_arg_buf: [1024]u8 = undefined;
         if (caption) |cap| {
-            var cap_fbs = std.io.fixedBufferStream(&caption_arg_buf);
+            var cap_fbs = util.fixedBufferStream(&caption_arg_buf);
             try cap_fbs.writer().print("caption={s}", .{cap});
             argv_buf[argc] = "-F";
             argc += 1;
@@ -1586,7 +1586,7 @@ pub const TelegramChannel = struct {
     }
 
     fn buildGetUpdatesBody(buf: []u8, offset: i64, timeout_secs: u64) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         try fbs.writer().print(
             "{{\"offset\":{d},\"timeout\":{d},\"allowed_updates\":[\"message\",\"callback_query\"]}}",
             .{ offset, timeout_secs },
@@ -2578,7 +2578,7 @@ fn mergeMediaGroups(
 fn downloadTelegramPhoto(allocator: std.mem.Allocator, bot_token: []const u8, file_id: []const u8, proxy: ?[]const u8) ?[]u8 {
     // 1. Call getFile to get file_path
     var url_buf: [512]u8 = undefined;
-    var url_fbs = std.io.fixedBufferStream(&url_buf);
+    var url_fbs = util.fixedBufferStream(&url_buf);
     url_fbs.writer().print("https://api.telegram.org/bot{s}/getFile", .{bot_token}) catch return null;
     const api_url = url_fbs.getWritten();
 
@@ -2614,7 +2614,7 @@ fn downloadTelegramPhoto(allocator: std.mem.Allocator, bot_token: []const u8, fi
 
     // 2. Download the file
     var dl_url_buf: [1024]u8 = undefined;
-    var dl_fbs = std.io.fixedBufferStream(&dl_url_buf);
+    var dl_fbs = util.fixedBufferStream(&dl_url_buf);
     dl_fbs.writer().print("https://api.telegram.org/file/bot{s}/{s}", .{ bot_token, tg_file_path }) catch return null;
     const dl_url = dl_fbs.getWritten();
 
@@ -2634,7 +2634,7 @@ fn downloadTelegramPhoto(allocator: std.mem.Allocator, bot_token: []const u8, fi
     const tmp_dir = platform.getTempDir(allocator) catch return null;
     defer allocator.free(tmp_dir);
     var path_buf: [512]u8 = undefined;
-    var path_fbs = std.io.fixedBufferStream(&path_buf);
+    var path_fbs = util.fixedBufferStream(&path_buf);
     var name_buf: [256]u8 = undefined;
     const safe_name = sanitizeFilenameComponent(&name_buf, file_id, 200);
     const tmp_base = trimTrailingPathSeparators(tmp_dir);
@@ -2657,7 +2657,7 @@ fn downloadTelegramPhoto(allocator: std.mem.Allocator, bot_token: []const u8, fi
 fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, file_id: []const u8, file_name: ?[]const u8, proxy: ?[]const u8) ?[]u8 {
     // 1. Call getFile to get file_path
     var url_buf: [512]u8 = undefined;
-    var url_fbs = std.io.fixedBufferStream(&url_buf);
+    var url_fbs = util.fixedBufferStream(&url_buf);
     url_fbs.writer().print("https://api.telegram.org/bot{s}/getFile", .{bot_token}) catch return null;
     const api_url = url_fbs.getWritten();
 
@@ -2693,7 +2693,7 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, fil
 
     // 2. Download the file
     var dl_url_buf: [1024]u8 = undefined;
-    var dl_fbs = std.io.fixedBufferStream(&dl_url_buf);
+    var dl_fbs = util.fixedBufferStream(&dl_url_buf);
     dl_fbs.writer().print("https://api.telegram.org/file/bot{s}/{s}", .{ bot_token, tg_file_path }) catch return null;
     const dl_url = dl_fbs.getWritten();
 
@@ -2707,7 +2707,7 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, fil
     const tmp_dir = platform.getTempDir(allocator) catch return null;
     defer allocator.free(tmp_dir);
     var path_buf: [512]u8 = undefined;
-    var path_fbs = std.io.fixedBufferStream(&path_buf);
+    var path_fbs = util.fixedBufferStream(&path_buf);
 
     if (file_name) |fname| {
         var name_buf: [256]u8 = undefined;

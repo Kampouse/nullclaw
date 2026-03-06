@@ -201,7 +201,7 @@ pub const IrcChannel = struct {
         if (std.ascii.eqlIgnoreCase(parsed.command, "PING")) {
             if (parsed.params.len == 0) return;
             var pong_buf: [MAX_LINE_LEN]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&pong_buf);
+            var fbs = util.fixedBufferStream(&pong_buf);
             try fbs.writer().print("PONG :{s}", .{parsed.params[parsed.params.len - 1]});
             try self.sendRaw(fbs.getWritten());
             return;
@@ -326,7 +326,7 @@ pub const IrcChannel = struct {
         for (chunks) |chunk| {
             // Build: "PRIVMSG <target> :<chunk>\r\n"
             var line_buf: [MAX_LINE_LEN]u8 = undefined;
-            var line_fbs = std.io.fixedBufferStream(&line_buf);
+            var line_fbs = util.fixedBufferStream(&line_buf);
             const lw = line_fbs.writer();
             try lw.print("PRIVMSG {s} :{s}\r\n", .{ target, chunk });
             const line = line_fbs.getWritten();
@@ -431,26 +431,26 @@ pub const IrcChannel = struct {
         // Send PASS if configured
         if (self.server_password) |pass| {
             var pass_buf: [MAX_LINE_LEN]u8 = undefined;
-            var pass_fbs = std.io.fixedBufferStream(&pass_buf);
+            var pass_fbs = util.fixedBufferStream(&pass_buf);
             try pass_fbs.writer().print("PASS {s}", .{pass});
             try self.sendRaw(pass_fbs.getWritten());
         }
 
         // Send NICK and USER
         var nick_buf: [MAX_LINE_LEN]u8 = undefined;
-        var nick_fbs = std.io.fixedBufferStream(&nick_buf);
+        var nick_fbs = util.fixedBufferStream(&nick_buf);
         try nick_fbs.writer().print("NICK {s}", .{self.nick});
         try self.sendRaw(nick_fbs.getWritten());
 
         var user_buf: [MAX_LINE_LEN]u8 = undefined;
-        var user_fbs = std.io.fixedBufferStream(&user_buf);
+        var user_fbs = util.fixedBufferStream(&user_buf);
         try user_fbs.writer().print("USER {s} 0 * :{s}", .{ self.username, self.nick });
         try self.sendRaw(user_fbs.getWritten());
 
         // Join configured channels
         for (self.channels) |ch| {
             var join_buf: [MAX_LINE_LEN]u8 = undefined;
-            var join_fbs = std.io.fixedBufferStream(&join_buf);
+            var join_fbs = util.fixedBufferStream(&join_buf);
             try join_fbs.writer().print("JOIN {s}", .{ch});
             try self.sendRaw(join_fbs.getWritten());
         }
