@@ -1852,9 +1852,11 @@ test "writeStateFile produces valid content" {
     try writeStateFile(std.testing.allocator, path, &state);
 
     // Read back and verify
-    const file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(std.testing.allocator, 4096);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{});
+    defer file.close(std.Options.debug_io);
+    var file_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &file_buf);
+    const content = try file_reader.interface.readAlloc(std.testing.allocator, std.math.maxInt(usize));
     defer std.testing.allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"status\": \"running\"") != null);

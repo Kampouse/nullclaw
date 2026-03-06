@@ -110,10 +110,13 @@ pub fn bumpComponentRestart(component: []const u8) void {
 
 /// Get a snapshot of the current health state.
 pub fn snapshot() HealthSnapshot {
-    registry_mutex.lock(std.Options.debug_io) catch return .{
-        .pid = 0,
-        .uptime_seconds = 0,
-        .components = &.{},
+    registry_mutex.lock(std.Options.debug_io) catch {
+        var empty_map: std.StringHashMapUnmanaged(ComponentHealth) = .empty;
+        return .{
+            .pid = 0,
+            .uptime_seconds = 0,
+            .components = &empty_map,
+        };
     };
     defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();

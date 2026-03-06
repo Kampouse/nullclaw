@@ -192,8 +192,8 @@ test "R3: shouldHydrate returns true when memory is empty and snapshot exists" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const snap_file = try tmp.dir.createFile(SNAPSHOT_FILENAME, .{});
-    snap_file.close();
+    const snap_file = try tmp.dir.createFile(std.Options.debug_io, SNAPSHOT_FILENAME, .{});
+    snap_file.close(std.Options.debug_io);
 
     const workspace_dir = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace_dir);

@@ -119,7 +119,7 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
         .channel => try runChannel(allocator, sub_args),
         .skills => try runSkills(allocator, sub_args),
         .hardware => try runHardware(allocator, sub_args),
-        .migrate => try runMigrate(allocator, sub_args),
+        .migrate => try runMigrate(minimal.io, allocator, sub_args),
         .memory => try runMemory(allocator, sub_args),
         .workspace => try runWorkspace(allocator, sub_args),
         .capabilities => try runCapabilities(allocator, sub_args),
@@ -604,7 +604,7 @@ fn runHardware(allocator: std.mem.Allocator, sub_args: []const []const u8) !void
 
 // ── Migrate ──────────────────────────────────────────────────────
 
-fn runMigrate(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
+fn runMigrate(io: std.Io, allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
     if (sub_args.len < 1) {
         std.debug.print(
             \\Usage: nullclaw migrate <source> [options]
@@ -640,7 +640,7 @@ fn runMigrate(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
         };
         defer cfg.deinit();
 
-        const stats = yc.migration.migrateOpenclaw(allocator, &cfg, source_path, dry_run) catch |err| {
+        const stats = yc.migration.migrateOpenclaw(io, allocator, &cfg, source_path, dry_run) catch |err| {
             std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };

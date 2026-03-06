@@ -236,7 +236,7 @@ pub const RedisMemory = struct {
         const cmd = try formatCommand(self.allocator, args);
         defer self.allocator.free(cmd);
 
-        stream.writeStreamingAll(std.Options.debug_io, cmd) catch |err| {
+        stream.writeAll(cmd) catch |err| {
             self.stream = null;
             return err;
         };

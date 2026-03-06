@@ -164,7 +164,8 @@ pub const VerboseObserver = struct {
 
     fn verboseRecordEvent(_: *anyopaque, event: *const ObserverEvent) void {
         var buf: [4096]u8 = undefined;
-        var bw = std.fs.File.stderr().writer(&buf);
+        var stderr_file = std.Io.File.stderr();
+        var bw = stderr_file.writer(std.Options.debug_io, &buf);
         const stderr = &bw.interface;
         switch (event.*) {
             .llm_request => |e| {
@@ -270,19 +271,18 @@ pub const FileObserver = struct {
     }
 
     fn appendToFile(self: *FileObserver, line: []const u8) void {
-        const file = std.fs.cwd().openFile(self.path, .{ .mode = .write_only }) catch {
+        const io = std.Options.debug_io;
+        const file = std.Io.Dir.cwd().openFile(io, self.path, .{ .mode = .write_only }) catch {
             // Try creating the file if it doesn't exist
-            const new_file = std.fs.cwd().createFile(self.path, .{ .truncate = false }) catch return;
-            defer new_file.close(std.Options.debug_io);
-            new_file.seekFromEnd(0) catch return;
-            new_file.writeStreamingAll(std.Options.debug_io, line) catch {};
-            new_file.writeStreamingAll(std.Options.debug_io, "\n") catch {};
+            const new_file = std.Io.Dir.cwd().createFile(io, self.path, .{ .truncate = false }) catch return;
+            defer new_file.close(io);
+            new_file.writeStreamingAll(io, line) catch {};
+            new_file.writeStreamingAll(io, "\n") catch {};
             return;
         };
-        defer file.close(std.Options.debug_io);
-        file.seekFromEnd(0) catch return;
-        file.writeStreamingAll(std.Options.debug_io, line) catch {};
-        file.writeStreamingAll(std.Options.debug_io, "\n") catch {};
+        defer file.close(io);
+        file.writeStreamingAll(io, line) catch {};
+        file.writeStreamingAll(io, "\n") catch {};
     }
 
     fn fileRecordEvent(ptr: *anyopaque, event: *const ObserverEvent) void {
@@ -427,10 +427,10 @@ pub const OtelObserver = struct {
     }
 
     /// Generate random hex ID into a buffer.
-    fn randomHex(buf: []u8) void {
+    fn randomHex(io: std.Io, buf: []u8) void {
         var raw: [16]u8 = undefined;
         const needed = buf.len / 2;
-        std.crypto.random.bytes(raw[0..needed]);
+        std.Io.random(io).read(raw[0..needed]) catch return;
         const hex = "0123456789abcdef";
         for (0..needed) |i| {
             buf[i * 2] = hex[raw[i] >> 4];
@@ -443,8 +443,9 @@ pub const OtelObserver = struct {
     }
 
     fn addSpan(self: *OtelObserver, name: []const u8, start_ns: u64, end_ns: u64, attrs: []const OtelAttribute) void {
+        const io = std.Options.debug_io;
         var span_id: [16]u8 = undefined;
-        randomHex(&span_id);
+        randomHex(io, &span_id);
 
         var attributes: std.ArrayListUnmanaged(OtelAttribute) = .empty;
         for (attrs) |attr| {
@@ -486,14 +487,15 @@ pub const OtelObserver = struct {
 
     fn otelRecordEvent(ptr: *anyopaque, event: *const ObserverEvent) void {
         const self = resolve(ptr);
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
 
+        const io = std.Options.debug_io;
         const now = nowNs();
 
         switch (event.*) {
             .agent_start => |e| {
-                randomHex(&self.current_trace_id);
+                randomHex(io, &self.current_trace_id);
                 self.current_start_ns = now;
                 self.addSpan("agent.start", now, now, &.{
                     .{ .key = "provider", .value = e.provider },
@@ -582,8 +584,8 @@ pub const OtelObserver = struct {
 
     fn otelRecordMetric(ptr: *anyopaque, metric: *const ObserverMetric) void {
         const self = resolve(ptr);
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
 
         const now = nowNs();
 
@@ -683,8 +685,8 @@ pub const OtelObserver = struct {
 
     fn otelFlush(ptr: *anyopaque) void {
         const self = resolve(ptr);
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
         self.flushLocked();
     }
 
@@ -854,9 +856,11 @@ test "FileObserver tool_call detail is persisted as JSON string" {
     } };
     obs.recordEvent(&event);
 
-    const file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 4096);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{});
+    defer file.close(std.Options.debug_io);
+    var file_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &file_buf);
+    const content = try file_reader.interface.readAlloc(allocator, 1024 * 1024);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"event\":\"tool_call\"") != null);
@@ -1352,7 +1356,7 @@ test "OtelObserver flush empty is noop" {
 
 test "OtelObserver randomHex produces valid hex" {
     var buf: [32]u8 = undefined;
-    OtelObserver.randomHex(&buf);
+    OtelObserver.randomHex(std.Options.debug_io, &buf);
     for (buf) |c| {
         try std.testing.expect((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'));
     }

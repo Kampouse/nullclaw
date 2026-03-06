@@ -862,7 +862,7 @@ test "checkDaemonState parses valid JSON state" {
     {
         const file = try tmp.dir.createFile(std.Options.debug_io, "daemon_state.json", .{});
         try file.writeStreamingAll(std.Options.debug_io, state_content);
-        file.close();
+        file.close(std.Options.debug_io);
     }
 
     const cfg_path = try std.fs.path.join(std.testing.allocator, &.{ base, "config.json" });

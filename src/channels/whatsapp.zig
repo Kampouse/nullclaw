@@ -239,7 +239,7 @@ pub const WhatsAppChannel = struct {
                 file.close(std.Options.debug_io);
                 return null;
             };
-            file.close();
+            file.close(std.Options.debug_io);
 
             // Format as [IMAGE:path]
             var out_buf: std.ArrayListUnmanaged(u8) = .empty;

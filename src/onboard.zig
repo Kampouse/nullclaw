@@ -1726,6 +1726,7 @@ pub fn resetWorkspacePromptFiles(
     }
     std.Io.Dir.createDirAbsolute(std.Options.debug_io, workspace_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
+        else => return err,
     };
 
     var report = ResetWorkspacePromptFilesReport{};
@@ -2323,14 +2324,16 @@ test "scaffoldWorkspace creates core files and leaves MEMORY.md optional" {
     try scaffoldWorkspace(std.testing.allocator, base, &ctx);
 
     // Verify core files were created
-    const agents = try tmp.dir.openFile("AGENTS.md", .{});
-    defer agents.close();
-    const agents_content = try agents.readToEndAlloc(std.testing.allocator, 16 * 1024);
+    const agents = try tmp.dir.openFile(std.Options.debug_io, "AGENTS.md", .{});
+    defer agents.close(std.Options.debug_io);
+    var agents_buf: [16 * 1024]u8 = undefined;
+    var agents_reader = agents.reader(std.Options.debug_io, &agents_buf);
+    const agents_content = try agents_reader.interface.readAlloc(std.testing.allocator, 16 * 1024);
     defer std.testing.allocator.free(agents_content);
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "AGENTS.md - Your Workspace") != null);
 
     // OpenClaw-style scaffold keeps MEMORY.md optional (created on demand by memory writes).
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("MEMORY.md", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{}));
 }
 
 test "scaffoldWorkspace is idempotent" {
@@ -2353,12 +2356,12 @@ test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-agents-content");
+        try f.writeStreamingAll(std.Options.debug_io, "custom-agents-content");
     }
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-user-content");
+        try f.writeStreamingAll(std.Options.debug_io, "custom-user-content");
     }
 
     const base = try std.testing.allocator.dupe(u8, ".");
@@ -2368,12 +2371,12 @@ test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
     try std.testing.expectEqual(@as(usize, 6), report.rewritten_files);
     try std.testing.expectEqual(@as(usize, 0), report.removed_files);
 
-    const agents_content = try tmp.dir.readFileAlloc(std.testing.allocator, "AGENTS.md", 64 * 1024);
+    const agents_content = try tmp.dir.readFileAlloc(std.Options.debug_io, std.testing.allocator, "AGENTS.md", 64 * 1024);
     defer std.testing.allocator.free(agents_content);
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "AGENTS.md - Your Workspace") != null);
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "custom-agents-content") == null);
 
-    const user_content = try tmp.dir.readFileAlloc(std.testing.allocator, "USER.md", 64 * 1024);
+    const user_content = try tmp.dir.readFileAlloc(std.Options.debug_io, std.testing.allocator, "USER.md", 64 * 1024);
     defer std.testing.allocator.free(user_content);
     try std.testing.expect(std.mem.indexOf(u8, user_content, "USER.md - About Your Human") != null);
     try std.testing.expect(std.mem.indexOf(u8, user_content, "custom-user-content") == null);
@@ -2386,7 +2389,7 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-memory");
+        try f.writeStreamingAll(std.Options.debug_io, "custom-memory");
     }
 
     var has_distinct_case_memory_file = true;
@@ -2398,7 +2401,7 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     };
     if (alt) |f| {
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-memory-lower");
+        try f.writeStreamingAll(std.Options.debug_io, "custom-memory-lower");
     }
 
     const base = try std.testing.allocator.dupe(u8, ".");
@@ -2451,8 +2454,8 @@ test "scaffoldWorkspace seeds bootstrap marker for new workspace" {
 
     try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
 
-    const bootstrap_file = try tmp.dir.openFile("BOOTSTRAP.md", .{});
-    bootstrap_file.close();
+    const bootstrap_file = try tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{});
+    bootstrap_file.close(std.Options.debug_io);
 
     var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
     defer state.deinit(std.testing.allocator);
@@ -2472,12 +2475,12 @@ test "scaffoldWorkspace does not recreate BOOTSTRAP after onboarding completion"
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{ .truncate = true });
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom identity");
+        try f.writeStreamingAll(std.Options.debug_io, "custom identity");
     }
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom user");
+        try f.writeStreamingAll(std.Options.debug_io, "custom user");
     }
 
     try tmp.dir.deleteFile("BOOTSTRAP.md");
@@ -2501,12 +2504,12 @@ test "scaffoldWorkspace does not seed BOOTSTRAP for legacy completed workspace" 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom identity");
+        try f.writeStreamingAll(std.Options.debug_io, "custom identity");
     }
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom user");
+        try f.writeStreamingAll(std.Options.debug_io, "custom user");
     }
 
     const base = try std.testing.allocator.dupe(u8, ".");

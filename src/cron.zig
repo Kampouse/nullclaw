@@ -874,50 +874,160 @@ fn collectChildOutputWithTimeout(
     timeout_secs: u64,
     start_ns: i128,
 ) !bool {
-    var poller = std.Io.poll(allocator, enum { stdout, stderr }, .{
-        .stdout = child.stdout.?,
-        .stderr = child.stderr.?,
-    });
-    defer poller.deinit();
+    _ = allocator; // Used when poll was allocating
 
-    const stdout_r = poller.reader(.stdout);
-    stdout_r.buffer = stdout.allocatedSlice();
-    stdout_r.seek = 0;
-    stdout_r.end = stdout.items.len;
+    var read_buf: [4096]u8 = undefined;
+    var stdout_eof = false;
+    var stderr_eof = false;
+    var timed_out = false;
 
-    const stderr_r = poller.reader(.stderr);
-    stderr_r.buffer = stderr.allocatedSlice();
-    stderr_r.seek = 0;
-    stderr_r.end = stderr.items.len;
+    // Use poll on Unix, simple loop on Windows
+    if (comptime builtin.os.tag == .windows) {
+        // Windows: simple polling loop
+        while (!stdout_eof or !stderr_eof) {
+            // Check for timeout
+            if (!timed_out and hasTimeoutExpired(start_ns, timeout_secs)) {
+                try terminateAgentChildHard(child);
+                timed_out = true;
+            }
 
-    defer {
-        stdout.* = .{
-            .items = stdout_r.buffer[0..stdout_r.end],
-            .capacity = stdout_r.buffer.len,
-        };
-        stderr.* = .{
-            .items = stderr_r.buffer[0..stderr_r.end],
-            .capacity = stderr_r.buffer.len,
-        };
-        stdout_r.buffer = &.{};
-        stderr_r.buffer = &.{};
+            // Try non-blocking read from stdout
+            if (!stdout_eof) {
+                if (child.stdout.?.read(&read_buf)) |n| {
+                    if (n == 0) {
+                        stdout_eof = true;
+                    } else {
+                        try stdout.appendSlice(read_buf[0..n]);
+                        if (stdout.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StdoutStreamTooLong;
+                    }
+                } else |err| {
+                    if (err == error.EndOfStream or err == error.BrokenPipe) {
+                        stdout_eof = true;
+                    } else {
+                        return err;
+                    }
+                }
+            }
+
+            // Try non-blocking read from stderr
+            if (!stderr_eof) {
+                if (child.stderr.?.read(&read_buf)) |n| {
+                    if (n == 0) {
+                        stderr_eof = true;
+                    } else {
+                        try stderr.appendSlice(read_buf[0..n]);
+                        if (stderr.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StderrStreamTooLong;
+                    }
+                } else |err| {
+                    if (err == error.EndOfStream or err == error.BrokenPipe) {
+                        stderr_eof = true;
+                    } else {
+                        return err;
+                    }
+                }
+            }
+
+            // Check if process has ended
+            if (child.poll()) |_| {
+                // Process has ended, drain remaining data
+                break;
+            }
+
+            // Small sleep
+            std.time.sleep(1 * std.time.ns_per_ms);
+        }
+    } else {
+        // Unix: use poll()
+        const stdout_fd = child.stdout.?.handle;
+        const stderr_fd = child.stderr.?.handle;
+
+        while (!stdout_eof or !stderr_eof) {
+            // Set up poll fds
+            var fds = [_]std.posix.pollfd{
+                if (!stdout_eof) .{ .fd = stdout_fd, .events = std.posix.POLL.IN, .revents = 0 } else .{ .fd = -1, .events = 0, .revents = 0 },
+                if (!stderr_eof) .{ .fd = stderr_fd, .events = std.posix.POLL.IN, .revents = 0 } else .{ .fd = -1, .events = 0, .revents = 0 },
+            };
+
+            // Calculate timeout
+            const poll_ms: i32 = if (timeout_secs == 0 or timed_out)
+                100 // 100ms for responsiveness
+            else
+                @intCast(@min(AGENT_POLL_STEP_NS / 1_000_000, 100));
+
+            // Poll
+            _ = std.posix.poll(&fds, poll_ms) catch |err| {
+                if (err == error.Interrupted) continue;
+                return err;
+            };
+
+            // Check for timeout
+            if (!timed_out and hasTimeoutExpired(start_ns, timeout_secs)) {
+                try terminateAgentChildHard(child);
+                timed_out = true;
+            }
+
+            // Read from stdout if ready
+            if (!stdout_eof and (fds[0].revents & std.posix.POLL.IN != 0)) {
+                while (true) {
+                    const n = std.posix.read(stdout_fd, &read_buf) catch |err| {
+                        if (err == error.WouldBlock) break;
+                        return err;
+                    };
+                    if (n == 0) {
+                        stdout_eof = true;
+                        break;
+                    }
+                    try stdout.appendSlice(read_buf[0..n]);
+                    if (stdout.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StdoutStreamTooLong;
+                }
+            }
+            if (!stdout_eof and (fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL) != 0)) {
+                stdout_eof = true;
+            }
+
+            // Read from stderr if ready
+            if (!stderr_eof and (fds[1].revents & std.posix.POLL.IN != 0)) {
+                while (true) {
+                    const n = std.posix.read(stderr_fd, &read_buf) catch |err| {
+                        if (err == error.WouldBlock) break;
+                        return err;
+                    };
+                    if (n == 0) {
+                        stderr_eof = true;
+                        break;
+                    }
+                    try stderr.appendSlice(read_buf[0..n]);
+                    if (stderr.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StderrStreamTooLong;
+                }
+            }
+            if (!stderr_eof and (fds[1].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL) != 0)) {
+                stderr_eof = true;
+            }
+        }
     }
 
-    var timed_out = false;
-    while (true) {
-        const keep_polling = if (timeout_secs == 0 or timed_out)
-            try poller.poll()
-        else
-            try poller.pollTimeout(AGENT_POLL_STEP_NS);
+    // Final drain of any remaining data
+    if (!stdout_eof) {
+        while (true) {
+            const n = child.stdout.?.read(&read_buf) catch |err| {
+                if (err == error.EndOfStream or err == error.BrokenPipe) break;
+                return err;
+            };
+            if (n == 0) break;
+            try stdout.appendSlice(read_buf[0..n]);
+            if (stdout.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StdoutStreamTooLong;
+        }
+    }
 
-        if (stdout_r.bufferedLen() > AGENT_MAX_OUTPUT_BYTES) return error.StdoutStreamTooLong;
-        if (stderr_r.bufferedLen() > AGENT_MAX_OUTPUT_BYTES) return error.StderrStreamTooLong;
-
-        if (!keep_polling) break;
-
-        if (!timed_out and hasTimeoutExpired(start_ns, timeout_secs)) {
-            try terminateAgentChildHard(child);
-            timed_out = true;
+    if (!stderr_eof) {
+        while (true) {
+            const n = child.stderr.?.read(&read_buf) catch |err| {
+                if (err == error.EndOfStream or err == error.BrokenPipe) break;
+                return err;
+            };
+            if (n == 0) break;
+            try stderr.appendSlice(read_buf[0..n]);
+            if (stderr.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StderrStreamTooLong;
         }
     }
 
@@ -1893,7 +2003,7 @@ test "shell job uses configured cwd for relative output paths" {
 
     _ = scheduler.tick(0, null);
 
-    const proof_file = try tmp.dir.openFile("cwd_proof.txt", .{});
+    const proof_file = try tmp.dir.openFile(std.Options.debug_io, "cwd_proof.txt", .{});
     proof_file.close(std.Options.debug_io);
 }
 

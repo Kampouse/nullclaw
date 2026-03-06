@@ -302,8 +302,9 @@ pub const IrcChannel = struct {
         }
         if (self.stream) |stream| {
             // stream is a socket fd, use posix read directly
+            // EndOfStream is no longer in std.posix.read error set in Zig 0.16
+            // 0 bytes read means end-of-stream
             return std.posix.read(stream, out) catch |err| switch (err) {
-                error.EndOfStream => 0,
                 else => err,
             };
         }

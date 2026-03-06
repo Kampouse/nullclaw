@@ -47,16 +47,18 @@ pub const SourceEntry = struct {
 
 /// Run the OpenClaw migration command.
 pub fn migrateOpenclaw(
+    io: std.Io,
     allocator: std.mem.Allocator,
     config: *const Config,
     source_path: ?[]const u8,
     dry_run: bool,
 ) !MigrationStats {
-    return migrateOpenclawWithPolicy(allocator, config, source_path, dry_run, .rename_conflicts);
+    return migrateOpenclawWithPolicy(io, allocator, config, source_path, dry_run, .rename_conflicts);
 }
 
 /// Run the OpenClaw migration command with an explicit merge policy.
 pub fn migrateOpenclawWithPolicy(
+    io: std.Io,
     allocator: std.mem.Allocator,
     config: *const Config,
     source_path: ?[]const u8,
@@ -93,7 +95,7 @@ pub fn migrateOpenclawWithPolicy(
     }
 
     // Read markdown entries from source
-    try readOpenclawMarkdownEntries(allocator, source, &entries, &stats);
+    try readOpenclawMarkdownEntries(io, allocator, source, &entries, &stats);
 
     // Track markdown keys for dedup against SQLite
     var seen_keys = std.StringHashMap(void).init(allocator);
@@ -103,16 +105,16 @@ pub fn migrateOpenclawWithPolicy(
     }
 
     // Read brain.db entries (try memory/brain.db and workspace-level brain.db)
-    readBrainDbEntries(allocator, source, &entries, &stats, &seen_keys);
+    readBrainDbEntries(io, allocator, source, &entries, &stats, &seen_keys);
 
     if (dry_run) {
-        stats.config_migrated = try migrateOpenclawConfig(allocator, source, config.config_path, true);
+        stats.config_migrated = try migrateOpenclawConfig(io, allocator, source, config.config_path, true);
         return stats;
     }
 
     if (entries.items.len > 0) {
         // Backup before import
-        const backup_path: ?[]u8 = createBackup(allocator, config) catch |err| blk: {
+        const backup_path: ?[]u8 = createBackup(io, allocator, config) catch |err| blk: {
             log.warn("backup before migration failed: {}", .{err});
             break :blk null;
         };
@@ -176,7 +178,7 @@ pub fn migrateOpenclawWithPolicy(
         }
     }
 
-    stats.config_migrated = try migrateOpenclawConfig(allocator, source, config.config_path, false);
+    stats.config_migrated = try migrateOpenclawConfig(io, allocator, source, config.config_path, false);
 
     return stats;
 }
@@ -186,18 +188,21 @@ pub fn migrateOpenclawWithPolicy(
 /// Copy OpenClaw config to nullclaw config with camelCase -> snake_case key
 /// normalization.
 fn migrateOpenclawConfig(
+    io: std.Io,
     allocator: std.mem.Allocator,
     source_workspace: []const u8,
     target_config_path: []const u8,
     dry_run: bool,
 ) !bool {
-    const source_config_path = try resolveOpenclawConfigPath(allocator, source_workspace);
+    const source_config_path = try resolveOpenclawConfigPath(io, allocator, source_workspace);
     defer if (source_config_path) |p| allocator.free(p);
     const source_config = source_config_path orelse return false;
 
-    const src_file = try std.fs.openFileAbsolute(source_config, .{});
-    defer src_file.close();
-    const source_content = try src_file.readToEndAlloc(allocator, 1024 * 1024);
+    const src_file = try std.Io.Dir.openFileAbsolute(io, source_config, .{});
+    defer src_file.close(io);
+    var src_buf: [8192]u8 = undefined;
+    var src_reader = src_file.reader(io, &src_buf);
+    const source_content = try src_reader.interface.readAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(source_content);
 
     const normalized = try normalizeConfigJsonKeysSnakeCase(allocator, source_content);
@@ -211,8 +216,8 @@ fn migrateOpenclawConfig(
         else => return err,
     };
 
-    const dst_file = try std.fs.createFileAbsolute(target_config_path, .{});
-    defer dst_file.close();
+    const dst_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, target_config_path, .{});
+    defer dst_file.close(std.Options.debug_io);
     try dst_file.writeStreamingAll(std.Options.debug_io, normalized);
     if (normalized.len == 0 or normalized[normalized.len - 1] != '\n') {
         try dst_file.writeStreamingAll(std.Options.debug_io, "\n");
@@ -223,11 +228,11 @@ fn migrateOpenclawConfig(
 
 /// Resolve OpenClaw config.json location from a workspace path.
 /// Preferred layout is `<workspace parent>/config.json` for `~/.openclaw/workspace`.
-fn resolveOpenclawConfigPath(allocator: std.mem.Allocator, source_workspace: []const u8) !?[]u8 {
+fn resolveOpenclawConfigPath(io: std.Io, allocator: std.mem.Allocator, source_workspace: []const u8) !?[]u8 {
     if (std.fs.path.dirname(source_workspace)) |parent| {
         const candidate = try std.fs.path.join(allocator, &.{ parent, "config.json" });
-        if (std.fs.openFileAbsolute(candidate, .{})) |f| {
-            f.close();
+        if (std.Io.Dir.openFileAbsolute(io, candidate, .{})) |f| {
+            f.close(io);
             return candidate;
         } else |_| {
             allocator.free(candidate);
@@ -235,8 +240,8 @@ fn resolveOpenclawConfigPath(allocator: std.mem.Allocator, source_workspace: []c
     }
 
     const fallback = try std.fs.path.join(allocator, &.{ source_workspace, "config.json" });
-    if (std.fs.openFileAbsolute(fallback, .{})) |f| {
-        f.close();
+    if (std.Io.Dir.openFileAbsolute(io, fallback, .{})) |f| {
+        f.close(io);
         return fallback;
     } else |_| {
         allocator.free(fallback);
@@ -340,6 +345,7 @@ pub fn contentShortHash(content: []const u8) [8]u8 {
 /// For SQLite backends, copies the .db file. For markdown, copies MEMORY.md.
 /// Returns the backup file path (caller owns the string).
 pub fn createBackup(
+    io: std.Io,
     allocator: std.mem.Allocator,
     config: *const Config,
 ) ![]u8 {
@@ -352,7 +358,7 @@ pub fn createBackup(
         defer allocator.free(db_file);
         const backup_path = try std.fmt.allocPrint(allocator, "{s}.backup-{d}", .{ db_file, timestamp });
         errdefer allocator.free(backup_path);
-        try copyFileAbsolute(db_file, backup_path);
+        try copyFileAbsolute(io, db_file, backup_path);
         return backup_path;
     } else if (std.mem.eql(u8, backend, "markdown")) {
         // Markdown backend: backup MEMORY.md
@@ -360,7 +366,7 @@ pub fn createBackup(
         defer allocator.free(md_file);
         const backup_path = try std.fmt.allocPrint(allocator, "{s}.backup-{d}", .{ md_file, timestamp });
         errdefer allocator.free(backup_path);
-        try copyFileAbsolute(md_file, backup_path);
+        try copyFileAbsolute(io, md_file, backup_path);
         return backup_path;
     }
 
@@ -370,25 +376,27 @@ pub fn createBackup(
 /// Restore from a backup file by copying it over the current target.
 /// The `backup_path` should be a path returned from `createBackup` or
 /// following the naming convention `<target>.backup-<timestamp>`.
-pub fn restoreBackup(backup_path: []const u8, target_path: []const u8) !void {
-    try copyFileAbsolute(backup_path, target_path);
+pub fn restoreBackup(io: std.Io, backup_path: []const u8, target_path: []const u8) !void {
+    try copyFileAbsolute(io, backup_path, target_path);
 }
 
-fn copyFileAbsolute(src: []const u8, dst: []const u8) !void {
-    const src_file = try std.fs.openFileAbsolute(src, .{});
-    defer src_file.close();
-    const dst_file = try std.fs.createFileAbsolute(dst, .{});
-    defer dst_file.close();
-    var buf: [4096]u8 = undefined;
+fn copyFileAbsolute(io: std.Io, src: []const u8, dst: []const u8) !void {
+    const src_file = try std.Io.Dir.openFileAbsolute(io, src, .{});
+    defer src_file.close(io);
+    const dst_file = try std.Io.Dir.createFileAbsolute(io, dst, .{});
+    defer dst_file.close(io);
+    var src_buf: [8192]u8 = undefined;
+    var src_reader = src_file.reader(io, &src_buf);
     while (true) {
-        const n = src_file.read(&buf) catch return error.ReadError;
+        const n = src_reader.interface.read(src_buf[0..]) catch return error.ReadError;
         if (n == 0) break;
-        dst_file.writeStreamingAll(std.Options.debug_io, buf[0..n]) catch return error.WriteError;
+        dst_file.writeStreamingAll(io, src_buf[0..n]) catch return error.WriteError;
     }
 }
 
 /// Read OpenClaw markdown entries from MEMORY.md and daily logs.
 fn readOpenclawMarkdownEntries(
+    io: std.Io,
     allocator: std.mem.Allocator,
     source: []const u8,
     entries: *std.ArrayList(SourceEntry),
@@ -398,7 +406,7 @@ fn readOpenclawMarkdownEntries(
     const core_path = try std.fmt.allocPrint(allocator, "{s}/MEMORY.md", .{source});
     defer allocator.free(core_path);
 
-    if (std.fs.cwd().readFileAlloc(allocator, core_path, 1024 * 1024)) |content| {
+    if (std.Io.Dir.cwd().readFileAlloc(io, allocator, core_path, 1024 * 1024)) |content| {
         defer allocator.free(content);
         const count = try parseMarkdownFile(allocator, content, "core", "openclaw_core", entries);
         stats.from_markdown += count;
@@ -408,7 +416,7 @@ fn readOpenclawMarkdownEntries(
     const daily_dir = try std.fmt.allocPrint(allocator, "{s}/memory", .{source});
     defer allocator.free(daily_dir);
 
-    if (std.fs.cwd().openDir(daily_dir, .{ .iterate = true })) |*dir_handle| {
+    if (std.Io.Dir.cwd().openDir(io, daily_dir, .{ .iterate = true })) |*dir_handle| {
         var dir = dir_handle.*;
         defer dir.close();
         var iter = dir.iterate();
@@ -416,7 +424,7 @@ fn readOpenclawMarkdownEntries(
             if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
             const fpath = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ daily_dir, entry.name });
             defer allocator.free(fpath);
-            if (std.fs.cwd().readFileAlloc(allocator, fpath, 1024 * 1024)) |content| {
+            if (std.Io.Dir.cwd().readFileAlloc(io, allocator, fpath, 1024 * 1024)) |content| {
                 defer allocator.free(content);
                 const stem = entry.name[0 .. entry.name.len - 3];
                 const count = try parseMarkdownFile(allocator, content, "daily", stem, entries);
@@ -503,6 +511,7 @@ fn pathsEqual(a: []const u8, b: []const u8) bool {
 
 /// Read brain.db entries from known locations, deduplicating against seen keys.
 fn readBrainDbEntries(
+    io: std.Io,
     allocator: std.mem.Allocator,
     source: []const u8,
     entries: *std.ArrayList(SourceEntry),
@@ -517,7 +526,7 @@ fn readBrainDbEntries(
 
         // Check file exists before attempting open
         const abs_path = db_path[0..db_path.len];
-        std.fs.cwd().access(abs_path, .{}) catch continue;
+        std.Io.Dir.cwd().access(io, abs_path, .{}) catch continue;
 
         const sqlite_entries = migrate_mod.readBrainDb(allocator, db_path) catch |err| {
             log.warn("brain.db read failed at {s}: {}", .{ abs_path, err });
@@ -676,7 +685,7 @@ test "resolveOpenclawConfigPath finds parent config for workspace layout" {
     const workspace_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".openclaw/workspace", std.testing.allocator);
     defer std.testing.allocator.free(workspace_abs);
 
-    const resolved = try resolveOpenclawConfigPath(std.testing.allocator, workspace_abs);
+    const resolved = try resolveOpenclawConfigPath(std.Options.debug_io, std.testing.allocator, workspace_abs);
     defer if (resolved) |p| std.testing.allocator.free(p);
     try std.testing.expect(resolved != null);
     try std.testing.expect(std.mem.eql(u8, std.fs.path.basename(resolved.?), "config.json"));
@@ -692,23 +701,23 @@ test "migrateOpenclawConfig copies and normalizes config json" {
     try tmp.dir.createDirPath(std.Options.debug_io, ".nullclaw");
 
     const source_cfg_rel = ".openclaw/config.json";
-    const source_cfg = try tmp.dir.createFile(source_cfg_rel, .{});
-    defer source_cfg.close();
+    const source_cfg = try tmp.dir.createFile(std.Options.debug_io, source_cfg_rel, .{});
+    defer source_cfg.close(std.Options.debug_io);
     try source_cfg.writeStreamingAll(std.Options.debug_io,
         \\{"gatewayPort":3000,"httpRequest":{"allowedDomains":["example.com"]},"session":{"idleMinutes":30}}
     );
 
     const workspace_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".openclaw/workspace", std.testing.allocator);
     defer std.testing.allocator.free(workspace_abs);
-    const target_cfg_abs = try tmp.dir.realpathAlloc(std.testing.allocator, ".nullclaw");
+    const target_cfg_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".nullclaw", std.testing.allocator);
     defer std.testing.allocator.free(target_cfg_abs);
     const target_cfg_path = try std.fs.path.join(std.testing.allocator, &.{ target_cfg_abs, "config.json" });
     defer std.testing.allocator.free(target_cfg_path);
 
-    const migrated = try migrateOpenclawConfig(std.testing.allocator, workspace_abs, target_cfg_path, false);
+    const migrated = try migrateOpenclawConfig(std.Options.debug_io, std.testing.allocator, workspace_abs, target_cfg_path, false);
     try std.testing.expect(migrated);
 
-    const migrated_bytes = try std.fs.cwd().readFileAlloc(std.testing.allocator, target_cfg_path, 64 * 1024);
+    const migrated_bytes = try std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, target_cfg_path, 64 * 1024, std.testing.allocator);
     defer std.testing.allocator.free(migrated_bytes);
     try std.testing.expect(std.mem.indexOf(u8, migrated_bytes, "\"gateway_port\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, migrated_bytes, "\"http_request\"") != null);
@@ -782,25 +791,25 @@ test "backup and restore roundtrip" {
 
     // Write a "database" file
     const content = "SQLITE_MAGIC_test_data_12345";
-    const src_file = try tmp_dir.dir.createFile("test.db", .{});
+    const src_file = try tmp_dir.dir.createFile(std.Options.debug_io, "test.db", .{});
     try src_file.writeStreamingAll(std.Options.debug_io, content);
-    src_file.close();
+    src_file.close(std.Options.debug_io);
 
     // Get absolute paths via realpath
-    const src_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, "test.db");
+    const src_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, "test.db", std.testing.allocator);
     defer std.testing.allocator.free(src_path);
 
     const backup_name = "test.db.backup-1234";
-    const backup_file = try tmp_dir.dir.createFile(backup_name, .{});
-    backup_file.close();
-    const backup_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, backup_name);
+    const backup_file = try tmp_dir.dir.createFile(std.Options.debug_io, backup_name, .{});
+    backup_file.close(std.Options.debug_io);
+    const backup_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, backup_name, std.testing.allocator);
     defer std.testing.allocator.free(backup_path);
 
     // Copy source to backup
-    try copyFileAbsolute(src_path, backup_path);
+    try copyFileAbsolute(std.Options.debug_io, src_path, backup_path);
 
     // Verify backup content matches
-    const backup_content = try tmp_dir.dir.readFileAlloc(std.testing.allocator, backup_name, 4096);
+    const backup_content = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, backup_name, 4096, std.testing.allocator);
     defer std.testing.allocator.free(backup_content);
     try std.testing.expectEqualStrings(content, backup_content);
 
@@ -810,7 +819,7 @@ test "backup and restore roundtrip" {
     mod_file.close();
 
     // Restore from backup
-    try restoreBackup(backup_path, src_path);
+    try restoreBackup(std.Options.debug_io, backup_path, src_path);
 
     // Verify restored content
     const restored = try tmp_dir.dir.readFileAlloc(std.testing.allocator, "test.db", 4096);
@@ -819,7 +828,7 @@ test "backup and restore roundtrip" {
 }
 
 test "copyFileAbsolute fails on non-existent source" {
-    const result = copyFileAbsolute("/tmp/nonexistent_migration_test_file_xyz.db", "/tmp/out.db");
+    const result = copyFileAbsolute(std.Options.debug_io, "/tmp/nonexistent_migration_test_file_xyz.db", "/tmp/out.db");
     try std.testing.expectError(error.FileNotFound, result);
 }
 

@@ -763,8 +763,8 @@ test "readLocalImage rejects when no allowed_dirs" {
     // Create a real temp file so realpath succeeds, then verify allowed_dirs rejection
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "test.png", .data = "\x89PNG\x0d\x0a\x1a\x0a" });
-    const dir_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "test.png", .data = "\x89PNG\x0d\x0a\x1a\x0a" });
+    const dir_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(dir_path);
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ dir_path, "test.png" });
     defer std.testing.allocator.free(file_path);
@@ -777,12 +777,12 @@ test "prepareMessagesForProvider does not delete nullclaw temp image files" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile(.{
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "nullclaw_photo_123.png",
         .data = "\x89PNG\x0d\x0a\x1a\x0a",
     });
 
-    const dir_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const dir_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(dir_path);
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ dir_path, "nullclaw_photo_123.png" });
     defer std.testing.allocator.free(file_path);

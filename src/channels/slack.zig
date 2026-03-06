@@ -675,7 +675,7 @@ pub const SlackChannel = struct {
             try w.writeStreamingAll(std.Options.debug_io, query);
         }
         return .{
-            .host = host,
+            .host = componentAsSlice(host),
             .port = port,
             .path = fbs.getWritten(),
         };

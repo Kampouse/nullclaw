@@ -272,18 +272,18 @@ pub const QmdAdapter = struct {
 
             // Check if existing file has same content hash (skip redundant writes)
             const skip = blk: {
-                const existing = std.Io.Dir.cwd().readFileAlloc(allocator, file_path, 1024 * 1024) catch break :blk false;
+                const existing = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, file_path, 1024 * 1024, allocator) catch break :blk false;
                 defer allocator.free(existing);
                 break :blk std.hash.Fnv1a_32.hash(existing) == new_hash;
             };
             if (skip) continue;
 
             // Write file
-            const file = std.Io.Dir.cwd().createFile(file_path, .{}) catch |err| {
+            const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, file_path, .{}) catch |err| {
                 log.warn("failed to write session export '{s}': {}", .{ file_path, err });
                 continue;
             };
-            defer file.close();
+            defer file.close(std.Options.debug_io);
             file.writeStreamingAll(std.Options.debug_io, content.items) catch continue;
 
             written += 1;
@@ -307,15 +307,15 @@ pub const QmdAdapter = struct {
         const retention_ns: i128 = @as(i128, self.config.sessions.retention_days) * 24 * 3600 * std.time.ns_per_s;
         const now_ns: i128 = 0;
 
-        var dir = std.Io.Dir.cwd().openDir(export_dir, .{ .iterate = true }) catch return 0;
-        defer dir.close();
+        var dir = std.Io.Dir.cwd().openDir(std.Options.debug_io, export_dir, .{ .iterate = true }) catch return 0;
+        defer dir.close(std.Options.debug_io);
 
         var deleted: u32 = 0;
         var iter = dir.iterate();
-        while (try iter.next()) |entry| {
+        while (try iter.next(std.Options.debug_io)) |entry| {
             if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
 
-            const stat = dir.statFile(entry.name) catch continue;
+            const stat = dir.statFile(std.Options.debug_io, entry.name) catch continue;
             const mtime_ns: i128 = stat.mtime;
             const age_ns = now_ns - mtime_ns;
 
@@ -631,8 +631,8 @@ test "pruneExportedSessions deletes old files" {
     // Create a test file
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "old-session.md", .{});
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "old content");
-        f.close();
+        try f.writeStreamingAll(std.Options.debug_io, "old content");
+        f.close(std.Options.debug_io);
     }
 
     var qa = QmdAdapter.init(allocator, .{

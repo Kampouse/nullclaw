@@ -453,7 +453,7 @@ pub const MattermostChannel = struct {
         // self-message filtering are reliable.
         _ = try self.fetchBotUserId();
 
-        var host_buf: [512]u8 = undefined;
+        var host_buf: [255]u8 = undefined;
         var path_buf: [1024]u8 = undefined;
         const parts = try self.websocketConnectParts(&host_buf, &path_buf);
 
@@ -508,14 +508,14 @@ pub const MattermostChannel = struct {
 
     fn websocketConnectParts(
         self: *const MattermostChannel,
-        host_buf: []u8,
+        host_buf_ptr: *[255]u8,
         path_buf: []u8,
     ) !struct { host: []const u8, port: u16, path: []const u8 } {
         const uri = std.Uri.parse(self.base_url) catch return error.InvalidBaseUrl;
         if (!std.ascii.eqlIgnoreCase(uri.scheme, "https")) {
             return error.MattermostRequiresHttps;
         }
-        const host = uri.getHost(host_buf) catch return error.InvalidBaseUrl;
+        const host = uri.getHost(host_buf_ptr) catch return error.InvalidBaseUrl;
         const port = uri.port orelse 443;
         const raw_path = componentAsSlice(uri.path);
         var prefix = raw_path;
@@ -532,7 +532,7 @@ pub const MattermostChannel = struct {
         }
         try w.writeStreamingAll(std.Options.debug_io, "/api/v4/websocket");
         return .{
-            .host = host,
+            .host = host.name,
             .port = port,
             .path = fbs.getWritten(),
         };
@@ -734,11 +734,10 @@ pub const MattermostChannel = struct {
         defer self.allocator.free(data);
         if (data.len == 0) return null;
 
-        const tmp_env = std.process.getEnvVarOwned(self.allocator, "TMPDIR") catch null;
-        defer if (tmp_env) |v| self.allocator.free(v);
+        const tmp_env = std.c.getenv("TMPDIR");
         const tmp_dir = blk: {
             if (tmp_env) |v| {
-                const trimmed = std.mem.trimRight(u8, v, "/");
+                const trimmed = std.mem.trimRight(u8, std.mem.span(v), "/");
                 if (trimmed.len > 0) break :blk trimmed;
             }
             break :blk "/tmp";
@@ -752,8 +751,8 @@ pub const MattermostChannel = struct {
         ) catch return null;
         errdefer self.allocator.free(path);
 
-        const file = std.fs.createFileAbsolute(path, .{ .read = false }) catch return null;
-        defer file.close();
+        const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{ .read = false }) catch return null;
+        defer file.close(std.Options.debug_io);
         file.writeStreamingAll(std.Options.debug_io, data) catch return null;
         return path;
     }

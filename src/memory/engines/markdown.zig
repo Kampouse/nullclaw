@@ -538,7 +538,7 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
     };
     if (alt) |f| {
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "- alt-entry");
+        try f.writeStreamingAll(std.Options.debug_io, "- alt-entry");
     }
 
     if (!has_distinct_case_files) return;

@@ -178,7 +178,9 @@ pub const CostTracker = struct {
         defer file.close(std.Options.debug_io);
 
         // Seek to end for append
-        file.seekFromEnd(0) catch {};
+        const stat = file.stat(std.Options.debug_io) catch return;
+        const file_size = stat.size;
+        file.seekTo(file_size) catch {};
 
         // Write JSON line
         var buf: std.ArrayList(u8) = .empty;
