@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  <em>Fork of <a href="https://github.com/nullclaw/nullclaw">nullclaw/nullclaw</a> upgraded to <strong>Zig 0.16</strong></em><br>
+  <em>This upgrade required extensive changes across the codebase, including fixing memory allocation issues with sentinel-terminated slices, adapting to the new I/O subsystem, and updating all dependencies.</em>
+</p>
+
+<p align="center">
   <a href="https://github.com/nullclaw/nullclaw/actions/workflows/ci.yml"><img src="https://github.com/nullclaw/nullclaw/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://nullclaw.github.io"><img src="https://img.shields.io/badge/docs-nullclaw.github.io-informational" alt="Documentation" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
@@ -18,7 +23,7 @@
 The smallest fully autonomous AI assistant infrastructure — a static Zig binary that fits on any $5 board, boots in milliseconds, and requires nothing but libc.
 
 ```
-678 KB binary · <2 ms startup · 3,230+ tests · 22+ providers · 18 channels · Pluggable everything
+678 KB binary · <2 ms startup · 4,600+ tests · 22+ providers · 18 channels · Pluggable everything
 ```
 
 ### Features
@@ -46,7 +51,7 @@ Local machine benchmark (macOS arm64, Feb 2026), normalized for 0.8 GHz edge har
 | **RAM** | > 1 GB | > 100 MB | < 10 MB | < 5 MB | **~1 MB** |
 | **Startup (0.8 GHz)** | > 500 s | > 30 s | < 1 s | < 10 ms | **< 8 ms** |
 | **Binary Size** | ~28 MB (dist) | N/A (Scripts) | ~8 MB | 3.4 MB | **678 KB** |
-| **Tests** | — | — | — | 1,017 | **3,230+** |
+| **Tests** | — | — | — | 1,017 | **4,600+** |
 | **Source Files** | ~400+ | — | — | ~120 | **~110** |
 | **Cost** | Mac Mini $599 | Linux SBC ~$50 | Linux Board $10 | Any $10 hardware | **Any $5 hardware** |
 
