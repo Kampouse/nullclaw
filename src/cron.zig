@@ -760,7 +760,7 @@ pub const CronScheduler = struct {
                     defer self.allocator.free(result.stderr);
 
                     const success = switch (result.term) {
-                        .Exited => |code| code == 0,
+                        .exited => |code| code == 0,
                         else => false,
                     };
                     job.last_run_secs = now;
@@ -1513,8 +1513,8 @@ test "reloadJobs auto-recovers malformed store and keeps runtime jobs" {
 
     const path = try cronJsonPath(std.testing.allocator);
     defer std.testing.allocator.free(path);
-    const bad_file = try std.fs.createFileAbsolute(path, .{});
-    defer bad_file.close();
+    const bad_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{});
+    defer bad_file.close(std.Options.debug_io);
     try bad_file.writeStreamingAll(std.Options.debug_io, "{bad-json");
 
     try reloadJobs(&runtime);
@@ -1894,7 +1894,7 @@ test "shell job uses configured cwd for relative output paths" {
     _ = scheduler.tick(0, null);
 
     const proof_file = try tmp.dir.openFile("cwd_proof.txt", .{});
-    proof_file.close();
+    proof_file.close(std.Options.debug_io);
 }
 
 test "shell job delivers stdout via bus" {
@@ -1967,14 +1967,14 @@ test "collectChildOutputWithTimeout disables timeout when set to zero" {
 
     const allocator = std.testing.allocator;
     const argv = &.{ platform.getShell(), platform.getShellFlag(), "echo ready" };
-    var child = std.process.spawn(io, .{
+    var child = try std.process.spawn(io, .{
         .argv = argv,
         .stdin = .ignore,
         .stdout = .pipe,
         .stderr = .pipe,
     });
     errdefer {
-        _ = child.kill(io) catch {};
+        child.kill(io);
         _ = child.wait(io) catch {};
     }
 
@@ -1995,7 +1995,7 @@ test "collectChildOutputWithTimeout disables timeout when set to zero" {
 
     try std.testing.expect(!timed_out);
     switch (term) {
-        .Exited => |code| try std.testing.expectEqual(@as(u8, 0), code),
+        .exited => |code| try std.testing.expectEqual(@as(u8, 0), code),
         else => try std.testing.expect(false),
     }
     try std.testing.expect(std.mem.indexOf(u8, stdout.items, "ready") != null);
@@ -2006,14 +2006,14 @@ test "collectChildOutputWithTimeout kills process after deadline" {
 
     const allocator = std.testing.allocator;
     const argv = &.{ platform.getShell(), platform.getShellFlag(), "sleep 2; echo never" };
-    var child = std.process.spawn(io, .{
+    var child = try std.process.spawn(io, .{
         .argv = argv,
         .stdin = .ignore,
         .stdout = .pipe,
         .stderr = .pipe,
     });
     errdefer {
-        _ = child.kill(io) catch {};
+        child.kill(io);
         _ = child.wait(io) catch {};
     }
 
@@ -2034,7 +2034,7 @@ test "collectChildOutputWithTimeout kills process after deadline" {
 
     try std.testing.expect(timed_out);
     const completed_ok = switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
     try std.testing.expect(!completed_ok);

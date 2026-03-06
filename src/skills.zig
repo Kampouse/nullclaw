@@ -902,7 +902,7 @@ fn auditMarkdownLinkTarget(
     const linked_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ source_parent, stripped });
     defer allocator.free(linked_path);
 
-    const linked_canonical = std.Io.Dir.cwd().realpathAlloc(allocator, linked_path) catch
+    const linked_canonical = std.Io.Dir.cwd().realPathFileAlloc(std.io.blocking, linked_path, allocator) catch
         return error.SkillSecurityAuditFailed;
     defer allocator.free(linked_canonical);
 
@@ -1101,7 +1101,7 @@ fn pathIsSymlink(path: []const u8) !bool {
 
 fn auditSkillDirectory(allocator: std.mem.Allocator, root_dir_path: []const u8) !void {
     if (try pathIsSymlink(root_dir_path)) return error.SkillSecurityAuditFailed;
-    const canonical_root = std.Io.Dir.cwd().realpathAlloc(allocator, root_dir_path) catch
+    const canonical_root = std.Io.Dir.cwd().realPathFileAlloc(std.io.blocking, root_dir_path, allocator) catch
         return error.SkillSecurityAuditFailed;
     defer allocator.free(canonical_root);
     if (!(try hasSkillMarkers(allocator, canonical_root))) return error.SkillSecurityAuditFailed;
@@ -1517,7 +1517,7 @@ pub fn installSkill(allocator: std.mem.Allocator, source: []const u8, workspace_
 /// Install a skill by copying its directory into workspace_dir/skills/<source-dirname>/.
 /// Destination directory naming follows zeroclaw local install behavior.
 pub fn installSkillFromPath(allocator: std.mem.Allocator, source_path: []const u8, workspace_dir: []const u8) !void {
-    const source_abs = std.Io.Dir.cwd().realpathAlloc(allocator, source_path) catch |err| switch (err) {
+    const source_abs = std.Io.Dir.cwd().realPathFileAlloc(std.io.blocking, source_path, allocator) catch |err| switch (err) {
         error.FileNotFound, error.NotDir => return error.ManifestNotFound,
         else => return err,
     };
@@ -2958,7 +2958,7 @@ test "installSkillFromPath supports relative source path" {
     defer allocator.free(workspace);
     const source_abs = try std.fs.path.join(allocator, &.{ base, "source-rel" });
     defer allocator.free(source_abs);
-    const cwd_abs = try std.Io.Dir.cwd().realpathAlloc(allocator, ".");
+    const cwd_abs = try std.Io.Dir.cwd().realPathFileAlloc(std.io.blocking, ".", allocator);
     defer allocator.free(cwd_abs);
     const source_rel = try std.fs.path.relative(allocator, cwd_abs, source_abs);
     defer allocator.free(source_rel);

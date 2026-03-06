@@ -670,9 +670,9 @@ pub const MattermostChannel = struct {
             try std.fmt.allocPrint(self.allocator, "mattermost:{s}:{s}:{s}", .{ self.account_id, kind_label, channel_id });
         defer self.allocator.free(session_key);
 
-        var meta: std.ArrayListUnmanaged(u8) = .empty;
-        defer meta.deinit(self.allocator);
-        const mw = meta.writer(self.allocator);
+        var meta_buf: [512]u8 = undefined;
+        var meta_fbs = util.fixedBufferStream(&meta_buf);
+        const mw = meta_fbs.writer();
         try mw.writeByte('{');
         try mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":");
         try root.appendJsonStringW(mw, self.account_id);
@@ -709,7 +709,7 @@ pub const MattermostChannel = struct {
             content_owned,
             session_key,
             &.{},
-            meta.items,
+            meta_fbs.getWritten(),
         );
 
         if (self.bus) |b| {

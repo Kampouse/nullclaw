@@ -498,7 +498,7 @@ test "markdown accepts session_id param" {
 test "markdown reads memory.md when MEMORY.md is absent" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "memory.md",
         .data = "- legacy-memory-entry",
     });
@@ -523,7 +523,7 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "MEMORY.md",
         .data = "- primary-entry",
     });

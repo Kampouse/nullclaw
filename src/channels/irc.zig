@@ -353,9 +353,9 @@ pub const IrcChannel = struct {
         const content = try content_buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(content);
 
-        var metadata_buf: std.ArrayListUnmanaged(u8) = .empty;
-        defer metadata_buf.deinit(self.allocator);
-        const mw = metadata_buf.writer(self.allocator);
+        var metadata_buf: [512]u8 = undefined;
+        var metadata_fbs = util.fixedBufferStream(&metadata_buf);
+        const mw = metadata_fbs.writer();
         try mw.writeByte('{');
         try mw.writeStreamingAll(std.Options.debug_io, "\"account_id\":");
         try root.appendJsonStringW(mw, self.account_id);
@@ -377,7 +377,7 @@ pub const IrcChannel = struct {
             content,
             session_key,
             &.{},
-            metadata_buf.items,
+            metadata_fbs.getWritten(),
         );
         if (self.bus) |b| {
             b.publishInbound(msg) catch |err| {

@@ -469,8 +469,8 @@ test "readBrainDb with empty table returns empty slice" {
 
     // Create an actual SQLite file on disk with empty table
     const file = try tmp.dir.createFile(std.Options.debug_io, "empty.db", .{});
-    file.close();
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, "empty.db");
+    file.close(std.Options.debug_io);
+    const path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, "empty.db", std.testing.allocator);
     defer std.testing.allocator.free(path);
 
     // Open it properly and create the table
@@ -499,8 +499,8 @@ test "readBrainDb skips rows with empty content" {
     defer tmp.cleanup();
 
     const file = try tmp.dir.createFile(std.Options.debug_io, "skip_empty.db", .{});
-    file.close();
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, "skip_empty.db");
+    file.close(std.Options.debug_io);
+    const path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, "skip_empty.db", std.testing.allocator);
     defer std.testing.allocator.free(path);
     const pathZ = try std.testing.allocator.dupeZ(u8, path);
     defer std.testing.allocator.free(pathZ);
@@ -529,8 +529,8 @@ test "readBrainDb full roundtrip with file-based db" {
     defer tmp.cleanup();
 
     const file = try tmp.dir.createFile(std.Options.debug_io, "roundtrip.db", .{});
-    file.close();
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, "roundtrip.db");
+    file.close(std.Options.debug_io);
+    const path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, "roundtrip.db", std.testing.allocator);
     defer std.testing.allocator.free(path);
     const pathZ = try std.testing.allocator.dupeZ(u8, path);
     defer std.testing.allocator.free(pathZ);

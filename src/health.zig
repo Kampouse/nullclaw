@@ -180,22 +180,25 @@ pub const ReadinessResult = struct {
     pub fn formatJson(self: ReadinessResult, allocator: std.mem.Allocator) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
 
         const status_str = if (self.status == .ready) "ready" else "not_ready";
-        try w.print("{{\"status\":\"{s}\",\"checks\":[", .{status_str});
+        try buf.appendSlice(allocator, &std.fmt.comptimePrint("{{\"status\":\"{s}\",\"checks\":[", .{status_str}));
 
         for (self.checks, 0..) |check, i| {
-            if (i > 0) try w.writeByte(',');
+            if (i > 0) try buf.append(allocator, ',');
             const healthy_str = if (check.healthy) "true" else "false";
-            try w.print("{{\"name\":\"{s}\",\"healthy\":{s}", .{ check.name, healthy_str });
+            const entry = try std.fmt.allocPrint(allocator, "{{\"name\":\"{s}\",\"healthy\":{s}", .{ check.name, healthy_str });
+            defer allocator.free(entry);
+            try buf.appendSlice(allocator, entry);
             if (check.message) |msg| {
-                try w.print(",\"message\":\"{s}\"", .{msg});
+                const msg_part = try std.fmt.allocPrint(allocator, ",\"message\":\"{s}\"", .{msg});
+                defer allocator.free(msg_part);
+                try buf.appendSlice(allocator, msg_part);
             }
-            try w.writeByte('}');
+            try buf.append(allocator, '}');
         }
 
-        try w.writeStreamingAll(std.Options.debug_io, "]}");
+        try buf.appendSlice(allocator, "]}");
         return try allocator.dupe(u8, buf.items);
     }
 };

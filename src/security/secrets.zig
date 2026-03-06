@@ -398,12 +398,12 @@ test "secret store encrypting same value produces different ciphertext" {
 test "secret store different dirs cannot decrypt each other" {
     var tmp1 = std.testing.tmpDir(.{});
     defer tmp1.cleanup();
-    const path1 = try tmp1.dir.realpathAlloc(std.testing.allocator, ".");
+    const path1 = try tmp1.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(path1);
 
     var tmp2 = std.testing.tmpDir(.{});
     defer tmp2.cleanup();
-    const path2 = try tmp2.dir.realpathAlloc(std.testing.allocator, ".");
+    const path2 = try tmp2.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(path2);
 
     const store1 = SecretStore.init(path1, true);

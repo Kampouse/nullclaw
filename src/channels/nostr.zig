@@ -325,37 +325,38 @@ pub const NostrChannel = struct {
         const args = filterArgs(N, bounded, &argv_buf);
         if (args.len == 0) return error.NakCommandFailed;
 
-        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = args });
-        child.stdin_behavior = if (stdin_data != null) .Pipe else .Inherit;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Inherit; // avoid deadlock from unread pipe buffer
+        const stdin_io: std.process.SpawnOptions.StdIo = if (stdin_data != null) .pipe else .inherit;
+        var child = try std.process.spawn(std.Options.debug_io, .{
+            .argv = args,
+            .stdin = stdin_io,
+            .stdout = .pipe,
+            .stderr = .inherit, // avoid deadlock from unread pipe buffer
+        });
         // child already spawned
         errdefer {
-            _ = child.kill(std.Options.debug_io) catch {};
+            child.kill(std.Options.debug_io);
             _ = child.wait(std.Options.debug_io) catch {};
         }
 
         if (stdin_data) |data| {
             if (child.stdin) |stdin_file| {
                 stdin_file.writeStreamingAll(std.Options.debug_io, data) catch {};
-                stdin_file.close();
+                stdin_file.close(std.Options.debug_io);
                 child.stdin = null;
             }
         }
 
         const stdout_file = child.stdout orelse return error.NakCommandFailed;
-        var output = std.ArrayListUnmanaged(u8).empty;
-        errdefer output.deinit(self.allocator);
         var read_buf: [4096]u8 = undefined;
-        while (true) {
-            const n = stdout_file.read(&read_buf) catch break;
-            if (n == 0) break;
-            try output.appendSlice(self.allocator, read_buf[0..n]);
-        }
+        var reader = stdout_file.reader(std.Options.debug_io, &read_buf);
+        const stdout_data = reader.interface.allocRemaining(self.allocator, .unlimited) catch return error.NakCommandFailed;
+        defer self.allocator.free(stdout_data);
+        var output = std.ArrayListUnmanaged(u8).empty;
+        try output.appendSlice(self.allocator, stdout_data);
 
         const term = child.wait(std.Options.debug_io) catch return error.NakCommandFailed;
         switch (term) {
-            .Exited => |code| {
+            .exited => |code| {
                 if (code != 0) {
                     output.deinit(self.allocator);
                     return error.NakCommandFailed;
@@ -645,9 +646,12 @@ pub const NostrChannel = struct {
 
         var buf: [65536]u8 = undefined;
         var filled: usize = 0;
+        var reader_buf: [4096]u8 = undefined;
+        var reader = stdout_file.reader(std.Options.debug_io, &reader_buf);
 
         while (self.running.load(.acquire)) {
-            const n = stdout_file.read(buf[filled..]) catch break;
+            var dest: [1][]u8 = .{buf[filled..]};
+            const n = reader.interface.readVec(dest[0..]) catch break;
             if (n == 0) break; // EOF — listener exited
             filled += n;
 
@@ -773,7 +777,7 @@ pub const NostrChannel = struct {
             return;
         };
         defer self.allocator.free(plaintext_raw);
-        const plaintext = std.mem.trimRight(u8, plaintext_raw, " \t\r\n");
+        const plaintext = std.mem.trimEnd(u8, plaintext_raw, " \t\r\n");
 
         self.recordSenderProtocol(sender, .nip04) catch {};
 
@@ -800,7 +804,7 @@ pub const NostrChannel = struct {
 
     pub fn stopListener(self: *NostrChannel) void {
         if (self.listener) |*child| {
-            _ = child.kill(std.Options.debug_io) catch {};
+            child.kill(std.Options.debug_io);
             _ = child.wait(std.Options.debug_io) catch {};
             self.listener = null;
         }
@@ -875,9 +879,11 @@ pub const NostrChannel = struct {
         const args = filterArgs(MAX_LISTENER_ARGS, bounded, &argv_buf);
         if (args.len < 15) return error.ListenerStartFailed;
 
-        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = args });
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Inherit;
+        const child = try std.process.spawn(std.Options.debug_io, .{
+            .argv = args,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
         // child already spawned
 
         self.listener = child;
@@ -964,7 +970,7 @@ pub const NostrChannel = struct {
         const encrypt_args = buildEncryptArgs(self.config.nak_path, sec, target);
         const ciphertext_raw = try self.runNakCommand(MAX_ENCRYPT_ARGS, encrypt_args, message);
         defer self.allocator.free(ciphertext_raw);
-        const ciphertext = std.mem.trimRight(u8, ciphertext_raw, " \t\r\n");
+        const ciphertext = std.mem.trimEnd(u8, ciphertext_raw, " \t\r\n");
         var p_buf: [66]u8 = undefined;
         const p_tag = formatPTag(target, &p_buf);
         const event_args = buildNip04EventArgs(self.config.nak_path, sec, ciphertext, p_tag);

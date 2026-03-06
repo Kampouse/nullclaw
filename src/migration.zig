@@ -671,9 +671,9 @@ test "resolveOpenclawConfigPath finds parent config for workspace layout" {
 
     try tmp.dir.createDirPath(std.Options.debug_io, ".openclaw/workspace");
     const cfg_file = try tmp.dir.createFile(std.Options.debug_io, ".openclaw/config.json", .{});
-    cfg_file.close();
+    cfg_file.close(std.Options.debug_io);
 
-    const workspace_abs = try tmp.dir.realpathAlloc(std.testing.allocator, ".openclaw/workspace");
+    const workspace_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".openclaw/workspace", std.testing.allocator);
     defer std.testing.allocator.free(workspace_abs);
 
     const resolved = try resolveOpenclawConfigPath(std.testing.allocator, workspace_abs);
@@ -698,7 +698,7 @@ test "migrateOpenclawConfig copies and normalizes config json" {
         \\{"gatewayPort":3000,"httpRequest":{"allowedDomains":["example.com"]},"session":{"idleMinutes":30}}
     );
 
-    const workspace_abs = try tmp.dir.realpathAlloc(std.testing.allocator, ".openclaw/workspace");
+    const workspace_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".openclaw/workspace", std.testing.allocator);
     defer std.testing.allocator.free(workspace_abs);
     const target_cfg_abs = try tmp.dir.realpathAlloc(std.testing.allocator, ".nullclaw");
     defer std.testing.allocator.free(target_cfg_abs);

@@ -1295,7 +1295,7 @@ pub const TelegramChannel = struct {
         }
         const term = try child.wait(io);
         switch (term) {
-            .Exited => |code| if (code != 0) return error.CurlFailed,
+            .exited => |code| if (code != 0) return error.CurlFailed,
             else => return error.CurlFailed,
         }
     }

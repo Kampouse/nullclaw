@@ -273,13 +273,13 @@ pub const FileObserver = struct {
         const file = std.fs.cwd().openFile(self.path, .{ .mode = .write_only }) catch {
             // Try creating the file if it doesn't exist
             const new_file = std.fs.cwd().createFile(self.path, .{ .truncate = false }) catch return;
-            defer new_file.close();
+            defer new_file.close(std.Options.debug_io);
             new_file.seekFromEnd(0) catch return;
             new_file.writeStreamingAll(std.Options.debug_io, line) catch {};
             new_file.writeStreamingAll(std.Options.debug_io, "\n") catch {};
             return;
         };
-        defer file.close();
+        defer file.close(std.Options.debug_io);
         file.seekFromEnd(0) catch return;
         file.writeStreamingAll(std.Options.debug_io, line) catch {};
         file.writeStreamingAll(std.Options.debug_io, "\n") catch {};
@@ -621,9 +621,9 @@ pub const OtelObserver = struct {
 
     /// Serialize all pending spans as OTLP/HTTP JSON payload.
     pub fn serializeSpans(self: *OtelObserver) ![]u8 {
-        var buf: std.ArrayListUnmanaged(u8) = .empty;
-        errdefer buf.deinit(self.allocator);
-        const w = buf.writer(self.allocator);
+        var buf_arr: [16384]u8 = undefined;
+        var buf = util.fixedBufferStream(&buf_arr);
+        const w = buf.writer();
 
         try w.writeStreamingAll(std.Options.debug_io, "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"");
         try w.writeStreamingAll(std.Options.debug_io, self.service_name);
@@ -656,7 +656,7 @@ pub const OtelObserver = struct {
 
         try w.writeStreamingAll(std.Options.debug_io, "]}]}]}");
 
-        return buf.toOwnedSlice(self.allocator);
+        return try self.allocator.dupe(u8, buf.getWritten());
     }
 
     /// Flush pending spans to the OTLP endpoint. Caller must hold the mutex.

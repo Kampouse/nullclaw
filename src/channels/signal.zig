@@ -584,7 +584,7 @@ pub const SignalChannel = struct {
         }
         // Try to resolve relative path, but if it fails (file doesn't exist),
         // just return the path as-is and let signal-cli handle the error
-        return std.Io.Dir.cwd().realpathAlloc(allocator, path) catch try allocator.dupe(u8, path);
+        return std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, allocator) catch try allocator.dupe(u8, path);
     }
 
     /// Parse [IMAGE:path] markers from message text.

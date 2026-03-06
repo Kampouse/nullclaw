@@ -167,7 +167,7 @@ test "FileAppendTool appends to existing file" {
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(.{ .sub_path = "log.txt", .data = "line1" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", testing.allocator);
     defer testing.allocator.free(ws_path);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path };
@@ -189,7 +189,7 @@ test "FileAppendTool creates new file" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", testing.allocator);
     defer testing.allocator.free(ws_path);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path };
@@ -211,7 +211,7 @@ test "FileAppendTool appends to empty file" {
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(.{ .sub_path = "empty.txt", .data = "" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", testing.allocator);
     defer testing.allocator.free(ws_path);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path };
@@ -233,7 +233,7 @@ test "FileAppendTool multiple appends" {
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(.{ .sub_path = "multi.txt", .data = "A" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", testing.allocator);
     defer testing.allocator.free(ws_path);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path };
