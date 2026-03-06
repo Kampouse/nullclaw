@@ -15,6 +15,10 @@
 </p>
 
 <p align="center">
+  <strong>New Features:</strong> <em>Gork-Protocol Integration</em> (P2P agent collaboration via QUIC) • <em>Cargo Tool</em> (Rust project management)
+</p>
+
+<p align="center">
   <a href="https://github.com/nullclaw/nullclaw/actions/workflows/ci.yml"><img src="https://github.com/nullclaw/nullclaw/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://nullclaw.github.io"><img src="https://img.shields.io/badge/docs-nullclaw.github.io-informational" alt="Documentation" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
@@ -33,6 +37,8 @@ The smallest fully autonomous AI assistant infrastructure — a static Zig binar
 - **Instant Startup:** <2 ms on Apple Silicon, <8 ms on a 0.8 GHz edge core.
 - **True Portability:** Single self-contained binary across ARM, x86, and RISC-V. Drop it anywhere, it just runs.
 - **Feature-Complete:** 22+ providers, 18 channels, 19+ tools, hybrid vector+FTS5 memory, multi-layer sandbox, tunnels, hardware peripherals, MCP, subagents, streaming, voice — the full stack.
+- **Gork-Protocol:** P2P agent collaboration with QUIC transport, NEAR identity, reputation-based filtering, and automatic daemon/polling fallback.
+- **Cargo Tool:** Built-in Rust project management (build, test, run, check, clippy, fmt, doc, new, init, update) with workspace safety.
 
 ### Why nullclaw
 
