@@ -1552,8 +1552,9 @@ test "writeCredentialsJson produces valid JSON" {
     defer temp_dir.cleanup();
 
     // Create placeholder file so realpathAlloc works
-    const tmp_file = try temp_dir.dir.createFile("creds.json", .{});
-    tmp_file.close();
+    const io = std.Options.debug_io;
+    const tmp_file = try temp_dir.dir.createFile(io, "creds.json", .{});
+    tmp_file.close(io);
 
     const path = try temp_dir.dir.realpathAlloc(alloc, "creds.json");
     defer alloc.free(path);
@@ -1568,7 +1569,7 @@ test "writeCredentialsJson produces valid JSON" {
 
     // Read back and verify valid JSON
     const file = try openFileAbsolute(path, .{});
-    defer file.close();
+    defer file.close(io);
 
     // TODO: Zig 0.16.0 - use reader pattern
     const content: []const u8 = "";
@@ -1596,8 +1597,9 @@ test "writeCredentialsJson without refresh token" {
     var temp_dir = std.testing.tmpDir(.{});
     defer temp_dir.cleanup();
 
-    const tmp_file = try temp_dir.dir.createFile("creds2.json", .{});
-    tmp_file.close();
+    const io2 = std.Options.debug_io;
+    const tmp_file = try temp_dir.dir.createFile(io2, "creds2.json", .{});
+    tmp_file.close(io2);
 
     const path = try temp_dir.dir.realpathAlloc(alloc, "creds2.json");
     defer alloc.free(path);
@@ -1611,7 +1613,7 @@ test "writeCredentialsJson without refresh token" {
     try writeCredentialsJson(alloc, creds, path);
 
     const file = try openFileAbsolute(path, .{});
-    defer file.close();
+    defer file.close(io2);
 
     // TODO: Zig 0.16.0 - use reader pattern
     const content: []const u8 = "";
@@ -1631,8 +1633,9 @@ test "writeCredentialsJson escapes token strings" {
     var temp_dir = std.testing.tmpDir(.{});
     defer temp_dir.cleanup();
 
-    const tmp_file = try temp_dir.dir.createFile("creds-escaped.json", .{});
-    tmp_file.close();
+    const io3 = std.Options.debug_io;
+    const tmp_file = try temp_dir.dir.createFile(io3, "creds-escaped.json", .{});
+    tmp_file.close(io3);
 
     const path = try temp_dir.dir.realpathAlloc(alloc, "creds-escaped.json");
     defer alloc.free(path);
@@ -1648,7 +1651,7 @@ test "writeCredentialsJson escapes token strings" {
     try writeCredentialsJson(alloc, creds, path);
 
     const file = try openFileAbsolute(path, .{});
-    defer file.close();
+    defer file.close(io3);
     // TODO: Zig 0.16.0 - use reader pattern
     const content: []const u8 = "";
     defer alloc.free(content);

@@ -218,17 +218,18 @@ pub const AuditLogger = struct {
         try self.rotateIfNeeded();
 
         // Write JSON line to file
-        const file = try std.Io.Dir.cwd().createFile(self.log_path, .{
+        const io = std.Options.debug_io;
+        const file = try std.Io.Dir.cwd().createFile(io, self.log_path, .{
             .truncate = false,
         });
-        defer file.close();
+        defer file.close(io);
 
-        try file.seekFromEnd(0);
+        try file.seekFromEnd(io, 0);
         var json_buf: [4096]u8 = undefined;
         const json = try event.writeJson(&json_buf);
-        try file.writeStreamingAll(std.Options.debug_io, json);
-        try file.writeStreamingAll(std.Options.debug_io, "\n");
-        try file.sync();
+        try file.writeStreamingAll(io, json);
+        try file.writeStreamingAll(io, "\n");
+        try file.sync(io);
     }
 
     /// Log a command execution event.

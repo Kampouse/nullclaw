@@ -1044,7 +1044,8 @@ fn terminateAgentChildHard(child: *std.process.Child) !void {
     }
     if (comptime builtin.os.tag == .wasi) return error.UnsupportedOperation;
 
-    std.posix.kill(child.id, std.posix.SIG.KILL) catch |err| switch (err) {
+    const pid = child.id orelse return;
+    std.posix.kill(pid, std.posix.SIG.KILL) catch |err| switch (err) {
         error.ProcessNotFound => return,
         else => return err,
     };

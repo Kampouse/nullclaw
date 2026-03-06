@@ -468,8 +468,9 @@ test "secret store key file created on first encrypt" {
 
     // Key file should exist now
     const key_path = store.keyPath();
-    const file = try std.Io.Dir.cwd().openFile(key_path, .{});
-    defer file.close();
+    const io = std.Options.debug_io;
+    const file = try std.Io.Dir.cwd().openFile(io, key_path, .{});
+    defer file.close(io);
     var buf: [128]u8 = undefined;
     const bytes_read = try file.readAll(&buf);
     // Key is hex-encoded 32 bytes = 64 hex chars

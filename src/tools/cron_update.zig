@@ -61,15 +61,15 @@ pub const CronUpdateTool = struct {
         cron.saveJobs(&scheduler) catch {};
 
         // Build summary of what changed
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
+        var buf: [1024]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
         try w.print("Updated job {s}", .{job_id});
         if (expression) |expr| try w.print(" | expression={s}", .{expr});
         if (command) |cmd| try w.print(" | command={s}", .{cmd});
         if (enabled) |ena| try w.print(" | enabled={s}", .{if (ena) "true" else "false"});
 
-        return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
+        const output = try allocator.dupe(u8, w.buffered());
+        return ToolResult{ .success = true, .output = output };
     }
 };
 

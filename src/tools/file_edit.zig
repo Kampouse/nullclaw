@@ -146,12 +146,12 @@ test "file_edit tool schema has required params" {
 test "file_edit basic replace" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "test.txt", .data = "hello world" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
-    var ft = FileEditTool{ .workspace_dir = ws_path };
+    var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"world\", \"new_text\": \"zig\"}");
     defer parsed.deinit();
@@ -163,7 +163,7 @@ test "file_edit basic replace" {
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Replaced") != null);
 
     // Verify file contents
-    const actual = try tmp_dir.dir.readFileAlloc(std.testing.allocator, "test.txt", 1024);
+    const actual = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "test.txt", std.testing.allocator, .limited(1024));
     defer std.testing.allocator.free(actual);
     try std.testing.expectEqualStrings("hello zig", actual);
 }
@@ -171,12 +171,12 @@ test "file_edit basic replace" {
 test "file_edit old_text not found" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "test.txt", .data = "hello world" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
-    var ft = FileEditTool{ .workspace_dir = ws_path };
+    var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"missing\", \"new_text\": \"replacement\"}");
     defer parsed.deinit();
@@ -191,12 +191,12 @@ test "file_edit old_text not found" {
 test "file_edit empty file returns not found" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "empty.txt", .data = "" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "empty.txt", .data = "" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
-    var ft = FileEditTool{ .workspace_dir = ws_path };
+    var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\", \"old_text\": \"something\", \"new_text\": \"other\"}");
     defer parsed.deinit();
@@ -211,12 +211,12 @@ test "file_edit empty file returns not found" {
 test "file_edit replaces only first occurrence" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "dup.txt", .data = "aaa bbb aaa" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "dup.txt", .data = "aaa bbb aaa" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
-    var ft = FileEditTool{ .workspace_dir = ws_path };
+    var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"dup.txt\", \"old_text\": \"aaa\", \"new_text\": \"ccc\"}");
     defer parsed.deinit();
@@ -226,7 +226,7 @@ test "file_edit replaces only first occurrence" {
 
     try std.testing.expect(result.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(std.testing.allocator, "dup.txt", 1024);
+    const actual = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "dup.txt", std.testing.allocator, .limited(1024));
     defer std.testing.allocator.free(actual);
     try std.testing.expectEqualStrings("ccc bbb aaa", actual);
 }
@@ -275,12 +275,12 @@ test "file_edit missing new_text param" {
 test "file_edit empty old_text" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "test.txt", .data = "content" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "content" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
-    var ft = FileEditTool{ .workspace_dir = ws_path };
+    var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"\", \"new_text\": \"new\"}");
     defer parsed.deinit();
@@ -307,11 +307,11 @@ test "file_edit absolute path without allowed_paths is rejected" {
 test "file_edit absolute path with allowed_paths works" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "test.txt", .data = "hello world" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
-    const abs_file = try std.fs.path.join(std.testing.allocator, &.{ ws_path, "test.txt" });
+    const abs_file = try std.fs.path.join(std.testing.allocator, &.{ ws_path[0..ws_path.len], "test.txt" });
     defer std.testing.allocator.free(abs_file);
 
     // JSON-escape backslashes in the path (needed on Windows where paths use \)
@@ -332,14 +332,14 @@ test "file_edit absolute path with allowed_paths works" {
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
 
-    var ft = FileEditTool{ .workspace_dir = "/nonexistent", .allowed_paths = &.{ws_path} };
+    var ft = FileEditTool{ .workspace_dir = "/nonexistent", .allowed_paths = &.{ws_path[0..ws_path.len]} };
     const result = try ft.execute(std.testing.allocator, parsed.value.object);
     defer if (result.output.len > 0) std.testing.allocator.free(result.output);
     defer if (result.error_msg) |e| std.testing.allocator.free(e);
 
     try std.testing.expect(result.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(std.testing.allocator, "test.txt", 1024);
+    const actual = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "test.txt", std.testing.allocator, .limited(1024));
     defer std.testing.allocator.free(actual);
     try std.testing.expectEqualStrings("hello zig", actual);
 }

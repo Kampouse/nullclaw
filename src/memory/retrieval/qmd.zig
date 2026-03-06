@@ -272,7 +272,7 @@ pub const QmdAdapter = struct {
 
             // Check if existing file has same content hash (skip redundant writes)
             const skip = blk: {
-                const existing = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, file_path, 1024 * 1024, allocator) catch break :blk false;
+                const existing = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, file_path, allocator, .limited(1024 * 1024)) catch break :blk false;
                 defer allocator.free(existing);
                 break :blk std.hash.Fnv1a_32.hash(existing) == new_hash;
             };
@@ -315,8 +315,8 @@ pub const QmdAdapter = struct {
         while (try iter.next(std.Options.debug_io)) |entry| {
             if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
 
-            const stat = dir.statFile(std.Options.debug_io, entry.name) catch continue;
-            const mtime_ns: i128 = stat.mtime;
+            const stat = dir.statFile(std.Options.debug_io, entry.name, .{}) catch continue;
+            const mtime_ns: i128 = stat.mtime.nanoseconds;
             const age_ns = now_ns - mtime_ns;
 
             if (age_ns > retention_ns) {
@@ -546,7 +546,7 @@ test "exportSessions with mock session store writes files" {
     try std.testing.expect(mock.call_count >= 1);
 
     // Verify file was created
-    const content = try tmp.dir.readFileAlloc(allocator, "session-1.md", 4096);
+    const content = try tmp.dir.readFileAlloc(std.Options.debug_io, "session-1.md", allocator, .limited(4096));
     // TODO: Zig 0.16.0 - disabled
     // defer allocator.free(content);
     try std.testing.expect(std.mem.indexOf(u8, content, "Session: session-1") != null);

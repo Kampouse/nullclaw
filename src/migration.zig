@@ -388,7 +388,7 @@ fn copyFileAbsolute(io: std.Io, src: []const u8, dst: []const u8) !void {
     var src_buf: [8192]u8 = undefined;
     var src_reader = src_file.reader(io, &src_buf);
     while (true) {
-        const n = src_reader.interface.read(src_buf[0..]) catch return error.ReadError;
+        const n = src_reader.interface.readSliceShort(src_buf[0..]) catch return error.ReadError;
         if (n == 0) break;
         dst_file.writeStreamingAll(io, src_buf[0..n]) catch return error.WriteError;
     }
@@ -717,7 +717,7 @@ test "migrateOpenclawConfig copies and normalizes config json" {
     const migrated = try migrateOpenclawConfig(std.Options.debug_io, std.testing.allocator, workspace_abs, target_cfg_path, false);
     try std.testing.expect(migrated);
 
-    const migrated_bytes = try std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, target_cfg_path, 64 * 1024, std.testing.allocator);
+    const migrated_bytes = try std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, target_cfg_path, std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(migrated_bytes);
     try std.testing.expect(std.mem.indexOf(u8, migrated_bytes, "\"gateway_port\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, migrated_bytes, "\"http_request\"") != null);
@@ -809,20 +809,20 @@ test "backup and restore roundtrip" {
     try copyFileAbsolute(std.Options.debug_io, src_path, backup_path);
 
     // Verify backup content matches
-    const backup_content = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, backup_name, 4096, std.testing.allocator);
+    const backup_content = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, backup_name, std.testing.allocator, .limited(4096));
     defer std.testing.allocator.free(backup_content);
     try std.testing.expectEqualStrings(content, backup_content);
 
     // Corrupt the "database" (simulate modification)
-    const mod_file = try tmp_dir.dir.createFile("test.db", .{});
+    const mod_file = try tmp_dir.dir.createFile(std.Options.debug_io, "test.db", .{});
     try mod_file.writeStreamingAll(std.Options.debug_io, "CORRUPTED");
-    mod_file.close();
+    mod_file.close(std.Options.debug_io);
 
     // Restore from backup
     try restoreBackup(std.Options.debug_io, backup_path, src_path);
 
     // Verify restored content
-    const restored = try tmp_dir.dir.readFileAlloc(std.testing.allocator, "test.db", 4096);
+    const restored = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "test.db", 4096, std.testing.allocator);
     defer std.testing.allocator.free(restored);
     try std.testing.expectEqualStrings(content, restored);
 }

@@ -84,7 +84,8 @@ pub fn scout(allocator: std.mem.Allocator, query: []const u8) !std.ArrayList(Ski
     defer allocator.free(url);
 
     // Fetch from GitHub API using std.http.Client
-    var client: std.http.Client = .{ .allocator = allocator };
+    const io = std.Options.debug_io;
+    var client = std.http.Client.init(io, allocator);
     defer client.deinit();
 
     var aw: std.Io.Writer.Allocating = .init(allocator);

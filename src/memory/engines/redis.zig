@@ -148,7 +148,7 @@ pub const RedisConfig = struct {
 
 pub const RedisMemory = struct {
     allocator: std.mem.Allocator,
-    stream: ?std.net.Stream = null,
+    stream: ?std.Io.net.Stream = null,
     host: []const u8,
     port: u16,
     password: ?[]const u8,
@@ -185,8 +185,8 @@ pub const RedisMemory = struct {
     }
 
     fn connect(self: *Self) anyerror!void {
-        const addr = try std.net.Address.resolveIp(self.host, self.port);
-        const stream = try std.net.tcpConnectToAddress(addr);
+        const addr = try std.Io.net.Address.resolveIp(self.host, self.port);
+        const stream = try std.Io.net.tcpConnectToAddress(addr);
         self.stream = stream;
 
         // AUTH if password set (stream is already connected, ensureConnected is a no-op)
@@ -976,8 +976,8 @@ test "formatCommand roundtrip with parseResp" {
 
 // Integration tests — guarded by Redis availability
 fn canConnectToRedis() bool {
-    const addr = std.net.Address.resolveIp("127.0.0.1", 6379) catch return false;
-    const stream = std.net.tcpConnectToAddress(addr) catch return false;
+    const addr = std.Io.net.Address.resolveIp("127.0.0.1", 6379) catch return false;
+    const stream = std.Io.net.tcpConnectToAddress(addr) catch return false;
     stream.close();
     return true;
 }

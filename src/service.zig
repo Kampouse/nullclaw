@@ -485,7 +485,7 @@ fn assertLinuxSystemdUserAvailable(allocator: std.mem.Allocator) !void {
 fn runChecked(allocator: std.mem.Allocator, argv: []const []const u8) !void {
     _ = allocator; // TODO: use for process spawning
     const io = std.Options.debug_io;
-    var child = std.process.spawn(io, .{
+    var child = try std.process.spawn(io, .{
         .argv = argv,
         .stdin = .ignore,
         .stdout = .inherit,
@@ -517,7 +517,7 @@ fn runCapture(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
     const stdout_file = child.stdout orelse return error.CommandFailed;
     var buf: [8192]u8 = undefined;
     var reader = stdout_file.reader(io, &buf);
-    var list = std.ArrayList(u8).init(allocator);
+    var list = std.ArrayList(u8){.items = &.{}, .capacity = 0};
     errdefer list.deinit();
 
     while (true) {

@@ -35,9 +35,8 @@ pub const CronListTool = struct {
             return ToolResult{ .success = true, .output = try allocator.dupe(u8, "No scheduled cron jobs.") };
         }
 
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
+        var buf: [4096]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
         for (jobs) |job| {
             const status: []const u8 = if (job.paused) "paused" else "enabled";
             try w.print("- {s} | {s} | {s} | next: {d} | cmd: {s}\n", .{
@@ -48,7 +47,8 @@ pub const CronListTool = struct {
                 job.command,
             });
         }
-        return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
+        const output = try allocator.dupe(u8, w.buffered());
+        return ToolResult{ .success = true, .output = output };
     }
 };
 
@@ -71,9 +71,8 @@ test "cron_list_with_jobs" {
     try std.testing.expect(scheduler.listJobs().len == 1);
 
     // Format output the same way the tool does, to verify content
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
-    const w = buf.writer(std.testing.allocator);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
     const status: []const u8 = if (job.paused) "paused" else "enabled";
     try w.print("- {s} | {s} | {s} | next: {d} | cmd: {s}\n", .{
         job.id,
@@ -82,7 +81,7 @@ test "cron_list_with_jobs" {
         job.next_run_secs,
         job.command,
     });
-    const output = buf.items;
+    const output = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, job.id) != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "enabled") != null);
 }
@@ -98,9 +97,8 @@ test "cron_list_shows_paused" {
     try std.testing.expect(jobs.len == 1);
     try std.testing.expect(jobs[0].paused);
 
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
-    const w = buf.writer(std.testing.allocator);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
     const status: []const u8 = if (jobs[0].paused) "paused" else "enabled";
     try w.print("- {s} | {s} | {s} | next: {d} | cmd: {s}\n", .{
         jobs[0].id,
@@ -109,7 +107,7 @@ test "cron_list_shows_paused" {
         jobs[0].next_run_secs,
         jobs[0].command,
     });
-    const output = buf.items;
+    const output = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "paused") != null);
 }
 

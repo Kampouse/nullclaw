@@ -43,8 +43,9 @@ pub const StateManager = struct {
 
     /// Set the last active channel and chat_id. Thread-safe.
     pub fn setLastChannel(self: *StateManager, channel: []const u8, chat_id: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
 
         // Free old values
         if (self.state.last_channel) |old| self.allocator.free(old);
@@ -58,8 +59,9 @@ pub const StateManager = struct {
     /// Get the last active channel. Returns null if not set.
     /// Caller does NOT own the returned slices (valid until next setLastChannel).
     pub fn getLastChannel(self: *StateManager) struct { channel: ?[]const u8, chat_id: ?[]const u8 } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         return .{
             .channel = self.state.last_channel,
             .chat_id = self.state.last_chat_id,
@@ -68,17 +70,19 @@ pub const StateManager = struct {
 
     /// Get updated_at timestamp.
     pub fn getUpdatedAt(self: *StateManager) i64 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         return self.state.updated_at;
     }
 
     /// Save state to disk. Atomic: write to temp file then rename.
     pub fn save(self: *StateManager) !void {
-        self.mutex.lock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
         const channel = if (self.state.last_channel) |ch| self.allocator.dupe(u8, ch) catch null else null;
         const chat_id = if (self.state.last_chat_id) |cid| self.allocator.dupe(u8, cid) catch null else null;
-        self.mutex.unlock();
+        self.mutex.unlockUncancelable(io);
 
         defer if (channel) |ch| self.allocator.free(ch);
         defer if (chat_id) |cid| self.allocator.free(cid);
@@ -108,28 +112,29 @@ pub const StateManager = struct {
         const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}.tmp", .{self.state_path});
         defer self.allocator.free(tmp_path);
 
-        const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
-        try tmp_file.writeStreamingAll(std.Options.debug_io, buf.items);
-        tmp_file.close();
+        const tmp_file = try std.Io.Dir.createFileAbsolute(io, tmp_path, .{});
+        try tmp_file.writeStreamingAll(io, buf.items);
+        tmp_file.close(io);
 
         std.fs.renameAbsolute(tmp_path, self.state_path) catch {
             // If rename fails (cross-device), fall back to direct write
             std.fs.deleteFileAbsolute(tmp_path) catch {};
-            const file = try std.fs.createFileAbsolute(self.state_path, .{});
-            try file.writeStreamingAll(std.Options.debug_io, buf.items);
-            file.close();
+            const file = try std.Io.Dir.createFileAbsolute(io, self.state_path, .{});
+            try file.writeStreamingAll(io, buf.items);
+            file.close(io);
         };
     }
 
     /// Load state from disk. Overwrites current in-memory state.
     pub fn load(self: *StateManager) !void {
-        const file = std.fs.openFileAbsolute(self.state_path, .{}) catch |err| switch (err) {
+        const io = std.Options.debug_io;
+        const file = std.Io.Dir.openFileAbsolute(io, self.state_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return, // No state file — fresh start
             else => return err,
         };
-        defer file.close();
+        defer file.close(io);
 
-        const content = try file.readToEndAlloc(self.allocator, 64 * 1024);
+        const content = try file.readAllAlloc(self.allocator, 64 * 1024);
         defer self.allocator.free(content);
 
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, content, .{}) catch return;
@@ -140,8 +145,8 @@ pub const StateManager = struct {
             else => return,
         };
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
 
         // Free old values
         if (self.state.last_channel) |old| self.allocator.free(old);

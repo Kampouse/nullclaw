@@ -48,11 +48,7 @@ pub const CronRunTool = struct {
         };
 
         // Execute the command
-        const result = std.process.Child.run(.{
-            .allocator = allocator,
-            .argv = &.{ platform.getShell(), platform.getShellFlag(), command },
-            .max_output_bytes = 65536,
-        }) catch |err| {
+        const result = std.process.run(allocator, &.{ platform.getShell(), platform.getShellFlag(), command }, .{}) catch |err| {
             // Update last_status to error
             if (scheduler.getMutableJob(job_id)) |job| {
                 job.last_status = "error";
@@ -66,10 +62,7 @@ pub const CronRunTool = struct {
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
 
-        const exit_code: u8 = switch (result.term) {
-            .Exited => |code| code,
-            else => 1,
-        };
+        const exit_code: u8 = result.term;
         const success = exit_code == 0;
         const status_str: []const u8 = if (success) "success" else "error";
 

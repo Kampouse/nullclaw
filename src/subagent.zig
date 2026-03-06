@@ -112,11 +112,9 @@ pub const SubagentManager = struct {
         origin_channel: []const u8,
         origin_chat_id: []const u8,
     ) !u64 {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // self.mutex.lock();
-        // // TODO: Zig 0.16.0 - needs io
-            // defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
 
         if (self.getRunningCountLocked() >= self.config.max_concurrent)
             return error.TooManyConcurrentSubagents;
@@ -167,10 +165,9 @@ pub const SubagentManager = struct {
     }
 
     pub fn getTaskStatus(self: *SubagentManager, task_id: u64) ?TaskStatus {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - needs io
-            // defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         if (self.tasks.get(task_id)) |state| {
             return state.status;
         }
@@ -178,10 +175,9 @@ pub const SubagentManager = struct {
     }
 
     pub fn getTaskResult(self: *SubagentManager, task_id: u64) ?[]const u8 {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - needs io
-            // defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         if (self.tasks.get(task_id)) |state| {
             return state.result;
         }
@@ -189,10 +185,9 @@ pub const SubagentManager = struct {
     }
 
     pub fn getRunningCount(self: *SubagentManager) u32 {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - needs io
-            // defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         return self.getRunningCountLocked();
     }
 
@@ -213,10 +208,9 @@ pub const SubagentManager = struct {
 
         var label: []const u8 = "subagent";
         {
-            // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // self.mutex.lock();
-            // TODO: Zig 0.16.0 - needs io
-            // defer self.mutex.unlock();
+            const io = std.Options.debug_io;
+            self.mutex.lockUncancelable(io);
+            defer self.mutex.unlock(io);
             if (self.tasks.get(task_id)) |state| {
                 state.status = if (owned_err != null) .failed else .completed;
                 state.result = owned_result;
@@ -456,8 +450,9 @@ test "SubagentManager spawn stores session key" {
     defer mgr.deinit();
 
     const task_id = try mgr.spawn("quick task", "session-check", "agent", "session:42");
-    mgr.mutex.lock();
-    defer mgr.mutex.unlock();
+    const io_test = std.Options.debug_io;
+    mgr.mutex.lockUncancelable(io_test);
+    defer mgr.mutex.unlockUncancelable(io_test);
     const state = mgr.tasks.get(task_id) orelse return error.TestUnexpectedResult;
     try std.testing.expect(state.session_key != null);
     try std.testing.expectEqualStrings("session:42", state.session_key.?);

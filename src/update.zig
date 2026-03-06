@@ -436,7 +436,7 @@ fn readLine(allocator: std.mem.Allocator) ![]const u8 {
     }
 
     // Trim newline
-    const trimmed = std.mem.trimRight(u8, buffer[0..pos], "\r");
+    const trimmed = std.mem.trimEnd(u8, buffer[0..pos], "\r");
     return allocator.dupe(u8, trimmed);
 }
 

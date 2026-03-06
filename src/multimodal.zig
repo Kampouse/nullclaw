@@ -801,7 +801,7 @@ test "prepareMessagesForProvider does not delete nullclaw temp image files" {
         .allowed_dirs = &.{dir_path},
     });
 
-    try std.fs.accessAbsolute(file_path, .{});
+    try std.Io.Dir.accessAbsolute(std.Options.debug_io, file_path, .{});
 }
 
 test "parseImageMarkers mixed case markers" {

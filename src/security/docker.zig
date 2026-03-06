@@ -234,7 +234,7 @@ fn isDangerousMount(trimmed: []const u8) bool {
 
 /// Check if `path` is equal to or under `root`.
 fn isUnderRoot(path: []const u8, root: []const u8) bool {
-    const trimmed_root = std.mem.trimRight(u8, root, "/");
+    const trimmed_root = std.mem.trimEnd(u8, root, "/");
     if (trimmed_root.len == 0) return false; // don't allow root "/" as an allowed root
     if (std.mem.eql(u8, path, trimmed_root)) return true;
     if (path.len > trimmed_root.len and

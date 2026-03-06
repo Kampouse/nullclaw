@@ -186,7 +186,7 @@ fn readSysfsHex(dir: std.fs.Dir, dev_name: []const u8, attr: []const u8) ?u16 {
     defer sub_dir.close();
     var buf: [16]u8 = undefined;
     const n = sub_dir.readAll(&buf) catch return null;
-    const content = std.mem.trimRight(u8, buf[0..n], &.{ '\n', '\r', ' ' });
+    const content = std.mem.trimEnd(u8, buf[0..n], &.{ '\n', '\r', ' ' });
     if (content.len == 0) return null;
     return std.fmt.parseInt(u16, content, 16) catch null;
 }

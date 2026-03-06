@@ -113,7 +113,7 @@ pub const SerialPeripheral = struct {
     port_path: []const u8,
     baud_rate: u32,
     connected: bool = false,
-    serial_file: ?std.fs.File = null,
+    serial_file: ?std.Io.File = null,
     msg_id: u32 = 0,
 
     const serial_vtable = Peripheral.VTable{
@@ -271,7 +271,7 @@ pub const ArduinoPeripheral = struct {
     baud_rate: u32,
     fqbn: []const u8 = "arduino:avr:uno",
     connected: bool = false,
-    serial_file: ?std.fs.File = null,
+    serial_file: ?std.Io.File = null,
     msg_id: u32 = 0,
 
     const arduino_vtable = Peripheral.VTable{
@@ -742,7 +742,7 @@ pub const NucleoFlash = struct {
         const stdout_file = child.stdout orelse return error.NoStdout;
         var buf: [8192]u8 = undefined;
         var reader = stdout_file.reader(io, &buf);
-        var list = std.ArrayList(u8).init(allocator);
+        var list = std.ArrayList(u8){.items = &.{}, .capacity = 0};
         errdefer list.deinit();
 
         while (true) {

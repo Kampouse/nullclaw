@@ -52,9 +52,8 @@ pub const CronRunsTool = struct {
         }
 
         // Format output
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
+        var buf: [8192]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
 
         // Header with job info
         const last_run_str: []const u8 = if (job.last_run_secs) |lrs| blk: {
@@ -81,7 +80,8 @@ pub const CronRunsTool = struct {
             });
         }
 
-        return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
+        const output = try allocator.dupe(u8, w.buffered());
+        return ToolResult{ .success = true, .output = output };
     }
 };
 

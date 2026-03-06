@@ -532,7 +532,7 @@ pub const MattermostChannel = struct {
         }
         try w.writeStreamingAll(std.Options.debug_io, "/api/v4/websocket");
         return .{
-            .host = host.name,
+            .host = host,
             .port = port,
             .path = fbs.getWritten(),
         };
@@ -737,7 +737,7 @@ pub const MattermostChannel = struct {
         const tmp_env = std.c.getenv("TMPDIR");
         const tmp_dir = blk: {
             if (tmp_env) |v| {
-                const trimmed = std.mem.trimRight(u8, std.mem.span(v), "/");
+                const trimmed = std.mem.trimEnd(u8, std.mem.span(v), "/");
                 if (trimmed.len > 0) break :blk trimmed;
             }
             break :blk "/tmp";
