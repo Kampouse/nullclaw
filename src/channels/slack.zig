@@ -763,7 +763,7 @@ pub const SlackChannel = struct {
             self.ws_fd.store(invalid_socket, .release);
             ws.deinit();
         }
-        self.ws_fd.store(ws.stream.handle, .release);
+        self.ws_fd.store(ws.stream, .release);
         self.connected.store(true, .release);
 
         while (self.running.load(.acquire)) {
@@ -870,14 +870,14 @@ pub const SlackChannel = struct {
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
 
-        const bw = body_list.writer();
-        bw.writeStreamingAll(std.Options.debug_io, "{\"channel_id\":") catch return;
-        root.appendJsonStringW(bw, channel_id) catch return;
-        bw.writeStreamingAll(std.Options.debug_io, ",\"thread_ts\":") catch return;
-        root.appendJsonStringW(bw, thread_ts) catch return;
-        bw.writeStreamingAll(std.Options.debug_io, ",\"status\":") catch return;
-        root.appendJsonStringW(bw, status) catch return;
-        bw.writeByte('}') catch return;
+        // Build JSON body manually with escaped strings using json_util
+        body_list.appendSlice(self.allocator, "{\"channel_id\":\"") catch return;
+        root.json_util.appendJsonString(&body_list, self.allocator, channel_id) catch return;
+        body_list.appendSlice(self.allocator, "\",\"thread_ts\":\"") catch return;
+        root.json_util.appendJsonString(&body_list, self.allocator, thread_ts) catch return;
+        body_list.appendSlice(self.allocator, "\",\"status\":\"") catch return;
+        root.json_util.appendJsonString(&body_list, self.allocator, status) catch return;
+        body_list.appendSlice(self.allocator, "\"}") catch return;
 
         var auth_buf: [512]u8 = undefined;
         var auth_fbs = util.fixedBufferStream(&auth_buf);

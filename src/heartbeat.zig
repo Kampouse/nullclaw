@@ -55,13 +55,15 @@ pub const HeartbeatEngine = struct {
         const heartbeat_path = try std.fs.path.join(allocator, &.{ self.workspace_dir, "HEARTBEAT.md" });
         defer allocator.free(heartbeat_path);
 
-        const file = std.fs.openFileAbsolute(heartbeat_path, .{}) catch |err| switch (err) {
+        const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, heartbeat_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return &.{},
             else => return err,
         };
-        defer file.close();
+        defer file.close(std.Options.debug_io);
 
-        const content = try file.readToEndAlloc(allocator, 1024 * 64);
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(std.Options.debug_io, &read_buf);
+        const content = try reader.interface.readAlloc(allocator, 1024 * 64);
         defer allocator.free(content);
 
         if (isContentEffectivelyEmpty(content)) return &.{};
@@ -91,13 +93,15 @@ pub const HeartbeatEngine = struct {
         const heartbeat_path = try std.fs.path.join(allocator, &.{ self.workspace_dir, "HEARTBEAT.md" });
         defer allocator.free(heartbeat_path);
 
-        const file = std.fs.openFileAbsolute(heartbeat_path, .{}) catch |err| switch (err) {
+        const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, heartbeat_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return .{ .outcome = .skipped_missing_file, .task_count = 0 },
             else => return err,
         };
-        defer file.close();
+        defer file.close(std.Options.debug_io);
 
-        const content = try file.readToEndAlloc(allocator, 1024 * 64);
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(std.Options.debug_io, &read_buf);
+        const content = try reader.interface.readAlloc(allocator, 1024 * 64);
         defer allocator.free(content);
         if (isContentEffectivelyEmpty(content)) {
             return .{ .outcome = .skipped_empty_file, .task_count = 0 };
@@ -115,8 +119,8 @@ pub const HeartbeatEngine = struct {
         defer allocator.free(path);
 
         // Try to open to check existence
-        if (std.fs.openFileAbsolute(path, .{})) |file| {
-            file.close();
+        if (std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{})) |file| {
+            file.close(std.Options.debug_io);
             return; // Already exists
         } else |err| switch (err) {
             error.FileNotFound => {},

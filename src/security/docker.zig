@@ -66,14 +66,15 @@ pub const DockerSandbox = struct {
         const self = resolve(ptr);
         _ = self; // Unused in this function
         // Check if docker binary is actually reachable
-        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = &.{"docker"} });
-        child.stderr_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stdin_behavior = .Ignore;
-        child.spawn() catch return false;
+        var child = std.process.spawn(std.Options.debug_io, .{
+            .argv = &.{"docker"},
+            .stderr = .ignore,
+            .stdout = .ignore,
+            .stdin = .ignore,
+        }) catch return false;
         const term = child.wait(std.Options.debug_io) catch return false;
         return switch (term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
     }

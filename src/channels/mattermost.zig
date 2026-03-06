@@ -199,16 +199,19 @@ pub const MattermostChannel = struct {
 
         var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(self.allocator);
-        const bw = body.writer(self.allocator);
-        bw.writeStreamingAll(std.Options.debug_io, "{\"channel_id\":") catch return;
-        root.appendJsonStringW(bw, channel_id) catch return;
+
+        // Build JSON body manually with escaped strings using json_util
+        body.appendSlice(self.allocator, "{\"channel_id\":\"") catch return;
+        root.json_util.appendJsonString(&body, self.allocator, channel_id) catch return;
+        body.appendSlice(self.allocator, "\"") catch return;
         if (parsed_target.thread_id) |tid| {
             if (tid.len > 0) {
-                bw.writeStreamingAll(std.Options.debug_io, ",\"parent_id\":") catch return;
-                root.appendJsonStringW(bw, tid) catch return;
+                body.appendSlice(self.allocator, ",\"parent_id\":\"") catch return;
+                root.json_util.appendJsonString(&body, self.allocator, tid) catch return;
+                body.appendSlice(self.allocator, "\"") catch return;
             }
         }
-        bw.writeByte('}') catch return;
+        body.appendSlice(self.allocator, "}") catch return;
 
         const auth_header = std.fmt.allocPrint(self.allocator, "Authorization: Bearer {s}", .{self.bot_token}) catch return;
         defer self.allocator.free(auth_header);
@@ -470,7 +473,7 @@ pub const MattermostChannel = struct {
             self.ws_fd.store(invalid_socket, .release);
             ws.deinit();
         }
-        self.ws_fd.store(ws.stream.handle, .release);
+        self.ws_fd.store(ws.stream, .release);
 
         var auth_buf: [1024]u8 = undefined;
         const seq = self.ws_seq.fetchAdd(1, .monotonic) + 1;
@@ -532,7 +535,7 @@ pub const MattermostChannel = struct {
         }
         try w.writeStreamingAll(std.Options.debug_io, "/api/v4/websocket");
         return .{
-            .host = host,
+            .host = host.bytes,
             .port = port,
             .path = fbs.getWritten(),
         };

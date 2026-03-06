@@ -225,20 +225,19 @@ pub const CloudflareTunnel = struct {
         const local_url = std.fmt.bufPrint(&url_buf, "http://localhost:{s}", .{port_str}) catch
             return TunnelAdapter.TunnelError.StartFailed;
 
-        var child = std.process.Child.init(
-            &.{ "cloudflared", "tunnel", "--no-autoupdate", "run", "--token", self.token, "--url", local_url },
-            self.allocator,
-        );
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        child.spawn() catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
+        const child = std.process.spawn(std.Options.debug_io, .{
+            .argv = &.{ "cloudflared", "tunnel", "--no-autoupdate", "run", "--token", self.token, "--url", local_url },
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
         self.child = child;
 
         // Read stderr to find the public URL (cloudflared prints it there)
-        if (self.child.?.stderr) |*stderr| {
-            const output = stderr.readToEndAlloc(self.allocator, 64 * 1024) catch {
+        if (self.child.?.stderr) |stderr_file| {
+            var read_buf: [4096]u8 = undefined;
+            var reader = stderr_file.reader(std.Options.debug_io, &read_buf);
+            const output = reader.interface.allocRemaining(self.allocator, .unlimited) catch {
                 self.state = .error_state;
                 return TunnelAdapter.TunnelError.StartFailed;
             };
@@ -263,7 +262,8 @@ pub const CloudflareTunnel = struct {
     fn cfStop(ptr: *anyopaque) void {
         const self = resolve(ptr);
         if (self.child) |*child| {
-            _ = child.kill() catch {};
+            child.kill(std.Options.debug_io);
+            _ = child.wait(std.Options.debug_io) catch {};
         }
         self.child = null;
         self.state = .stopped;
@@ -353,17 +353,19 @@ pub const NgrokTunnel = struct {
         argv_buf[argc] = "logfmt";
         argc += 1;
 
-        var child = std.process.Child.init(argv_buf[0..argc], self.allocator);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        child.spawn() catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
+        const child = std.process.spawn(std.Options.debug_io, .{
+            .argv = argv_buf[0..argc],
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
         self.child = child;
 
         // Read stdout for url= pattern (ngrok logfmt output)
-        if (self.child.?.stdout) |*stdout| {
-            const output = stdout.readToEndAlloc(self.allocator, 64 * 1024) catch {
+        if (self.child.?.stdout) |stdout_file| {
+            var read_buf: [4096]u8 = undefined;
+            var reader = stdout_file.reader(std.Options.debug_io, &read_buf);
+            const output = reader.interface.allocRemaining(self.allocator, .unlimited) catch {
                 self.state = .error_state;
                 return TunnelAdapter.TunnelError.StartFailed;
             };
@@ -387,7 +389,8 @@ pub const NgrokTunnel = struct {
     fn ngrokStop(ptr: *anyopaque) void {
         const self = resolve(ptr);
         if (self.child) |*child| {
-            _ = child.kill() catch {};
+            child.kill(std.Options.debug_io);
+            _ = child.wait(std.Options.debug_io) catch {};
         }
         self.child = null;
         self.state = .stopped;
@@ -450,15 +453,12 @@ pub const TailscaleTunnel = struct {
 
         const subcmd: []const u8 = if (self.funnel) "funnel" else "serve";
 
-        var child = std.process.Child.init(
-            &.{ "tailscale", subcmd, port_str },
-            self.allocator,
-        );
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        child.spawn() catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
+        const child = std.process.spawn(std.Options.debug_io, .{
+            .argv = &.{ "tailscale", subcmd, port_str },
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
         self.child = child;
 
         // Construct URL from hostname
@@ -477,8 +477,10 @@ pub const TailscaleTunnel = struct {
         }
 
         // No hostname provided -- read stdout for URL output
-        if (self.child.?.stdout) |*stdout| {
-            const output = stdout.readToEndAlloc(self.allocator, 64 * 1024) catch {
+        if (self.child.?.stdout) |stdout_file| {
+            var read_buf: [4096]u8 = undefined;
+            var reader = stdout_file.reader(std.Options.debug_io, &read_buf);
+            const output = reader.interface.allocRemaining(self.allocator, .unlimited) catch {
                 self.state = .error_state;
                 return TunnelAdapter.TunnelError.StartFailed;
             };
@@ -503,15 +505,14 @@ pub const TailscaleTunnel = struct {
         const self = resolve(ptr);
         // Reset tailscale serve/funnel before killing process
         const subcmd: []const u8 = if (self.funnel) "funnel" else "serve";
-        var reset_child = std.process.Child.init(
-            &.{ "tailscale", subcmd, "reset" },
-            self.allocator,
-        );
-        reset_child.spawn() catch {};
-        _ = reset_child.wait() catch {};
+        var reset_child = std.process.spawn(std.Options.debug_io, .{
+            .argv = &.{ "tailscale", subcmd, "reset" },
+        }) catch return;
+        _ = reset_child.wait(std.Options.debug_io) catch {};
 
         if (self.child) |*child| {
-            _ = child.kill() catch {};
+            child.kill(std.Options.debug_io);
+            _ = child.wait(std.Options.debug_io) catch {};
         }
         self.child = null;
         self.state = .stopped;
@@ -598,17 +599,19 @@ pub const CustomTunnel = struct {
         }
         if (argc == 0) return TunnelAdapter.TunnelError.InvalidCommand;
 
-        var child = std.process.Child.init(argv_list[0..argc], self.allocator);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        child.spawn() catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
+        const child = std.process.spawn(std.Options.debug_io, .{
+            .argv = argv_list[0..argc],
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
         self.child = child;
 
         // Read stdout to find URL
-        if (self.child.?.stdout) |*stdout| {
-            const output = stdout.readToEndAlloc(self.allocator, 64 * 1024) catch {
+        if (self.child.?.stdout) |stdout_file| {
+            var read_buf: [4096]u8 = undefined;
+            var reader = stdout_file.reader(std.Options.debug_io, &read_buf);
+            const output = reader.interface.allocRemaining(self.allocator, .unlimited) catch {
                 self.state = .error_state;
                 return TunnelAdapter.TunnelError.StartFailed;
             };
@@ -632,7 +635,8 @@ pub const CustomTunnel = struct {
     fn customStop(ptr: *anyopaque) void {
         const self = resolve(ptr);
         if (self.child) |*child| {
-            _ = child.kill() catch {};
+            child.kill(std.Options.debug_io);
+            _ = child.wait(std.Options.debug_io) catch {};
         }
         self.child = null;
         self.state = .stopped;
@@ -708,20 +712,19 @@ pub const Tunnel = struct {
                 var url_buf: [64]u8 = undefined;
                 const local_url = try std.fmt.bufPrint(&url_buf, "http://localhost:{s}", .{port_str});
 
-                var child = std.process.Child.init(
-                    &.{ "cloudflared", "tunnel", "--no-autoupdate", "run", "--token", token, "--url", local_url },
-                    alloc,
-                );
-                child.stdin_behavior = .Pipe;
-                child.stdout_behavior = .Pipe;
-                child.stderr_behavior = .Pipe;
-
-                child.spawn() catch return error.NotImplemented;
+                const child = std.process.spawn(std.Options.debug_io, .{
+                    .argv = &.{ "cloudflared", "tunnel", "--no-autoupdate", "run", "--token", token, "--url", local_url },
+                    .stdin = .pipe,
+                    .stdout = .pipe,
+                    .stderr = .pipe,
+                }) catch return error.NotImplemented;
                 self.child = child;
                 self.state = .running;
 
-                if (self.child.?.stderr) |*stderr| {
-                    const output = stderr.readToEndAlloc(alloc, 64 * 1024) catch return error.NotImplemented;
+                if (self.child.?.stderr) |stderr_file| {
+                    var read_buf: [4096]u8 = undefined;
+                    var reader = stderr_file.reader(std.Options.debug_io, &read_buf);
+                    const output = reader.interface.allocRemaining(alloc, .unlimited) catch return error.NotImplemented;
                     defer alloc.free(output);
                     if (extractUrl(output)) |found| {
                         self.public_url = try alloc.dupe(u8, found);
@@ -761,17 +764,19 @@ pub const Tunnel = struct {
                 argv_buf[argc] = "logfmt";
                 argc += 1;
 
-                var child = std.process.Child.init(argv_buf[0..argc], alloc);
-                child.stdin_behavior = .Pipe;
-                child.stdout_behavior = .Pipe;
-                child.stderr_behavior = .Pipe;
-
-                child.spawn() catch return error.NotImplemented;
+                const child = std.process.spawn(std.Options.debug_io, .{
+                    .argv = argv_buf[0..argc],
+                    .stdin = .pipe,
+                    .stdout = .pipe,
+                    .stderr = .pipe,
+                }) catch return error.NotImplemented;
                 self.child = child;
                 self.state = .running;
 
-                if (self.child.?.stdout) |*stdout| {
-                    const output = stdout.readToEndAlloc(alloc, 64 * 1024) catch return error.NotImplemented;
+                if (self.child.?.stdout) |stdout_file| {
+                    var read_buf: [4096]u8 = undefined;
+                    var reader = stdout_file.reader(std.Options.debug_io, &read_buf);
+                    const output = reader.interface.allocRemaining(alloc, .unlimited) catch return error.NotImplemented;
                     defer alloc.free(output);
                     if (extractUrl(output)) |found| {
                         self.public_url = try alloc.dupe(u8, found);
@@ -784,15 +789,12 @@ pub const Tunnel = struct {
                 self.state = .starting;
                 const subcmd: []const u8 = if (self.tailscale_funnel) "funnel" else "serve";
 
-                var child = std.process.Child.init(
-                    &.{ "tailscale", subcmd, port_str },
-                    alloc,
-                );
-                child.stdin_behavior = .Pipe;
-                child.stdout_behavior = .Pipe;
-                child.stderr_behavior = .Pipe;
-
-                child.spawn() catch return error.NotImplemented;
+                const child = std.process.spawn(std.Options.debug_io, .{
+                    .argv = &.{ "tailscale", subcmd, port_str },
+                    .stdin = .pipe,
+                    .stdout = .pipe,
+                    .stderr = .pipe,
+                }) catch return error.NotImplemented;
                 self.child = child;
                 self.state = .running;
 
@@ -824,17 +826,19 @@ pub const Tunnel = struct {
                 }
                 if (argc == 0) return error.NotImplemented;
 
-                var child = std.process.Child.init(argv_list[0..argc], alloc);
-                child.stdin_behavior = .Pipe;
-                child.stdout_behavior = .Pipe;
-                child.stderr_behavior = .Pipe;
-
-                child.spawn() catch return error.NotImplemented;
+                const child = std.process.spawn(std.Options.debug_io, .{
+                    .argv = argv_list[0..argc],
+                    .stdin = .pipe,
+                    .stdout = .pipe,
+                    .stderr = .pipe,
+                }) catch return error.NotImplemented;
                 self.child = child;
                 self.state = .running;
 
-                if (self.child.?.stdout) |*stdout| {
-                    const output = stdout.readToEndAlloc(alloc, 64 * 1024) catch return error.NotImplemented;
+                if (self.child.?.stdout) |stdout_file| {
+                    var read_buf: [4096]u8 = undefined;
+                    var reader = stdout_file.reader(std.Options.debug_io, &read_buf);
+                    const output = reader.interface.allocRemaining(alloc, .unlimited) catch return error.NotImplemented;
                     defer alloc.free(output);
                     if (extractUrl(output)) |found| {
                         self.public_url = try alloc.dupe(u8, found);
@@ -849,7 +853,8 @@ pub const Tunnel = struct {
     /// Stop the tunnel.
     pub fn stop(self: *Tunnel) void {
         if (self.child) |*child| {
-            _ = child.kill() catch {};
+            child.kill(std.Options.debug_io);
+            _ = child.wait(std.Options.debug_io) catch {};
         }
         self.child = null;
         self.state = .stopped;

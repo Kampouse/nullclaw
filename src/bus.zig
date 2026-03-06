@@ -288,16 +288,13 @@ pub fn BoundedQueue(comptime T: type, comptime capacity: usize) type {
             self.tail = (self.tail + 1) % capacity;
             self.len += 1;
 
-            // TODO: Zig 0.16.0 - needs io
-            // self.not_empty.signal();
+            self.not_empty.signal(std.Options.debug_io);
         }
 
         /// Blocks if the queue is empty. Returns null if closed and the queue is empty.
         pub fn consume(self: *Self) ?T {
-            // TODO: Zig 0.16.0 - needs io
-            // self.mutex.lock();
-            // TODO: Zig 0.16.0 - needs io
-            // defer self.mutex.unlock();
+            self.mutex.lock(std.Options.debug_io) catch return null;
+            defer self.mutex.unlock(std.Options.debug_io);
 
             while (self.len == 0 and !self.closed) {
                 self.not_empty.wait(std.Options.debug_io, &self.mutex) catch return null;
@@ -496,18 +493,26 @@ test "queue fill to capacity" {
 }
 
 test "queue close wakes consumer — returns null" {
+    std.debug.print("\n=== TEST: queue close wakes consumer ===\n", .{});
     var q = BoundedQueue(u32, 4).init();
+    std.debug.print("Queue initialized\n", .{});
 
     const handle = try std.Thread.spawn(.{ .stack_size = 64 * 1024 }, struct {
         fn run(qp: *BoundedQueue(u32, 4)) void {
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            std.debug.print("Spawned thread: about to close queue\n", .{});
             qp.close();
+            std.debug.print("Spawned thread: queue closed\n", .{});
         }
     }.run, .{&q});
+    std.debug.print("Thread spawned\n", .{});
 
+    std.debug.print("Main thread: calling consume()...\n", .{});
     const val = q.consume(); // blocks until close
+    std.debug.print("Main thread: consume() returned\n", .{});
     try testing.expect(val == null);
+    std.debug.print("Main thread: joining thread...\n", .{});
     handle.join();
+    std.debug.print("Main thread: test complete\n", .{});
 }
 
 test "queue close returns Closed to producer" {
@@ -581,6 +586,7 @@ test "bus close is idempotent" {
 }
 
 test "bus multiple inbound producers" {
+    std.debug.print("\n=== TEST: bus multiple inbound producers ===\n", .{});
     const alloc = testing.allocator;
     var bus = Bus.init();
     defer bus.close();
@@ -588,6 +594,7 @@ test "bus multiple inbound producers" {
     const num_threads = 5;
     const msgs_per_thread = 10;
 
+    std.debug.print("Spawning {d} producer threads...\n", .{num_threads});
     var handles: [num_threads]std.Thread = undefined;
     for (0..num_threads) |t| {
         handles[t] = try std.Thread.spawn(.{ .stack_size = 64 * 1024 }, struct {
@@ -598,20 +605,32 @@ test "bus multiple inbound producers" {
                     const msg = makeInbound(a, "test", id_str, "c", "body", "test:c") catch return;
                     b.publishInbound(msg) catch return;
                 }
+                std.debug.print("Producer thread {d} finished\n", .{tid});
             }
         }.run, .{ &bus, t, alloc });
     }
+    std.debug.print("All producer threads spawned\n", .{});
 
     var count: usize = 0;
+    std.debug.print("Consumer: starting to drain messages...\n", .{});
     // Consumer: drain until we have all messages
     while (count < num_threads * msgs_per_thread) {
         if (bus.consumeInbound()) |msg| {
             msg.deinit(alloc);
             count += 1;
+            if (count % 10 == 0) {
+                std.debug.print("Consumer: received {d} messages\n", .{count});
+            }
+        } else {
+            // Small sleep to avoid busy-wait when queue is empty
+            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = 100_000 }, .real) catch {};
         }
     }
+    std.debug.print("Consumer: received all {d} messages\n", .{count});
 
+    std.debug.print("Joining producer threads...\n", .{});
     for (handles) |h| h.join();
+    std.debug.print("All threads joined, test complete\n", .{});
     try testing.expectEqual(num_threads * msgs_per_thread, count);
 }
 
@@ -620,6 +639,7 @@ test "bus multiple inbound producers" {
 // ---------------------------------------------------------------------------
 
 test "bus stress: 10 producers × 100 messages" {
+    std.debug.print("\n=== TEST: bus stress ===\n", .{});
     const alloc = testing.allocator;
     var bus = Bus.init();
 
@@ -627,6 +647,7 @@ test "bus stress: 10 producers × 100 messages" {
     const msgs_per_thread = 100;
     const total = num_threads * msgs_per_thread;
 
+    std.debug.print("Spawning {d} producer threads...\n", .{num_threads});
     var producers: [num_threads]std.Thread = undefined;
     for (0..num_threads) |t| {
         producers[t] = try std.Thread.spawn(.{ .stack_size = 64 * 1024 }, struct {
@@ -637,23 +658,40 @@ test "bus stress: 10 producers × 100 messages" {
                     const msg = makeInbound(a, "stress", id_str, "c", "x", "stress:c") catch return;
                     b.publishInbound(msg) catch return;
                 }
+                std.debug.print("Stress producer {d} done\n", .{tid});
             }
         }.run, .{ &bus, t, alloc });
     }
+    std.debug.print("All producers spawned\n", .{});
 
     var count: usize = 0;
+    std.debug.print("Spawning consumer thread...\n", .{});
     const consumer = try std.Thread.spawn(.{ .stack_size = 64 * 1024 }, struct {
         fn run(b: *Bus, cnt: *usize, a: Allocator) void {
+            std.debug.print("Consumer thread started\n", .{});
             while (b.consumeInbound()) |msg| {
                 msg.deinit(a);
                 cnt.* += 1;
+                if (cnt.* % 100 == 0) {
+                    std.debug.print("Consumer: {d} messages\n", .{cnt.*});
+                }
             }
+            std.debug.print("Consumer thread exiting\n", .{});
         }
     }.run, .{ &bus, &count, alloc });
+    std.debug.print("Consumer thread spawned\n", .{});
 
+    std.debug.print("Waiting for producers to finish...\n", .{});
     for (producers) |p| p.join();
+    std.debug.print("All producers finished\n", .{});
+
+    std.debug.print("Closing bus...\n", .{});
     bus.close();
+    std.debug.print("Bus closed\n", .{});
+
+    std.debug.print("Waiting for consumer...\n", .{});
     consumer.join();
+    std.debug.print("Consumer joined\n", .{});
 
     try testing.expectEqual(total, count);
 }

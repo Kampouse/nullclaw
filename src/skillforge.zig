@@ -84,8 +84,7 @@ pub fn scout(allocator: std.mem.Allocator, query: []const u8) !std.ArrayList(Ski
     defer allocator.free(url);
 
     // Fetch from GitHub API using std.http.Client
-    const io = std.Options.debug_io;
-    var client = std.http.Client.init(io, allocator);
+    var client = std.http.Client{ .allocator = allocator, .io = std.Options.debug_io };
     defer client.deinit();
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
@@ -436,11 +435,12 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
     defer allocator.free(target_path);
 
     // Clone the repository using git
-    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = &.{"git"} });
-    child.stderr_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-
-    child.spawn() catch {
+    const argv = &.{ "git", "clone", candidate.repo_url, target_path };
+    var child = std.process.spawn(std.Options.debug_io, .{
+        .argv = argv,
+        .stderr = .pipe,
+        .stdout = .pipe,
+    }) catch {
         return IntegrationResult{
             .skill_name = safe_name,
             .install_path = skills_dir,
@@ -458,7 +458,7 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
     };
 
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             return IntegrationResult{
                 .skill_name = safe_name,
                 .install_path = skills_dir,
@@ -481,7 +481,7 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
 
     if (!has_skill_json and !has_build_zig and !has_root_zig) {
         // Remove the cloned directory since it lacks expected structure
-        std.fs.deleteTreeAbsolute(target_path) catch {};
+        std.Io.Dir.cwd().deleteTree(std.Options.debug_io, target_path) catch {};
         return IntegrationResult{
             .skill_name = safe_name,
             .install_path = skills_dir,
@@ -501,7 +501,7 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
 fn hasFile(dir_path: []const u8, filename: []const u8) bool {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const full = std.fmt.bufPrint(&buf, "{s}/{s}", .{ dir_path, filename }) catch return false;
-    std.fs.accessAbsolute(full, .{}) catch return false;
+    std.Io.Dir.accessAbsolute(std.Options.debug_io, full, .{}) catch return false;
     return true;
 }
 

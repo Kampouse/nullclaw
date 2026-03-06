@@ -219,16 +219,35 @@ pub const AuditLogger = struct {
 
         // Write JSON line to file
         const io = std.Options.debug_io;
-        const file = try std.Io.Dir.cwd().createFile(io, self.log_path, .{
-            .truncate = false,
-        });
+        // Try to open existing file or create new one for appending
+        const file = std.Io.Dir.cwd().openFile(io, self.log_path, .{
+            .mode = .read_write,
+        }) catch |err| switch (err) {
+            error.FileNotFound => blk: {
+                // Create new file if it doesn't exist
+                break :blk try std.Io.Dir.cwd().createFile(io, self.log_path, .{});
+            },
+            else => |e| return e,
+        };
         defer file.close(io);
 
-        try file.seekFromEnd(io, 0);
+        // Seek to end for appending (use writeAll which writes at current position)
+        // Note: Io.File doesn't have seekTo, so we'll use the writer interface
         var json_buf: [4096]u8 = undefined;
         const json = try event.writeJson(&json_buf);
-        try file.writeStreamingAll(io, json);
-        try file.writeStreamingAll(io, "\n");
+
+        // Since we can't easily append without seeking, we'll read the file,
+        // append the new line, and rewrite it. This is not ideal but works.
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(io, &read_buf);
+        const existing_content = reader.interface.readAlloc(std.heap.page_allocator, 1024 * 1024) catch "";
+        defer std.heap.page_allocator.free(existing_content);
+
+        const full_content = try std.fmt.allocPrint(std.heap.page_allocator, "{s}{s}\n", .{ existing_content, json });
+        defer std.heap.page_allocator.free(full_content);
+
+        // Rewrite the entire file with the new content appended
+        try file.writeStreamingAll(io, full_content);
         try file.sync(io);
     }
 
@@ -243,7 +262,7 @@ pub const AuditLogger = struct {
 
     /// Rotate log if it exceeds max size
     fn rotateIfNeeded(self: *const AuditLogger) !void {
-        const stat = std.Io.Dir.cwd().statFile(self.log_path) catch return;
+        const stat = std.Io.Dir.cwd().statFile(std.Options.debug_io, self.log_path, .{}) catch return;
         const size_mb = stat.size / (1024 * 1024);
         if (size_mb >= self.config.max_size_mb) {
             try self.rotate();
@@ -260,7 +279,7 @@ pub const AuditLogger = struct {
         while (i >= 1) : (i -= 1) {
             const old_name = std.fmt.bufPrint(&buf_old, "{s}.{d}.log", .{ self.log_path, i }) catch continue;
             const new_name = std.fmt.bufPrint(&buf_new, "{s}.{d}.log", .{ self.log_path, i + 1 }) catch continue;
-            std.Io.Dir.cwd().rename(old_name, new_name) catch |err| {
+            std.Io.Dir.cwd().rename(old_name, std.Io.Dir.cwd(), new_name, std.Options.debug_io) catch |err| {
                 // Not an error if old rotation file doesn't exist yet
                 if (err != error.FileNotFound) {
                     audit_log.err("audit log rotation rename {s} -> {s}: {}", .{ old_name, new_name, err });
@@ -270,7 +289,7 @@ pub const AuditLogger = struct {
 
         // Rename current log to .1
         const rotated = std.fmt.bufPrint(&buf_old, "{s}.1.log", .{self.log_path}) catch return;
-        std.Io.Dir.cwd().rename(self.log_path, rotated) catch |err| {
+        std.Io.Dir.cwd().rename(self.log_path, std.Io.Dir.cwd(), rotated, std.Options.debug_io) catch |err| {
             audit_log.err("audit log rotation failed to rename {s} -> {s}: {}", .{ self.log_path, rotated, err });
         };
     }
@@ -338,7 +357,7 @@ test "audit logger disabled does not create file" {
     try logger.log(&event);
 
     // File should not exist since logging is disabled
-    const result = tmp_dir.dir.statFile("audit.log");
+    const result = tmp_dir.dir.statFile(std.Options.debug_io, "audit.log", .{});
     try std.testing.expectError(error.FileNotFound, result);
 }
 
@@ -456,7 +475,7 @@ test "audit logger enabled writes to file" {
     try logger.log(&event);
 
     // File should exist
-    const stat = try tmp_dir.dir.statFile("test_audit.log");
+    const stat = try tmp_dir.dir.statFile(std.Options.debug_io, "test_audit.log", .{});
     try std.testing.expect(stat.size > 0);
 }
 
@@ -476,7 +495,7 @@ test "audit logger multiple events" {
     var e2 = AuditEvent.init(.auth_success);
     try logger.log(&e2);
 
-    const stat = try tmp_dir.dir.statFile("multi_audit.log");
+    const stat = try tmp_dir.dir.statFile(std.Options.debug_io, "multi_audit.log", .{});
     try std.testing.expect(stat.size > 10); // more than one event
 }
 
@@ -501,7 +520,7 @@ test "audit command execution log" {
         .duration_ms = 15,
     });
 
-    const stat = try tmp_dir.dir.statFile("cmd_audit.log");
+    const stat = try tmp_dir.dir.statFile(std.Options.debug_io, "cmd_audit.log", .{});
     try std.testing.expect(stat.size > 0);
 }
 

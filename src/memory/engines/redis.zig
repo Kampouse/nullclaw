@@ -176,7 +176,7 @@ pub const RedisMemory = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.stream) |stream| {
-            stream.close();
+            stream.close(std.Options.debug_io);
             self.stream = null;
         }
         if (self.owns_self) {
@@ -185,8 +185,8 @@ pub const RedisMemory = struct {
     }
 
     fn connect(self: *Self) anyerror!void {
-        const addr = try std.Io.net.Address.resolveIp(self.host, self.port);
-        const stream = try std.Io.net.tcpConnectToAddress(addr);
+        const addr = try std.Io.net.IpAddress.resolve(std.Options.debug_io, self.host, self.port);
+        const stream = try addr.connect(std.Options.debug_io, .{ .mode = .stream });
         self.stream = stream;
 
         // AUTH if password set (stream is already connected, ensureConnected is a no-op)
@@ -236,7 +236,10 @@ pub const RedisMemory = struct {
         const cmd = try formatCommand(self.allocator, args);
         defer self.allocator.free(cmd);
 
-        stream.writeAll(cmd) catch |err| {
+        // Write using the stream writer interface
+        var write_buf: [1024]u8 = undefined;
+        var w = stream.writer(std.Options.debug_io, &write_buf);
+        w.interface.writeAll(cmd) catch |err| {
             self.stream = null;
             return err;
         };
@@ -251,7 +254,8 @@ pub const RedisMemory = struct {
 
         while (true) {
             var buf: [4096]u8 = undefined;
-            const n = stream.read(&buf) catch |err| {
+            var r = stream.reader(std.Options.debug_io, &buf);
+            const n = r.interface.readSliceShort(&buf) catch |err| {
                 self.stream = null;
                 return err;
             };
@@ -976,9 +980,9 @@ test "formatCommand roundtrip with parseResp" {
 
 // Integration tests — guarded by Redis availability
 fn canConnectToRedis() bool {
-    const addr = std.Io.net.Address.resolveIp("127.0.0.1", 6379) catch return false;
-    const stream = std.Io.net.tcpConnectToAddress(addr) catch return false;
-    stream.close();
+    const addr = std.Io.net.IpAddress.resolve(std.Options.debug_io, "127.0.0.1", 6379) catch return false;
+    const stream = addr.connect(std.Options.debug_io, .{ .mode = .stream }) catch return false;
+    stream.close(std.Options.debug_io);
     return true;
 }
 

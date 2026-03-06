@@ -797,7 +797,7 @@ pub const CronScheduler = struct {
                             job.last_run_secs = now;
                             job.last_status = "error";
                             if (job.last_output) |old| self.allocator.free(old);
-                            job.last_output = error.NotImplemented;
+                            job.last_output = std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch "error: allocation failed";
                             if (out_bus) |b| {
                                 _ = deliverResult(self.allocator, job.delivery, "agent job execution failed", false, b) catch {};
                             }
@@ -874,8 +874,6 @@ fn collectChildOutputWithTimeout(
     timeout_secs: u64,
     start_ns: i128,
 ) !bool {
-    _ = allocator; // Used when poll was allocating
-
     var read_buf: [4096]u8 = undefined;
     var stdout_eof = false;
     var stderr_eof = false;
@@ -897,7 +895,7 @@ fn collectChildOutputWithTimeout(
                     if (n == 0) {
                         stdout_eof = true;
                     } else {
-                        try stdout.appendSlice(read_buf[0..n]);
+                        try stdout.appendSlice(allocator, read_buf[0..n]);
                         if (stdout.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StdoutStreamTooLong;
                     }
                 } else |err| {
@@ -915,7 +913,7 @@ fn collectChildOutputWithTimeout(
                     if (n == 0) {
                         stderr_eof = true;
                     } else {
-                        try stderr.appendSlice(read_buf[0..n]);
+                        try stderr.appendSlice(allocator, read_buf[0..n]);
                         if (stderr.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StderrStreamTooLong;
                     }
                 } else |err| {
@@ -977,7 +975,7 @@ fn collectChildOutputWithTimeout(
                         stdout_eof = true;
                         break;
                     }
-                    try stdout.appendSlice(read_buf[0..n]);
+                    try stdout.appendSlice(allocator, read_buf[0..n]);
                     if (stdout.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StdoutStreamTooLong;
                 }
             }
@@ -996,7 +994,7 @@ fn collectChildOutputWithTimeout(
                         stderr_eof = true;
                         break;
                     }
-                    try stderr.appendSlice(read_buf[0..n]);
+                    try stderr.appendSlice(allocator, read_buf[0..n]);
                     if (stderr.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StderrStreamTooLong;
                 }
             }
@@ -1009,24 +1007,26 @@ fn collectChildOutputWithTimeout(
     // Final drain of any remaining data
     if (!stdout_eof) {
         while (true) {
-            const n = child.stdout.?.read(&read_buf) catch |err| {
+            var buffers = [1][]u8{&read_buf};
+            const n = child.stdout.?.readStreaming(io, &buffers) catch |err| {
                 if (err == error.EndOfStream or err == error.BrokenPipe) break;
                 return err;
             };
             if (n == 0) break;
-            try stdout.appendSlice(read_buf[0..n]);
+            try stdout.appendSlice(allocator, read_buf[0..n]);
             if (stdout.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StdoutStreamTooLong;
         }
     }
 
     if (!stderr_eof) {
         while (true) {
-            const n = child.stderr.?.read(&read_buf) catch |err| {
+            var buffers = [1][]u8{&read_buf};
+            const n = child.stderr.?.readStreaming(io, &buffers) catch |err| {
                 if (err == error.EndOfStream or err == error.BrokenPipe) break;
                 return err;
             };
             if (n == 0) break;
-            try stderr.appendSlice(read_buf[0..n]);
+            try stderr.appendSlice(allocator, read_buf[0..n]);
             if (stderr.items.len > AGENT_MAX_OUTPUT_BYTES) return error.StderrStreamTooLong;
         }
     }
@@ -1077,7 +1077,7 @@ fn runAgentJob(
     model: ?[]const u8,
     timeout_secs: u64,
 ) !AgentRunResult {
-    const exe_path = try std.fs.selfExePathAlloc(allocator);
+    const exe_path = try std.process.executablePathAlloc(std.Options.debug_io, allocator);
     defer allocator.free(exe_path);
 
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1092,15 +1092,19 @@ fn runAgentJob(
     try argv.append(allocator, "-m");
     try argv.append(allocator, prompt);
 
-    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv.items });
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    child.cwd = cwd;
-
-    // child already spawned
+    const spawn_cwd: std.process.Child.Cwd = if (cwd) |p| .{ .path = p } else .inherit;
+    var child = std.process.spawn(std.Options.debug_io, .{
+        .argv = argv.items,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .cwd = spawn_cwd,
+    }) catch |err| {
+        log.err("Failed to spawn agent: {}", .{err});
+        return err;
+    };
     errdefer {
-        _ = child.kill(std.Options.debug_io) catch {};
+        child.kill(std.Options.debug_io);
         _ = child.wait(std.Options.debug_io) catch {};
     }
 
@@ -1122,7 +1126,7 @@ fn runAgentJob(
 
     const term = try child.wait(std.Options.debug_io);
     const success = !timed_out and switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
     const output = try buildAgentOutput(allocator, stdout.items, stderr.items, timeout_secs, timed_out);
@@ -1380,7 +1384,7 @@ pub fn cliRunJob(allocator: std.mem.Allocator, id: []const u8) !void {
             .shell => {
                 const result = std.process.run(allocator, std.Options.debug_io, .{
                     .argv = &.{ platform.getShell(), platform.getShellFlag(), job.command },
-                    .cwd = scheduler.shell_cwd,
+                    .cwd = if (scheduler.shell_cwd) |p| .{ .path = p } else .inherit,
                 }) catch |err| {
                     log.err("Job '{s}' failed: {s}", .{ id, @errorName(err) });
                     return;
@@ -1389,7 +1393,7 @@ pub fn cliRunJob(allocator: std.mem.Allocator, id: []const u8) !void {
                 defer allocator.free(result.stderr);
                 if (result.stdout.len > 0) log.info("{s}", .{result.stdout});
                 const exit_code: u8 = switch (result.term) {
-                    .Exited => |code| code,
+                    .exited => |code| code,
                     else => 1,
                 };
                 log.info("Job '{s}' completed (exit {d}).", .{ id, exit_code });

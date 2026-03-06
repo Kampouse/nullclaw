@@ -70,10 +70,10 @@ pub fn migrateOpenclawWithPolicy(
 
     // Verify source exists
     {
-        var dir = std.fs.openDirAbsolute(source, .{}) catch {
+        var dir = std.Io.Dir.openDirAbsolute(std.Options.debug_io, source, .{}) catch {
             return error.SourceNotFound;
         };
-        dir.close();
+        dir.close(std.Options.debug_io);
     }
 
     // Refuse self-migration
@@ -406,7 +406,7 @@ fn readOpenclawMarkdownEntries(
     const core_path = try std.fmt.allocPrint(allocator, "{s}/MEMORY.md", .{source});
     defer allocator.free(core_path);
 
-    if (std.Io.Dir.cwd().readFileAlloc(io, allocator, core_path, 1024 * 1024)) |content| {
+    if (std.Io.Dir.cwd().readFileAlloc(io, core_path, allocator, .limited(1024 * 1024))) |content| {
         defer allocator.free(content);
         const count = try parseMarkdownFile(allocator, content, "core", "openclaw_core", entries);
         stats.from_markdown += count;
@@ -418,13 +418,13 @@ fn readOpenclawMarkdownEntries(
 
     if (std.Io.Dir.cwd().openDir(io, daily_dir, .{ .iterate = true })) |*dir_handle| {
         var dir = dir_handle.*;
-        defer dir.close();
+        defer dir.close(io);
         var iter = dir.iterate();
-        while (try iter.next()) |entry| {
+        while (try iter.next(io)) |entry| {
             if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
             const fpath = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ daily_dir, entry.name });
             defer allocator.free(fpath);
-            if (std.Io.Dir.cwd().readFileAlloc(io, allocator, fpath, 1024 * 1024)) |content| {
+            if (std.Io.Dir.cwd().readFileAlloc(io, fpath, allocator, .limited(1024 * 1024))) |content| {
                 defer allocator.free(content);
                 const stem = entry.name[0 .. entry.name.len - 3];
                 const count = try parseMarkdownFile(allocator, content, "daily", stem, entries);
@@ -822,7 +822,7 @@ test "backup and restore roundtrip" {
     try restoreBackup(std.Options.debug_io, backup_path, src_path);
 
     // Verify restored content
-    const restored = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "test.db", 4096, std.testing.allocator);
+    const restored = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "test.db", std.testing.allocator, .limited(4096));
     defer std.testing.allocator.free(restored);
     try std.testing.expectEqualStrings(content, restored);
 }

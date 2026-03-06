@@ -448,7 +448,7 @@ pub fn runTelegramLoop(
         const messages = tg_ptr.pollUpdates(allocator) catch |err| {
             log.warn("Telegram poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
             continue;
         };
 
@@ -582,7 +582,7 @@ pub fn runSignalLoop(
         const messages = sg_ptr.pollMessages(allocator) catch |err| {
             log.warn("Signal poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
             continue;
         };
 
@@ -796,7 +796,7 @@ pub fn runMatrixLoop(
         const messages = mx_ptr.pollMessages(allocator) catch |err| {
             log.warn("Matrix poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
             continue;
         };
 

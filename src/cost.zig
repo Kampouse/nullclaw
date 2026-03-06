@@ -177,11 +177,6 @@ pub const CostTracker = struct {
         const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, self.storage_path, .{ .truncate = false }) catch return;
         defer file.close(std.Options.debug_io);
 
-        // Seek to end for append
-        const stat = file.stat(std.Options.debug_io) catch return;
-        const file_size = stat.size;
-        file.seekFromEnd(std.Options.debug_io, 0) catch {};
-
         // Write JSON line
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.allocator);
@@ -249,8 +244,9 @@ pub const CostTracker = struct {
     fn sumCostsForPeriod(self: *const CostTracker, target_secs: i64, period: Period) f64 {
         if (self.storage_path.len == 0) return self.sessionCost();
 
-        const file = std.Io.Dir.cwd().openFile(self.storage_path, .{}) catch return self.sessionCost();
-        defer file.close();
+        const io = std.Options.debug_io;
+        const file = std.Io.Dir.cwd().openFile(io, self.storage_path, .{}) catch return self.sessionCost();
+        defer file.close(io);
 
         const target_day = @divFloor(target_secs, 86400);
         // For month comparison: compute year*12 + month of target
@@ -263,7 +259,9 @@ pub const CostTracker = struct {
         var pos: usize = 0;
 
         while (true) {
-            const n = file.read(line_buf[pos..]) catch break;
+            // Use readStreaming for partial reads in Zig 0.16
+            var buffers = [1][]u8{line_buf[pos..]};
+            const n = file.readStreaming(io, &buffers) catch break;
             if (n == 0 and pos == 0) break;
             const filled = pos + n;
 

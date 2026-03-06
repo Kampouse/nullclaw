@@ -430,7 +430,7 @@ pub const OtelObserver = struct {
     fn randomHex(io: std.Io, buf: []u8) void {
         var raw: [16]u8 = undefined;
         const needed = buf.len / 2;
-        std.Io.random(io).bytes(raw[0..needed]);
+        std.Io.random(io, raw[0..needed]);
         const hex = "0123456789abcdef";
         for (0..needed) |i| {
             buf[i * 2] = hex[raw[i] >> 4];

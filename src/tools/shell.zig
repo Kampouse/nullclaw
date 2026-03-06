@@ -261,7 +261,7 @@ test "shell cwd inside workspace works without allowed_paths" {
 
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const tmp_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(tmp_path);
 
     var args_buf: [512]u8 = undefined;
@@ -283,9 +283,10 @@ test "shell cwd outside workspace without allowed_paths is rejected" {
 
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.makeDir("ws");
-    try tmp_dir.dir.makeDir("other");
-    const root_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    // Create directories using createDirPath (Zig 0.16 API)
+    try tmp_dir.dir.createDirPath(std.Options.debug_io, "ws");
+    try tmp_dir.dir.createDirPath(std.Options.debug_io, "other");
+    const root_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(root_path);
     const ws_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "ws" });
     defer std.testing.allocator.free(ws_path);
@@ -320,7 +321,7 @@ test "shell cwd with allowed_paths runs in cwd" {
 
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const tmp_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(tmp_path);
 
     var args_buf: [512]u8 = undefined;

@@ -1,4 +1,10 @@
-const AnthropicSseResult = enum { delta, usage, done, skip };
+const AnthropicSseResult = union(enum) {
+    delta: []const u8,
+    usage: u32,
+    done: void,
+    skip: void,
+    event: []const u8,
+};
 
 const std = @import("std");
 const root = @import("root.zig");
@@ -83,6 +89,14 @@ pub fn curlStream(
 pub fn parseAnthropicSseLine(allocator: std.mem.Allocator, line: []const u8, current_event: []const u8) !AnthropicSseResult {
 
     const trimmed = std.mem.trim(u8, line, " \t\r\n");
+
+    // Handle event lines
+    const event_prefix = "event: ";
+    if (std.mem.startsWith(u8, trimmed, event_prefix)) {
+        const event_name = trimmed[event_prefix.len..];
+        return .{ .event = event_name };
+    }
+
     const data_prefix = "data: ";
     const data = trimmed[data_prefix.len..];
 

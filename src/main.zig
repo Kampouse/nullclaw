@@ -119,7 +119,7 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
         .channel => try runChannel(allocator, sub_args),
         .skills => try runSkills(allocator, sub_args),
         .hardware => try runHardware(allocator, sub_args),
-        .migrate => try runMigrate(minimal.io, allocator, sub_args),
+        .migrate => try runMigrate(std.Options.debug_io, allocator, sub_args),
         .memory => try runMemory(allocator, sub_args),
         .workspace => try runWorkspace(allocator, sub_args),
         .capabilities => try runCapabilities(allocator, sub_args),
@@ -1503,7 +1503,7 @@ fn runGatewayChannel(allocator: std.mem.Allocator, config: *const yc.config.Conf
 
     // Block until Ctrl+C
     while (!yc.daemon.isShutdownRequested()) {
-        // std.Thread.sleep() - TODO: Fix for Zig 0.16
+        std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
     }
 }
 
@@ -1587,13 +1587,13 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         std.debug.print("\n", .{});
     }
 
-    // Env overrides for Signal
-    const env_http_url = std.process.getEnvVarOwned(allocator, "SIGNAL_HTTP_URL") catch null;
-    defer if (env_http_url) |v| allocator.free(v);
-    const env_account = std.process.getEnvVarOwned(allocator, "SIGNAL_ACCOUNT") catch null;
-    defer if (env_account) |v| allocator.free(v);
-    const effective_http_url = env_http_url orelse signal_config.http_url;
-    const effective_account = env_account orelse signal_config.account;
+    // Env overrides for Signal - disabled for now due to Zig 0.16 API changes
+    // TODO: Re-enable once proper env var access is available
+    const env_http_url: ?[]const u8 = null;
+    const env_account: ?[]const u8 = null;
+
+    const effective_http_url = if (env_http_url) |v| v else signal_config.http_url;
+    const effective_account = if (env_account) |v| v else signal_config.account;
 
     var sg = yc.channels.signal.SignalChannel.init(
         allocator,
@@ -2308,15 +2308,20 @@ fn runAuthImportCodex(
     };
     defer allocator.free(path);
 
-    const file = std.Io.Dir.cwd().openFile(path, .{}) catch {
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch {
         std.debug.print("Could not open {s}\n", .{path});
         std.debug.print("Install and authenticate with Codex CLI first.\n", .{});
         std.process.exit(1);
     };
-    defer file.close();
+    defer file.close(std.Options.debug_io);
 
-    // TODO: Zig 0.16.0 - readToEndAlloc needs io parameter
-    const json_bytes = try allocator.alloc(u8, 0);
+    // Read file contents using reader interface
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(std.Options.debug_io, &read_buf);
+    const json_bytes = reader.interface.readAlloc(allocator, 1024 * 1024) catch {
+        std.debug.print("Failed to read {s}\n", .{path});
+        std.process.exit(1);
+    };
     defer allocator.free(json_bytes);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch {

@@ -452,7 +452,7 @@ test "SubagentManager spawn stores session key" {
     const task_id = try mgr.spawn("quick task", "session-check", "agent", "session:42");
     const io_test = std.Options.debug_io;
     mgr.mutex.lockUncancelable(io_test);
-    defer mgr.mutex.unlockUncancelable(io_test);
+    defer mgr.mutex.unlock(io_test);
     const state = mgr.tasks.get(task_id) orelse return error.TestUnexpectedResult;
     try std.testing.expect(state.session_key != null);
     try std.testing.expectEqualStrings("session:42", state.session_key.?);

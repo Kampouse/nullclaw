@@ -177,7 +177,7 @@ fn uninstall(allocator: std.mem.Allocator) !void {
         try stopService(allocator);
         const plist = try macosServiceFile(allocator);
         defer allocator.free(plist);
-        std.fs.deleteFileAbsolute(plist) catch {};
+        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, plist) catch {};
     } else if (comptime builtin.os.tag == .linux) {
         try stopService(allocator);
         const unit = try linuxServiceFile(allocator);
@@ -208,8 +208,8 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
     }
 
     // Get current executable path
-    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_path = try std.fs.selfExePath(&exe_buf);
+    const exe_path = try std.process.executablePathAlloc(std.Options.debug_io, allocator);
+    defer allocator.free(exe_path);
 
     const home = try getHomeDir(allocator);
     defer allocator.free(home);
@@ -250,8 +250,8 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
     , .{ SERVICE_LABEL, xmlEscape(exe_path), xmlEscape(stdout_log), xmlEscape(stderr_log) });
     defer allocator.free(content);
 
-    const file = try std.fs.createFileAbsolute(plist, .{});
-    defer file.close();
+    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, plist, .{});
+    defer file.close(std.Options.debug_io);
     try file.writeStreamingAll(std.Options.debug_io, content);
 }
 
@@ -290,8 +290,8 @@ fn installLinux(allocator: std.mem.Allocator) !void {
     , .{ exe_path, config_dir });
     defer allocator.free(content);
 
-    const file = try std.fs.createFileAbsolute(unit, .{});
-    defer file.close();
+    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, unit, .{});
+    defer file.close(std.Options.debug_io);
     try file.writeStreamingAll(std.Options.debug_io, content);
 
     try runChecked(allocator, &.{ "systemctl", "--user", "daemon-reload" });
@@ -518,13 +518,13 @@ fn runCapture(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
     var buf: [8192]u8 = undefined;
     var reader = stdout_file.reader(io, &buf);
     var list = std.ArrayList(u8){.items = &.{}, .capacity = 0};
-    errdefer list.deinit();
+    errdefer list.deinit(allocator);
 
     while (true) {
         var chunk_bufs: [1][]u8 = .{try list.addManyAsSlice(allocator, 4096)};
-        const n = reader.readVec(&chunk_bufs) catch |err| {
+        const n = std.Io.Reader.readVec(&reader.interface, &chunk_bufs) catch |err| {
             if (err == error.EndOfStream) break;
-            _ = child.kill(io) catch {};
+            child.kill(io);
             _ = child.wait(io) catch {};
             return error.CommandFailed;
         };
@@ -536,7 +536,7 @@ fn runCapture(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
         .exited => |code| if (code != 0) return error.CommandFailed,
         else => return error.CommandFailed,
     }
-    return list.toOwnedSlice();
+    return list.toOwnedSlice(allocator);
 }
 
 // ── XML escape ───────────────────────────────────────────────────

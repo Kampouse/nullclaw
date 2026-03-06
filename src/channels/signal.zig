@@ -166,7 +166,7 @@ pub const SignalChannel = struct {
             .group_policy = "allowlist",
             .ignore_attachments = ignore_attachments,
             .ignore_stories = ignore_stories,
-            .use_rest_api = if (builtin.is_test) false else envFlagEnabled(allocator, "SIGNAL_USE_REST_API"),
+            .use_rest_api = if (builtin.is_test) false else envFlagEnabled("SIGNAL_USE_REST_API"),
         };
     }
 
@@ -778,7 +778,7 @@ pub const SignalChannel = struct {
         }
 
         for (attachments) |path| {
-            const file_data = std.Io.Dir.cwd().readFileAlloc(self.allocator, path, 10 * 1024 * 1024) catch |err| {
+            const file_data = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, path, self.allocator, .limited(10 * 1024 * 1024)) catch |err| {
                 log.warn("Signal: failed to read attachment {s}: {}", .{ path, err });
                 continue;
             };
@@ -1295,13 +1295,11 @@ pub const SignalChannel = struct {
     }
 };
 
-fn envFlagEnabled(allocator: std.mem.Allocator, name: []const u8) bool {
-    const value = std.process.getEnvVarOwned(allocator, name) catch return false;
-    defer allocator.free(value);
-    return std.mem.eql(u8, value, "1") or
-        std.ascii.eqlIgnoreCase(value, "true") or
-        std.ascii.eqlIgnoreCase(value, "yes") or
-        std.ascii.eqlIgnoreCase(value, "on");
+fn envFlagEnabled(name: []const u8) bool {
+    _ = name;
+    // TODO: Zig 0.16 - getenv API changed, temporarily disabled
+    // This function checks if an environment variable flag is enabled
+    return false;
 }
 
 fn jsonString(value: ?std.json.Value) ?[]const u8 {

@@ -111,7 +111,7 @@ pub fn transcribeFile(
     // Write multipart body directly to temp file (avoids holding file_data + body in memory)
     writeMultipartToTempFile(tmp_path, file_path, &boundary, opts) catch
         return error.FileReadFailed;
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
 
     // Build headers
     var content_type_buf: [128]u8 = undefined;
@@ -202,24 +202,23 @@ fn writeMultipartToTempFile(
     boundary: []const u8,
     opts: TranscribeOptions,
 ) !void {
-    const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
-    defer tmp_file.close();
+    const tmp_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    defer tmp_file.close(std.Options.debug_io);
 
     // Write file part header
     try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
     try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
     try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.ogg\"\r\nContent-Type: audio/ogg\r\n\r\n");
 
-    // Stream audio file directly (no intermediate buffer)
+    // Read audio file and write to multipart
     {
-        const audio_file = try std.fs.openFileAbsolute(audio_path, .{});
-        defer audio_file.close();
-        var buf: [32768]u8 = undefined;
-        while (true) {
-            const n = try audio_file.read(&buf);
-            if (n == 0) break;
-            try tmp_file.writeStreamingAll(std.Options.debug_io, buf[0..n]);
-        }
+        // For Zig 0.16, use Io.Dir.cwd().readFileAlloc for absolute paths too
+        const audio_data = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, audio_path, std.heap.page_allocator, .limited(10 * 1024 * 1024)) catch |err| {
+            log.err("failed to read audio file: {}", .{err});
+            return error.AudioReadFailed;
+        };
+        defer std.heap.page_allocator.free(audio_data);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, audio_data);
     }
     try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\n");
 
@@ -297,17 +296,21 @@ fn curlPostFromFile(
     argv_buf[argc] = url;
     argc += 1;
 
-    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_buf[0..argc] });
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    var child = try std.process.spawn(std.Options.debug_io, .{
+        .argv = argv_buf[0..argc],
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
 
     // child already spawned
 
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 4 * 1024 * 1024) catch return error.CurlReadError;
+    var read_buf: [4 * 1024]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(std.Options.debug_io, &read_buf);
+    const stdout = stdout_reader.interface.readAlloc(allocator, 4 * 1024 * 1024) catch return error.CurlReadError;
 
     const term = child.wait(std.Options.debug_io) catch return error.CurlWaitError;
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             allocator.free(stdout);
             return error.CurlFailed;
         },
@@ -349,7 +352,7 @@ pub fn transcribeTelegramVoice(
     };
     defer {
         // Clean up temp file
-        std.fs.deleteFileAbsolute(local_path) catch {};
+        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, local_path) catch {};
         allocator.free(local_path);
     }
 
@@ -415,9 +418,9 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_
     const local_path_z: [:0]const u8 = z_buf[0..local_path.len :0];
 
     {
-        const f = try std.fs.createFileAbsolute(local_path_z, .{});
+        const f = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, local_path_z, .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, data);
+        try f.writeStreamingAll(std.Options.debug_io, data);
     }
 
     return try allocator.dupe(u8, local_path);

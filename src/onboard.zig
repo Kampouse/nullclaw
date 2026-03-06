@@ -1675,8 +1675,8 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
         try out.flush();
         return;
     };
-    defer file.close();
-    file.writeAll(results_buf.items) catch {
+    defer file.close(std.Options.debug_io);
+    file.writeStreamingAll(std.Options.debug_io, results_buf.items) catch {
         try out.writeAll("Error writing cache file.\n");
         try out.flush();
         return;
@@ -1784,9 +1784,9 @@ fn overwriteWorkspaceFile(
 
     if (dry_run) return true;
 
-    const file = try std.fs.createFileAbsolute(path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(content);
+    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{ .truncate = true });
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, content);
     return true;
 }
 
@@ -1803,8 +1803,11 @@ fn removeWorkspaceFileIfExists(
         return fileExistsAbsolute(path);
     }
 
-    std.fs.deleteFileAbsolute(path) catch |err| switch (err) {
+    std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, path) catch |err| switch (err) {
         error.FileNotFound => return false,
+        error.SystemResources => return false,
+        error.FileSystem => return false,
+        else => return false,
     };
     return true;
 }
@@ -1924,6 +1927,7 @@ fn readWorkspaceOnboardingState(
 
     const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return .{},
+        else => |e| return e,
     };
     defer file.close(std.Options.debug_io);
 
@@ -2371,12 +2375,12 @@ test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
     try std.testing.expectEqual(@as(usize, 6), report.rewritten_files);
     try std.testing.expectEqual(@as(usize, 0), report.removed_files);
 
-    const agents_content = try tmp.dir.readFileAlloc(std.Options.debug_io, std.testing.allocator, "AGENTS.md", 64 * 1024);
+    const agents_content = try tmp.dir.readFileAlloc(std.Options.debug_io, "AGENTS.md", std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(agents_content);
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "AGENTS.md - Your Workspace") != null);
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "custom-agents-content") == null);
 
-    const user_content = try tmp.dir.readFileAlloc(std.Options.debug_io, std.testing.allocator, "USER.md", 64 * 1024);
+    const user_content = try tmp.dir.readFileAlloc(std.Options.debug_io, "USER.md", std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(user_content);
     try std.testing.expect(std.mem.indexOf(u8, user_content, "USER.md - About Your Human") != null);
     try std.testing.expect(std.mem.indexOf(u8, user_content, "custom-user-content") == null);
@@ -2393,11 +2397,12 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     }
 
     var has_distinct_case_memory_file = true;
-    const alt = tmp.dir.createFile(std.Options.debug_io, "memory.md", .{ .exclusive = true }) catch |err| switch (err) {
+    const alt = tmp.dir.createFile(std.Options.debug_io, "memory.md", .{}) catch |err| switch (err) {
         error.PathAlreadyExists => blk: {
             has_distinct_case_memory_file = false;
             break :blk null;
         },
+        else => |e| return e,
     };
     if (alt) |f| {
         defer f.close(std.Options.debug_io);
@@ -2413,17 +2418,17 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     });
     try std.testing.expectEqual(@as(usize, 6), dry_report.rewritten_files);
     try std.testing.expect(dry_report.removed_files >= 1);
-    const memory_file = try tmp.dir.openFile("MEMORY.md", .{});
-    memory_file.close();
+    const memory_file = try tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{});
+    memory_file.close(std.Options.debug_io);
 
     const reset_report = try resetWorkspacePromptFiles(std.testing.allocator, base, &ProjectContext{}, .{
         .clear_memory_markdown = true,
     });
     try std.testing.expectEqual(@as(usize, 6), reset_report.rewritten_files);
     try std.testing.expect(reset_report.removed_files >= 1);
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("MEMORY.md", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{}));
     if (has_distinct_case_memory_file) {
-        try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("memory.md", .{}));
+        try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "memory.md", .{}));
     }
 }
 
@@ -2441,8 +2446,8 @@ test "resetWorkspacePromptFiles creates missing workspace directory" {
 
     const agents_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/AGENTS.md", .{nested});
     defer std.testing.allocator.free(agents_path);
-    const agents_file = try std.fs.openFileAbsolute(agents_path, .{});
-    agents_file.close();
+    const agents_file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, agents_path, .{});
+    agents_file.close(std.Options.debug_io);
 }
 
 test "scaffoldWorkspace seeds bootstrap marker for new workspace" {
@@ -2483,14 +2488,14 @@ test "scaffoldWorkspace does not recreate BOOTSTRAP after onboarding completion"
         try f.writeStreamingAll(std.Options.debug_io, "custom user");
     }
 
-    try tmp.dir.deleteFile("BOOTSTRAP.md");
-    try tmp.dir.deleteFile("TOOLS.md");
+    try tmp.dir.deleteFile(std.Options.debug_io, "BOOTSTRAP.md");
+    try tmp.dir.deleteFile(std.Options.debug_io, "TOOLS.md");
 
     try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
 
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
-    const tools_file = try tmp.dir.openFile("TOOLS.md", .{});
-    tools_file.close();
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
+    const tools_file = try tmp.dir.openFile(std.Options.debug_io, "TOOLS.md", .{});
+    tools_file.close(std.Options.debug_io);
 
     var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
     defer state.deinit(std.testing.allocator);
@@ -2517,7 +2522,7 @@ test "scaffoldWorkspace does not seed BOOTSTRAP for legacy completed workspace" 
 
     try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
 
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
     var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
     defer state.deinit(std.testing.allocator);
@@ -2530,11 +2535,11 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(std.Options.debug_io, "memory");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "memory/2026-02-25.md",
         .data = "# Daily log\nSome notes",
     });
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "MEMORY.md",
         .data = "# Long-term memory\nImportant stuff",
     });
@@ -2544,13 +2549,15 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
 
     try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
 
-    const identity_file = try tmp.dir.openFile("IDENTITY.md", .{});
-    identity_file.close();
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
+    const identity_file = try tmp.dir.openFile(std.Options.debug_io, "IDENTITY.md", .{});
+    identity_file.close(std.Options.debug_io);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
-    const memory_file = try tmp.dir.openFile("MEMORY.md", .{});
-    defer memory_file.close();
-    const memory_content = try memory_file.readToEndAlloc(std.testing.allocator, 4 * 1024);
+    const memory_file = try tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{});
+    defer memory_file.close(std.Options.debug_io);
+    var read_buf: [4 * 1024]u8 = undefined;
+    var memory_reader = memory_file.reader(std.Options.debug_io, &read_buf);
+    const memory_content = try memory_reader.interface.readAlloc(std.testing.allocator, 4 * 1024);
     defer std.testing.allocator.free(memory_content);
     try std.testing.expectEqualStrings("# Long-term memory\nImportant stuff", memory_content);
 
@@ -2564,7 +2571,7 @@ test "scaffoldWorkspace treats git-backed workspace as existing and skips BOOTST
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(std.Options.debug_io, ".git");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = ".git/HEAD",
         .data = "ref: refs/heads/main\n",
     });
@@ -2574,9 +2581,9 @@ test "scaffoldWorkspace treats git-backed workspace as existing and skips BOOTST
 
     try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
 
-    const identity_file = try tmp.dir.openFile("IDENTITY.md", .{});
-    identity_file.close();
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
+    const identity_file = try tmp.dir.openFile(std.Options.debug_io, "IDENTITY.md", .{});
+    identity_file.close(std.Options.debug_io);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
     var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
     defer state.deinit(std.testing.allocator);
@@ -2725,7 +2732,7 @@ test "scaffoldWorkspace does not create memory subdirectory by default" {
     defer std.testing.allocator.free(base);
 
     try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir("memory", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(std.Options.debug_io, "memory", .{}));
 }
 
 test "BANNER is non-empty and contains nullclaw branding" {
@@ -2889,11 +2896,11 @@ test "scaffoldWorkspace creates core prompt.zig files" {
         "BOOTSTRAP.md",
     };
     for (files) |filename| {
-        const file = tmp.dir.openFile(filename, .{}) catch |err| {
+        const file = tmp.dir.openFile(std.Options.debug_io, filename, .{}) catch |err| {
             std.debug.print("Missing file: {s} (error: {})\n", .{ filename, err });
             return err;
         };
-        file.close();
+        file.close(std.Options.debug_io);
     }
 }
 
@@ -3074,8 +3081,8 @@ test "cache read returns error for expired cache" {
     // Write a cache with old timestamp
     const old_json = "{\"fetched_at\": 1000000, \"myprov\": [\"old-model\"]}";
     const file = try tmp.dir.createFile(std.Options.debug_io, "models_cache.json", .{});
-    defer file.close();
-    try file.writeAll(old_json);
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, old_json);
 
     const result = readCachedModels(std.testing.allocator, cache_path, "myprov");
     try std.testing.expectError(error.CacheExpired, result);

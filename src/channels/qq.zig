@@ -1516,7 +1516,7 @@ pub const QQChannel = struct {
         var ws = try websocket.WsClient.connect(self.allocator, host, port, path, &.{});
 
         // Store fd for interrupt-on-stop
-        self.ws_fd.store(ws.stream.handle, .release);
+        self.ws_fd.store(ws.stream, .release);
 
         // Start heartbeat thread
         self.heartbeat_stop.store(false, .release);

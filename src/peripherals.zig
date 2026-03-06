@@ -170,7 +170,7 @@ pub const SerialPeripheral = struct {
         if (!isSerialPathAllowed(self.port_path)) {
             return Peripheral.PeripheralError.PermissionDenied;
         }
-        const file = std.fs.openFileAbsolute(self.port_path, .{ .mode = .read_write }) catch {
+        const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, self.port_path, .{ .mode = .read_write }) catch {
             self.connected = false;
             return Peripheral.PeripheralError.IoError;
         };
@@ -194,11 +194,13 @@ pub const SerialPeripheral = struct {
 
         // Read response (newline-delimited JSON)
         var resp_buf: [512]u8 = undefined;
-        const n = file.read(&resp_buf) catch return Peripheral.PeripheralError.IoError;
-        if (n == 0) return Peripheral.PeripheralError.Timeout;
+        var reader = file.reader(std.Options.debug_io, &resp_buf);
+        const resp_data = reader.interface.readAlloc(std.heap.page_allocator, 512) catch return Peripheral.PeripheralError.IoError;
+        defer std.heap.page_allocator.free(resp_data);
+        if (resp_data.len == 0) return Peripheral.PeripheralError.Timeout;
 
         // Parse response JSON to extract "result" value
-        return parseResultValue(resp_buf[0..n]);
+        return parseResultValue(resp_data);
     }
 
     /// Parse a JSON response like {"id":"N","ok":true,"result":"VALUE"} and
@@ -237,11 +239,13 @@ pub const SerialPeripheral = struct {
 
         // Read and verify response
         var resp_buf: [512]u8 = undefined;
-        const n = file.read(&resp_buf) catch return Peripheral.PeripheralError.IoError;
-        if (n == 0) return Peripheral.PeripheralError.Timeout;
+        var reader = file.reader(std.Options.debug_io, &resp_buf);
+        const resp_data = reader.interface.readAlloc(std.heap.page_allocator, 512) catch return Peripheral.PeripheralError.IoError;
+        defer std.heap.page_allocator.free(resp_data);
+        if (resp_data.len == 0) return Peripheral.PeripheralError.Timeout;
 
         // Verify "ok":true in response
-        if (std.mem.indexOf(u8, resp_buf[0..n], "\"ok\":true") == null) {
+        if (std.mem.indexOf(u8, resp_data, "\"ok\":true") == null) {
             return Peripheral.PeripheralError.IoError;
         }
     }
@@ -320,26 +324,30 @@ pub const ArduinoPeripheral = struct {
     fn arduinoInit(ptr: *anyopaque) Peripheral.PeripheralError!void {
         const self = resolve(ptr);
         const allocator = self.allocator;
+        const io = std.Options.debug_io;
         // Detect Arduino by running arduino-cli board list and checking for the port.
-        var child = std.process.Child.init(
-            &.{ "arduino-cli", "board", "list" },
-            allocator,
-        );
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-        child.spawn() catch {
+        var child = std.process.spawn(io, .{
+            .argv = &.{ "arduino-cli", "board", "list" },
+            .stdout = .pipe,
+            .stderr = .ignore,
+        }) catch {
             self.connected = false;
             return Peripheral.PeripheralError.DeviceNotFound;
         };
         // Read stdout to check if our port is listed
-        const stdout = if (child.stdout) |*out| out.readToEndAlloc(allocator, 64 * 1024) catch null else null;
+        var stdout_buf: [64 * 1024]u8 = undefined;
+        const stdout = if (child.stdout) |*out| brk: {
+            var stdout_reader = out.reader(io, &stdout_buf);
+            const stdout_data = stdout_reader.interface.readAlloc(allocator, 64 * 1024) catch return Peripheral.PeripheralError.IoError;
+            break :brk stdout_data;
+        } else null;
         defer if (stdout) |s| allocator.free(s);
-        const term = child.wait() catch {
+        const term = child.wait(io) catch {
             self.connected = false;
             return Peripheral.PeripheralError.DeviceNotFound;
         };
         const exited_ok = switch (term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
         if (!exited_ok) {
@@ -352,7 +360,7 @@ pub const ArduinoPeripheral = struct {
                 self.connected = true;
                 // Open serial port for read/write communication
                 if (isSerialPathAllowed(self.port_path)) {
-                    const file = std.fs.openFileAbsolute(self.port_path, .{ .mode = .read_write }) catch return;
+                    const file = std.Io.Dir.openFileAbsolute(io, self.port_path, .{ .mode = .read_write }) catch return;
                     self.serial_file = file;
                 }
                 return;
@@ -364,7 +372,7 @@ pub const ArduinoPeripheral = struct {
 
         // Open serial port for read/write communication
         if (isSerialPathAllowed(self.port_path)) {
-            const file = std.fs.openFileAbsolute(self.port_path, .{ .mode = .read_write }) catch {
+            const file = std.Io.Dir.openFileAbsolute(io, self.port_path, .{ .mode = .read_write }) catch {
                 // Board detected but serial port not accessible — still mark connected
                 return;
             };
@@ -387,10 +395,12 @@ pub const ArduinoPeripheral = struct {
 
         // Read response (newline-delimited JSON)
         var resp_buf: [512]u8 = undefined;
-        const n = file.read(&resp_buf) catch return Peripheral.PeripheralError.IoError;
-        if (n == 0) return Peripheral.PeripheralError.Timeout;
+        var reader = file.reader(std.Options.debug_io, &resp_buf);
+        const resp_data = reader.interface.readAlloc(std.heap.page_allocator, 512) catch return Peripheral.PeripheralError.IoError;
+        defer std.heap.page_allocator.free(resp_data);
+        if (resp_data.len == 0) return Peripheral.PeripheralError.Timeout;
 
-        return SerialPeripheral.parseResultValue(resp_buf[0..n]);
+        return SerialPeripheral.parseResultValue(resp_data);
     }
 
     fn arduinoWrite(ptr: *anyopaque, addr: u32, data: u8) Peripheral.PeripheralError!void {
@@ -408,11 +418,13 @@ pub const ArduinoPeripheral = struct {
 
         // Read and verify response
         var resp_buf: [512]u8 = undefined;
-        const n = file.read(&resp_buf) catch return Peripheral.PeripheralError.IoError;
-        if (n == 0) return Peripheral.PeripheralError.Timeout;
+        var reader = file.reader(std.Options.debug_io, &resp_buf);
+        const resp_data = reader.interface.readAlloc(std.heap.page_allocator, 512) catch return Peripheral.PeripheralError.IoError;
+        defer std.heap.page_allocator.free(resp_data);
+        if (resp_data.len == 0) return Peripheral.PeripheralError.Timeout;
 
         // Verify "ok":true in response
-        if (std.mem.indexOf(u8, resp_buf[0..n], "\"ok\":true") == null) {
+        if (std.mem.indexOf(u8, resp_data, "\"ok\":true") == null) {
             return Peripheral.PeripheralError.IoError;
         }
     }
@@ -422,40 +434,43 @@ pub const ArduinoPeripheral = struct {
         if (!self.connected) return Peripheral.PeripheralError.NotConnected;
         if (firmware_path.len == 0) return Peripheral.PeripheralError.FlashFailed;
         const allocator = self.allocator;
+        const io = std.Options.debug_io;
 
         // Step 1: Compile the sketch
-        var compile_child = std.process.Child.init(
-            &.{ "arduino-cli", "compile", "--fqbn", self.fqbn, firmware_path },
-            allocator,
-        );
-        compile_child.stdout_behavior = .Ignore;
-        compile_child.stderr_behavior = .Pipe;
-        compile_child.spawn() catch return Peripheral.PeripheralError.FlashFailed;
+        var compile_child = std.process.spawn(io, .{
+            .argv = &.{ "arduino-cli", "compile", "--fqbn", self.fqbn, firmware_path },
+            .stdout = .ignore,
+            .stderr = .pipe,
+        }) catch return Peripheral.PeripheralError.FlashFailed;
         // Drain stderr to avoid pipe deadlock
         if (compile_child.stderr) |*err_pipe| {
-            _ = err_pipe.readToEndAlloc(allocator, 64 * 1024) catch {};
+            var err_buf: [64 * 1024]u8 = undefined;
+            var err_reader = err_pipe.reader(io, &err_buf);
+            const err_data = err_reader.interface.readAlloc(allocator, 64 * 1024) catch null;
+            defer if (err_data) |d| allocator.free(d);
         }
-        const compile_term = compile_child.wait() catch return Peripheral.PeripheralError.FlashFailed;
+        const compile_term = compile_child.wait(io) catch return Peripheral.PeripheralError.FlashFailed;
         const compile_ok = switch (compile_term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
         if (!compile_ok) return Peripheral.PeripheralError.FlashFailed;
 
         // Step 2: Upload to the board
-        var upload_child = std.process.Child.init(
-            &.{ "arduino-cli", "upload", "-p", self.port_path, "--fqbn", self.fqbn, firmware_path },
-            allocator,
-        );
-        upload_child.stdout_behavior = .Ignore;
-        upload_child.stderr_behavior = .Pipe;
-        upload_child.spawn() catch return Peripheral.PeripheralError.FlashFailed;
+        var upload_child = std.process.spawn(io, .{
+            .argv = &.{ "arduino-cli", "upload", "-p", self.port_path, "--fqbn", self.fqbn, firmware_path },
+            .stdout = .ignore,
+            .stderr = .pipe,
+        }) catch return Peripheral.PeripheralError.FlashFailed;
         if (upload_child.stderr) |*err_pipe| {
-            _ = err_pipe.readToEndAlloc(allocator, 64 * 1024) catch {};
+            var err_buf: [64 * 1024]u8 = undefined;
+            var err_reader = err_pipe.reader(io, &err_buf);
+            const err_data = err_reader.interface.readAlloc(allocator, 64 * 1024) catch null;
+            defer if (err_data) |d| allocator.free(d);
         }
-        const upload_term = upload_child.wait() catch return Peripheral.PeripheralError.FlashFailed;
+        const upload_term = upload_child.wait(io) catch return Peripheral.PeripheralError.FlashFailed;
         const upload_ok = switch (upload_term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
         if (!upload_ok) return Peripheral.PeripheralError.FlashFailed;
@@ -743,18 +758,10 @@ pub const NucleoFlash = struct {
         var buf: [8192]u8 = undefined;
         var reader = stdout_file.reader(io, &buf);
         var list = std.ArrayList(u8){.items = &.{}, .capacity = 0};
-        errdefer list.deinit();
+        errdefer list.deinit(allocator);
 
-        while (true) {
-            var chunk_bufs: [1][]u8 = .{try list.addManyAsSlice(allocator, 4096)};
-            const n = reader.readVec(&chunk_bufs) catch |err| {
-                if (err == error.EndOfStream) break;
-                return err;
-            };
-            if (n == 0) break;
-        }
-
-        return list.toOwnedSlice();
+        const data = reader.interface.readAlloc(allocator, 8192) catch return error.ReadFailed;
+        return data;
     }
 
     fn nucleoRead(ptr: *anyopaque, addr: u32) Peripheral.PeripheralError!u8 {

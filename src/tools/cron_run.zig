@@ -48,7 +48,9 @@ pub const CronRunTool = struct {
         };
 
         // Execute the command
-        const result = std.process.run(allocator, &.{ platform.getShell(), platform.getShellFlag(), command }, .{}) catch |err| {
+        const result = std.process.run(allocator, std.Options.debug_io, .{
+            .argv = &.{ platform.getShell(), platform.getShellFlag(), command },
+        }) catch |err| {
             // Update last_status to error
             if (scheduler.getMutableJob(job_id)) |job| {
                 job.last_status = "error";
@@ -62,8 +64,11 @@ pub const CronRunTool = struct {
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
 
-        const exit_code: u8 = result.term;
-        const success = exit_code == 0;
+        // Extract exit code from process.Child.Term enum
+        const success = switch (result.term) {
+            .exited => |code| code == 0,
+            else => false,
+        };
         const status_str: []const u8 = if (success) "success" else "error";
 
         // Update job last_run and last_status
@@ -75,10 +80,16 @@ pub const CronRunTool = struct {
 
         const status_label: []const u8 = if (success) "ok" else "error";
         const output = if (result.stdout.len > 0) result.stdout else result.stderr;
-        const msg = try std.fmt.allocPrint(allocator, "Job {s} ran: {s} (exit {d})\n{s}", .{
+        // Extract exit code for display
+        const exit_display = switch (result.term) {
+            .exited => |code| try std.fmt.allocPrint(allocator, "{d}", .{code}),
+            else => try std.fmt.allocPrint(allocator, "signal", .{}),
+        };
+        defer allocator.free(exit_display);
+        const msg = try std.fmt.allocPrint(allocator, "Job {s} ran: {s} (exit {s})\n{s}", .{
             job_id,
             status_label,
-            exit_code,
+            exit_display,
             output,
         });
         return ToolResult{ .success = true, .output = msg };

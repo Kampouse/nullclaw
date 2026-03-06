@@ -576,7 +576,7 @@ pub const LarkChannel = struct {
             &.{},
         );
 
-        self.ws_fd.store(ws.stream.handle, .release);
+        self.ws_fd.store(ws.stream, .release);
         self.connected.store(true, .release);
         defer {
             self.connected.store(false, .release);

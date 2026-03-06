@@ -474,7 +474,7 @@ pub const DiscordChannel = struct {
         );
 
         // Store fd for interrupt-on-stop
-        self.ws_fd.store(ws.stream.handle, .release);
+        self.ws_fd.store(ws.stream, .release);
 
         // Start heartbeat thread — on failure, clean up ws manually (no errdefer to avoid
         // double-deinit with the defer block below once spawn succeeds).

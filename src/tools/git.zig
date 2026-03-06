@@ -435,7 +435,7 @@ test "git push operation exists" {
 test "git cwd inside workspace works without allowed_paths" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
     const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"operation\":\"unknown_op\",\"cwd\":{f}}}", .{std.json.fmt(ws_path, .{})});
@@ -454,10 +454,11 @@ test "git cwd inside workspace works without allowed_paths" {
 test "git cwd outside workspace without allowed_paths is rejected" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.makeDir("ws");
-    try tmp_dir.dir.makeDir("other");
+    // Create directories using createDirPath (Zig 0.16 API)
+    try tmp_dir.dir.createDirPath(std.Options.debug_io, "ws");
+    try tmp_dir.dir.createDirPath(std.Options.debug_io, "other");
 
-    const root_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const root_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(root_path);
     const ws_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "ws" });
     defer std.testing.allocator.free(ws_path);

@@ -106,10 +106,10 @@ test "file_read reads existing file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile(.{ .sub_path = "test.txt", .data = "hello world" });
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "test.txt", .data = "hello world" });
 
     // Get the real path of the tmp dir
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
@@ -127,7 +127,7 @@ test "file_read reads existing file" {
 test "file_read nonexistent file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
@@ -177,10 +177,10 @@ test "file_read missing path param" {
 test "file_read nested path" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.createDirPath(std.Options.debug_io, std.Options.debug_io, "sub/dir");
-    try tmp_dir.dir.writeFile(.{ .sub_path = "sub/dir/deep.txt", .data = "deep content" });
+    try tmp_dir.dir.createDirPath(std.Options.debug_io, "sub/dir");
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "sub/dir/deep.txt", .data = "deep content" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
@@ -198,9 +198,9 @@ test "file_read nested path" {
 test "file_read empty file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "empty.txt", .data = "" });
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "empty.txt", .data = "" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
@@ -237,9 +237,9 @@ test "file_read absolute path without allowed_paths is rejected" {
 test "file_read absolute path with allowed_paths works" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "hello.txt", .data = "allowed content" });
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "hello.txt", .data = "allowed content" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path);
     const abs_file = try std.fs.path.join(std.testing.allocator, &.{ ws_path, "hello.txt" });
     defer std.testing.allocator.free(abs_file);

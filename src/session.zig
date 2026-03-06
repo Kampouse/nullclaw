@@ -144,7 +144,7 @@ pub const SessionManager = struct {
             .last_consolidated = 0,
             .session_key = owned_key,
             .turn_count = 0,
-            .mutex = undefined,
+            .mutex = std.Io.Mutex{ .state = .init(.unlocked) },
         };
         // From here, session owns agent — must deinit on error.
         errdefer session.agent.deinit();

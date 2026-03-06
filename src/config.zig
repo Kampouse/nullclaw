@@ -1215,13 +1215,16 @@ test "save includes channels section by default" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Get the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     const cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1242,13 +1245,16 @@ test "save writes configured telegram channel account" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1290,13 +1296,16 @@ test "save roundtrip preserves telegram interactive settings" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1324,7 +1333,7 @@ test "save roundtrip preserves telegram interactive settings" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1341,13 +1350,16 @@ test "save roundtrip preserves diagnostics logging flags" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1367,7 +1379,7 @@ test "save roundtrip preserves diagnostics logging flags" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1384,9 +1396,12 @@ test "save roundtrip preserves reliability settings" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     const fallback_models = [_][]const u8{
@@ -1401,7 +1416,7 @@ test "save roundtrip preserves reliability settings" {
     };
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1426,7 +1441,7 @@ test "save roundtrip preserves reliability settings" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1471,13 +1486,16 @@ test "save roundtrip preserves extended config sections" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1641,7 +1659,7 @@ test "save roundtrip preserves extended config sections" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1695,13 +1713,16 @@ test "save escapes mcp_servers strings safely" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1735,7 +1756,7 @@ test "save escapes mcp_servers strings safely" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -2661,11 +2682,15 @@ test "save and load roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -2684,7 +2709,7 @@ test "save and load roundtrip" {
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
 
     var cfg2 = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -2937,13 +2962,16 @@ test "save writes provider native_tools when false" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };

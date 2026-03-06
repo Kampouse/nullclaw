@@ -471,8 +471,8 @@ pub fn deleteCredential(allocator: std.mem.Allocator, provider: []const u8) !boo
     }
     try buf.append(allocator, '}');
 
-    const file = std.Io.Dir.cwd().createFile(file_path, .{}) catch return error.CredentialWriteFailed;
-    defer file.close(io);
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, file_path, .{}) catch return error.CredentialWriteFailed;
+    defer file.close(std.Options.debug_io);
     file.writeStreamingAll(std.Options.debug_io, buf.items) catch return error.CredentialWriteFailed;
 
     return true;
@@ -501,7 +501,7 @@ pub fn startDeviceCodeFlow(
     device_auth_url: []const u8,
     scope: []const u8,
 ) !DeviceCode {
-    var client: std.http.Client = .{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator, .io = std.Options.debug_io };
     defer client.deinit();
 
     const payload = try std.fmt.allocPrint(
@@ -588,7 +588,7 @@ pub fn pollDeviceCode(
     device_code: []const u8,
     interval_s: u32,
 ) !OAuthToken {
-    var client: std.http.Client = .{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator, .io = std.Options.debug_io };
     defer client.deinit();
 
     const payload = try std.fmt.allocPrint(

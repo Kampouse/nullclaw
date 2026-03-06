@@ -2623,11 +2623,11 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     defer if (sec_tracker_opt) |*tracker| tracker.deinit();
 
     // Resolve the listen address
-    const addr = try std.net.Address.resolveIp(host, port);
-    var server = try addr.listen(.{
+    const addr = try std.Io.net.IpAddress.parse(host, port);
+    var server = try std.Io.net.IpAddress.listen(addr, std.Options.debug_io, .{
         .reuse_address = true,
     });
-    defer server.deinit();
+    defer server.deinit(std.Options.debug_io);
 
     var stdout_buf: [4096]u8 = undefined;
     var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
@@ -2647,8 +2647,8 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
     // Accept loop — read raw HTTP from TCP connections
     while (true) {
-        var conn = server.accept() catch continue;
-        defer conn.stream.close();
+        var conn = server.accept(std.Options.debug_io) catch continue;
+        defer conn.close(std.Options.debug_io);
 
         // Per-request arena — all request-scoped allocations freed in one shot
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -2657,7 +2657,8 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
         // Read request line + headers from TCP stream
         var req_buf: [4096]u8 = undefined;
-        const n = conn.stream.read(&req_buf) catch continue;
+        var conn_reader = conn.reader(std.Options.debug_io, &req_buf);
+        const n = conn_reader.interface.readSliceShort(&req_buf) catch continue;
         if (n == 0) continue;
         const raw = req_buf[0..n];
 
@@ -2837,7 +2838,10 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         // Send HTTP response
         var resp_buf: [2048]u8 = undefined;
         const resp = std.fmt.bufPrint(&resp_buf, "HTTP/1.1 {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}", .{ response_status, response_body.len, response_body }) catch continue;
-        _ = conn.stream.write(resp) catch continue;
+        // Write the response using the Stream's write method
+        var write_buf: [2048]u8 = undefined;
+        var writer = conn.writer(std.Options.debug_io, &write_buf);
+        _ = writer.interface.writeAll(resp) catch continue;
     }
 }
 

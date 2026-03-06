@@ -390,18 +390,16 @@ pub const IMessageChannel = struct {
         };
         defer self.allocator.free(script);
 
-        var child = std.process.Child.init(&.{ "osascript", "-e", script }, self.allocator);
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
+        var child = std.process.spawn(std.Options.debug_io, .{
+            .argv = &.{ "osascript", "-e", script },
+            .stdout = .pipe,
+        }) catch return error.IMessageSendFailed;
+        defer child.stdout.?.close(std.Options.debug_io);
 
-        try child.spawn();
-        const result = try child.wait();
-        defer self.allocator.free(result.stdout);
-        defer self.allocator.free(result.stderr);
+        const result = child.wait(std.Options.debug_io) catch return error.IMessageSendFailed;
 
-        switch (result.term) {
-            .Exited => |code| if (code != 0) return error.IMessageSendFailed,
+        switch (result) {
+            .exited => |code| if (code != 0) return error.IMessageSendFailed,
             else => return error.IMessageSendFailed,
         }
     }

@@ -81,8 +81,7 @@ pub const PushoverTool = struct {
         }
 
         // Send via curl
-        const result = std.process.Child.run(.{
-            .allocator = allocator,
+        const result = std.process.run(allocator, std.Options.debug_io, .{
             .argv = &.{
                 "curl", "-s",           "-X",             "POST",
                 "-d",   body_buf.items, PUSHOVER_API_URL,
@@ -127,7 +126,7 @@ pub const PushoverTool = struct {
         const env_path = try std.fmt.allocPrint(allocator, "{s}/.env", .{self.workspace_dir});
         defer allocator.free(env_path);
 
-        const content = std.fs.cwd().readFileAlloc(allocator, env_path, 1_048_576) catch
+        const content = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, env_path, allocator, .limited(1_048_576)) catch
             return error.EnvFileNotFound;
         // TODO: Zig 0.16.0 - disabled
     // defer allocator.free(content);

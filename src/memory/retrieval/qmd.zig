@@ -320,7 +320,7 @@ pub const QmdAdapter = struct {
             const age_ns = now_ns - mtime_ns;
 
             if (age_ns > retention_ns) {
-                dir.deleteFile(entry.name) catch continue;
+                dir.deleteFile(std.Options.debug_io, entry.name) catch continue;
                 deleted += 1;
             }
         }
@@ -643,6 +643,6 @@ test "pruneExportedSessions deletes old files" {
     try std.testing.expectEqual(@as(u32, 1), deleted);
 
     // Verify file was deleted
-    const result = tmp.dir.statFile("old-session.md");
+    const result = tmp.dir.statFile(std.Options.debug_io, "old-session.md", .{});
     try std.testing.expectError(error.FileNotFound, result);
 }

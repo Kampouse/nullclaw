@@ -77,7 +77,9 @@ pub const FileAppendTool = struct {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg };
             };
-            const data = file.interface.readAlloc(allocator, self.max_file_size) catch |err| {
+            var file_buf: [8192]u8 = undefined;
+            var file_reader = file.reader(io, &file_buf);
+            const data = file_reader.interface.readAlloc(allocator, self.max_file_size) catch |err| {
                 file.close(io);
                 const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg };
@@ -101,11 +103,16 @@ pub const FileAppendTool = struct {
         };
         defer file_w.close(io);
 
-        file_w.interface.writeAll(new_contents) catch |err| {
+        // Write all contents to file
+        var buf: [4096]u8 = undefined;
+        var bw = file_w.writer(io, &buf);
+        const w = &bw.interface;
+
+        w.writeAll(new_contents) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
-        file_w.interface.flush() catch |err| {
+        w.flush() catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to flush file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
@@ -186,7 +193,7 @@ test "FileAppendTool appends to existing file" {
     try testing.expect(result.success);
     try testing.expect(std.mem.indexOf(u8, result.output, "Appended") != null);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "log.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "log.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("line1line2", actual);
 }
@@ -208,7 +215,7 @@ test "FileAppendTool creates new file" {
 
     try testing.expect(result.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "new.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "new.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("hello", actual);
 }
@@ -231,7 +238,7 @@ test "FileAppendTool appends to empty file" {
 
     try testing.expect(result.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "empty.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "empty.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("data", actual);
 }
@@ -261,7 +268,7 @@ test "FileAppendTool multiple appends" {
     defer if (r2.error_msg) |e| testing.allocator.free(e);
     try testing.expect(r2.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "multi.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "multi.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("ABC", actual);
 }

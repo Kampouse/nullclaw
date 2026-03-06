@@ -47,7 +47,7 @@ pub const SseConnection = struct {
     pub fn init(allocator: std.mem.Allocator, url: []const u8) SseConnection {
         return .{
             .allocator = allocator,
-            .client = std.http.Client{ .allocator = allocator },
+            .client = std.http.Client{ .allocator = allocator, .io = std.Options.debug_io },
             .request = null,
             .body_reader = null,
             .url = url,
@@ -219,11 +219,12 @@ pub const SseConnection = struct {
         // For TLS and buffered transports, data may already be decoded and
         // available even when the socket is not currently poll-readable.
         if (conn.reader().bufferedLen() > 0) return true;
-        const stream = conn.stream_reader.getStream();
+        // Access the socket handle from the stream reader
+        const stream_handle = conn.stream_reader.stream.socket.handle;
 
         var poll_fds = [_]std.posix.pollfd{
             .{
-                .fd = stream.handle,
+                .fd = stream_handle,
                 .events = std.posix.POLL.IN,
                 .revents = undefined,
             },

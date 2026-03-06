@@ -185,7 +185,9 @@ pub const ReadinessResult = struct {
         defer buf.deinit(allocator);
 
         const status_str = if (self.status == .ready) "ready" else "not_ready";
-        try buf.appendSlice(allocator, &std.fmt.comptimePrint("{{\"status\":\"{s}\",\"checks\":[", .{status_str}));
+        const prefix = try std.fmt.allocPrint(allocator, "{{\"status\":\"{s}\",\"checks\":[", .{status_str});
+        defer allocator.free(prefix);
+        try buf.appendSlice(allocator, prefix);
 
         for (self.checks, 0..) |check, i| {
             if (i > 0) try buf.append(allocator, ',');
