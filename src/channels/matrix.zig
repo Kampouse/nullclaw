@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
+const util = @import("../util.zig");
 
 const log = std.log.scoped(.matrix);
 

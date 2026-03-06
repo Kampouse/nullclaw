@@ -4,6 +4,7 @@ const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
 const bus = @import("../bus.zig");
 const websocket = @import("../websocket.zig");
+const util = @import("../util.zig");
 
 const log = std.log.scoped(.lark);
 

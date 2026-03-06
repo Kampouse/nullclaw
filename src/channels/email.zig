@@ -1,6 +1,7 @@
 const std = @import("std");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
+const util = @import("../util.zig");
 
 /// Email channel — IMAP polling for inbound, SMTP for outbound.
 pub const EmailChannel = struct {

@@ -6,6 +6,7 @@ const bus_mod = @import("../bus.zig");
 const config_types = @import("../config_types.zig");
 
 const Atomic = @import("../portable_atomic.zig").Atomic;
+const util = @import("../util.zig");
 
 const log = std.log.scoped(.mattermost);
 

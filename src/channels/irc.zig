@@ -2,6 +2,7 @@ const std = @import("std");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
 const bus_mod = @import("../bus.zig");
+const util = @import("../util.zig");
 
 const log = std.log.scoped(.irc);
 

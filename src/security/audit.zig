@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("../util.zig");
 const Allocator = std.mem.Allocator;
 const audit_log = std.log.scoped(.audit);
 
