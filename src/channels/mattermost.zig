@@ -9,7 +9,7 @@ const Atomic = @import("../portable_atomic.zig").Atomic;
 
 const log = std.log.scoped(.mattermost);
 
-const SocketFd = std.net.Stream.Handle;
+const SocketFd = std.posix.socket_t;
 const invalid_socket: SocketFd = switch (builtin.os.tag) {
     .windows => std.os.windows.ws2_32.INVALID_SOCKET,
     else => -1,
@@ -84,7 +84,7 @@ pub const MattermostChannel = struct {
     ws_fd: Atomic(SocketFd) = Atomic(SocketFd).init(invalid_socket),
     gateway_thread: ?std.Thread = null,
 
-    bot_state_mu: std.Thread.Mutex = .{},
+    bot_state_mu: std.Io.Mutex = .{ .state = .{ .raw = 0 } },
     bot_user_id: ?[]u8 = null,
     bot_username: ?[]u8 = null,
 

@@ -7,7 +7,7 @@ const websocket = @import("../websocket.zig");
 
 const log = std.log.scoped(.slack);
 
-const SocketFd = std.net.Stream.Handle;
+const SocketFd = std.posix.socket_t;
 const invalid_socket: SocketFd = switch (builtin.os.tag) {
     .windows => std.os.windows.ws2_32.INVALID_SOCKET,
     else => -1,

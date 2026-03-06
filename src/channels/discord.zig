@@ -24,7 +24,7 @@ pub const DiscordChannel = struct {
     intents: u32 = 37377, // GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT|DIRECT_MESSAGES
     bus: ?*bus_mod.Bus = null,
 
-    typing_mu: std.Io.Mutex = .{},
+    typing_mu: std.Io.Mutex = .{ .state = .{ .raw = 0 } },
     typing_handles: std.StringHashMapUnmanaged(*TypingTask) = .empty,
 
     // Gateway state
@@ -38,7 +38,7 @@ pub const DiscordChannel = struct {
     gateway_thread: ?std.Thread = null,
     ws_fd: Atomic(SocketFd) = Atomic(SocketFd).init(invalid_socket),
 
-    const SocketFd = std.net.Stream.Handle;
+    const SocketFd = std.posix.socket_t;
     const invalid_socket: SocketFd = switch (builtin.os.tag) {
         .windows => std.os.windows.ws2_32.INVALID_SOCKET,
         else => -1,

@@ -306,7 +306,7 @@ pub fn buildDmUrl(buf: []u8, base: []const u8, guild_id: []const u8) ![]const u8
 /// Build the REST API URL for sending a group message.
 /// Format: {base}/v2/groups/{group_openid}/messages
 pub fn buildGroupSendUrl(buf: []u8, base: []const u8, group_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = std.io.FixedBufferStream.init(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/groups/{s}/messages", .{ base, group_openid });
     return fbs.getWritten();
@@ -773,8 +773,8 @@ pub const QQChannel = struct {
     /// Ensure a valid access_token is available, fetching or refreshing as needed.
     /// Returns a caller-owned copy of the token to avoid lifetime races with stop().
     fn ensureAccessToken(self: *QQChannel) ![]u8 {
-        self.token_mu.lock();
-        defer self.token_mu.unlock();
+        self.token_mu.lock(std.Options.debug_io);
+        defer self.token_mu.unlock(std.Options.debug_io);
 
         const now = util.timestampUnix();
         if (self.access_token) |tok| {
