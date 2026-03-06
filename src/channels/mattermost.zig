@@ -85,7 +85,7 @@ pub const MattermostChannel = struct {
     ws_fd: Atomic(SocketFd) = Atomic(SocketFd).init(invalid_socket),
     gateway_thread: ?std.Thread = null,
 
-    bot_state_mu: std.Io.Mutex = .{ .state = .{ .raw = 0 } },
+    bot_state_mu: std.Io.Mutex = undefined,
     bot_user_id: ?[]u8 = null,
     bot_username: ?[]u8 = null,
 

@@ -92,7 +92,7 @@ pub const SessionManager = struct {
             .session_store = session_store,
             .response_cache = response_cache,
             .observer = observer_i,
-            .mutex = .{ .state = .{ .raw = 0 } },
+            .mutex = undefined,
             .sessions = .{},
         };
     }
@@ -144,7 +144,7 @@ pub const SessionManager = struct {
             .last_consolidated = 0,
             .session_key = owned_key,
             .turn_count = 0,
-            .mutex = .{ .state = .{ .raw = 0 } },
+            .mutex = undefined,
         };
         // From here, session owns agent — must deinit on error.
         errdefer session.agent.deinit();

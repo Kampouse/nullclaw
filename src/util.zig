@@ -151,6 +151,11 @@ pub const FixedBufferStream = struct {
         pub fn print(self: Writer, comptime fmt: []const u8, args: anytype) Error!void {
             return self.context.print(fmt, args);
         }
+
+        pub fn writeStreamingAll(self: Writer, io: std.Io, bytes: []const u8) Error!void {
+            _ = io;
+            return self.context.writeAll(bytes);
+        }
     };
 };
 
