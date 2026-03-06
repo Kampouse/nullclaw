@@ -21,7 +21,7 @@ pub const HealthSnapshot = struct {
 };
 
 /// Global health registry — thread-safe singleton.
-var registry_mutex: std.Thread.Mutex = .{};
+var registry_mutex: std.Io.Mutex = .{ .state = .init(.unlocked) };
 var registry_components: std.StringHashMapUnmanaged(ComponentHealth) = .empty;
 var registry_started: bool = false;
 var registry_start_time: i64 = 0;
@@ -40,8 +40,8 @@ fn nowTimestamp(buf: *[32]u8) usize {
 }
 
 fn upsertComponent(component: []const u8, update_fn: *const fn (*ComponentHealth, [32]u8, usize) void) void {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return;
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
     var ts_buf: [32]u8 = undefined;
@@ -82,8 +82,8 @@ pub fn markComponentOk(component: []const u8) void {
 
 /// Mark a component as errored.
 pub fn markComponentError(component: []const u8, err_msg: []const u8) void {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return;
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
     var ts_buf: [32]u8 = undefined;
@@ -110,8 +110,12 @@ pub fn bumpComponentRestart(component: []const u8) void {
 
 /// Get a snapshot of the current health state.
 pub fn snapshot() HealthSnapshot {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return .{
+        .pid = 0,
+        .uptime_seconds = 0,
+        .components = &.{},
+    };
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
     const now = util.timestampUnix();
@@ -126,15 +130,15 @@ pub fn snapshot() HealthSnapshot {
 
 /// Get a specific component's health.
 pub fn getComponentHealth(component: []const u8) ?ComponentHealth {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return null;
+    defer registry_mutex.unlock(std.Options.debug_io);
     return registry_components.get(component);
 }
 
 /// Reset the health registry (for testing).
 pub fn reset() void {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return;
+    defer registry_mutex.unlock(std.Options.debug_io);
     registry_components = .empty;
     registry_started = false;
     registry_start_time = 0;
@@ -230,8 +234,8 @@ pub fn checkReadiness(components: []const ComponentHealth) ReadinessResult {
 /// named component checks. Uses provided allocator for the checks slice.
 /// Caller owns the returned checks slice.
 pub fn checkRegistryReadiness(allocator: std.mem.Allocator) !ReadinessResult {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return error.Unknown;
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
     const count = registry_components.count();

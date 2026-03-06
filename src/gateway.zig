@@ -60,7 +60,7 @@ const GatewayTurnToolEvent = struct {
 /// Used to enrich webhook responses with tool execution summaries.
 const GatewayThreadObserver = struct {
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .{},
     next_seq: u64 = 0,
     events: std.ArrayListUnmanaged(GatewayObservedToolEvent) = .empty,
 
@@ -192,7 +192,7 @@ pub const SlidingWindowRateLimiter = struct {
             .limit_per_window = limit_per_window,
             .window_ns = @as(i128, @intCast(window_secs)) * 1_000_000_000,
             .entries = .empty,
-            .last_sweep = std.time.nanoTimestamp(),
+            .last_sweep = util.nanoTimestamp(),
         };
     }
 
@@ -208,7 +208,7 @@ pub const SlidingWindowRateLimiter = struct {
     pub fn allow(self: *SlidingWindowRateLimiter, allocator: std.mem.Allocator, key: []const u8) bool {
         if (self.limit_per_window == 0) return true;
 
-        const now = std.time.nanoTimestamp();
+        const now = util.nanoTimestamp();
         const cutoff = now - self.window_ns;
 
         // Periodic sweep
@@ -316,7 +316,7 @@ pub const IdempotencyStore = struct {
     /// Returns true if this key is new and is now recorded.
     /// Returns false if this is a duplicate.
     pub fn recordIfNew(self: *IdempotencyStore, allocator: std.mem.Allocator, key: []const u8) bool {
-        const now = std.time.nanoTimestamp();
+        const now = util.nanoTimestamp();
         const cutoff = now - self.ttl_ns;
 
         // Clean expired keys (simple sweep)
@@ -1471,18 +1471,16 @@ pub fn extractBody(raw: []const u8) ?[]const u8 {
 /// Process an incoming message by spawning `nullclaw agent -m "..."`.
 /// Returns the agent's response text. Caller owns the returned memory.
 pub fn processIncomingMessage(allocator: std.mem.Allocator, message: []const u8) ![]u8 {
+    _ = message; // TODO: pass to agent via stdin
     // Find our own executable path
     var self_buf: [std.fs.max_path_bytes]u8 = undefined;
     const self_path = std.fs.selfExePath(&self_buf) catch "nullclaw";
 
-    var child = std.process.Child.init(
-        &[_][]const u8{ self_path, "agent", "-m", message },
-        allocator,
-    );
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-
-    try child.spawn();
+    var child = try std.process.spawn(std.Options.debug_io, .{
+        .argv = &[_][]const u8{self_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
 
     // Read stdout
     var stdout_buf: std.ArrayList(u8) = .empty;
@@ -1496,7 +1494,7 @@ pub fn processIncomingMessage(allocator: std.mem.Allocator, message: []const u8)
         try stdout_buf.appendSlice(allocator, read_buf[0..n]);
     }
 
-    const term = try child.wait();
+    const term = try child.wait(std.Options.debug_io);
     _ = term;
 
     if (stdout_buf.items.len > 0) {
@@ -1542,7 +1540,7 @@ pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, ch
     curl_child.stderr_behavior = .Pipe;
 
     curl_child.spawn() catch return;
-    _ = curl_child.wait() catch {};
+    _ = curl_child.wait(std.Options.debug_io) catch {};
 }
 
 fn userFacingAgentError(err: anyerror) []const u8 {
@@ -2591,7 +2589,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     defer server.deinit();
 
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
     try stdout.print("Gateway listening on {s}:{d}\n", .{ host, port });
     try stdout.flush();

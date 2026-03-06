@@ -216,11 +216,11 @@ pub const DEDUP_CAPACITY: usize = 10_000;
 pub const StringDedupSet = struct {
     seen: std.StringHashMapUnmanaged(void) = .empty,
     order: std.ArrayListUnmanaged([]u8) = .empty,
-    mu: std.Thread.Mutex = .{},
+    mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
 
     pub fn deinit(self: *StringDedupSet, allocator: std.mem.Allocator) void {
-        self.mu.lock();
-        defer self.mu.unlock();
+        self.mu.lock(std.Options.debug_io) catch return;
+        defer self.mu.unlock(std.Options.debug_io);
         for (self.order.items) |key| allocator.free(key);
         self.order.deinit(allocator);
         self.seen.deinit(allocator);
@@ -732,7 +732,7 @@ pub const QQChannel = struct {
     heartbeat_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     force_heartbeat: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     ws_fd: std.atomic.Value(std.posix.socket_t) = std.atomic.Value(std.posix.socket_t).init(invalid_socket),
-    token_mu: std.Thread.Mutex = .{},
+    token_mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
 
     // ── Access token state ──
     access_token: ?[]u8 = null,

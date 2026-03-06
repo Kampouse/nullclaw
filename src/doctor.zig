@@ -15,6 +15,7 @@ const channel_catalog = @import("channel_catalog.zig");
 const daemon = @import("daemon.zig");
 const cron = @import("cron.zig");
 const builtin = @import("builtin");
+const child_compat = @import("child_compat.zig");
 
 /// Staleness thresholds (seconds).
 const DAEMON_STALE_SECONDS: i64 = 30;
@@ -33,11 +34,14 @@ const Color = struct {
 pub fn shouldColorize(file: std.Io.File) bool {
     // Respect NO_COLOR convention (https://no-color.org/)
     if (comptime builtin.os.tag != .windows) {
-        if (std.posix.getenv("NO_COLOR")) |_| return false;
+        // Check if NO_COLOR is set - use std.c.getenv for direct access
+        if (std.c.getenv("NO_COLOR")) |val| {
+            if (val[0] != 0) return false;
+        }
     }
 
     // Never colorize if stdout is redirected to a file/pipe
-    if (!file.isTty()) return false;
+    if (!(file.isTty(std.Options.debug_io) catch false)) return false;
 
     // On Windows, attempt to enable Virtual Terminal Processing.
     // If that fails, fall back to no color.
@@ -129,7 +133,7 @@ pub fn runDoctor(
     checkChannels(allocator, config, &items);
 
     // Print grouped report
-    try writer.writeStreamingAll(std.Options.debug_io, "nullclaw Doctor (enhanced)\n\n");
+    try writer.writeAll("nullclaw Doctor (enhanced)\n\n");
 
     var current_cat: []const u8 = "";
     var ok_count: u32 = 0;
@@ -152,7 +156,7 @@ pub fn runDoctor(
 
     try writer.print("\nSummary: {d} ok, {d} warnings, {d} errors\n", .{ ok_count, warn_count, err_count });
     if (err_count > 0) {
-        try writer.writeStreamingAll(std.Options.debug_io, "Run 'nullclaw doctor --fix' or check your config.\n");
+        try writer.writeAll("Run 'nullclaw doctor --fix' or check your config.\n");
     }
 }
 
@@ -160,7 +164,7 @@ pub fn runDoctor(
 pub fn run(allocator: std.mem.Allocator) !void {
     const stdout_file = std.Io.File.stdout();
     var stdout_buf: [4096]u8 = undefined;
-    var bw = stdout_file.writer(&stdout_buf);
+    var bw = stdout_file.writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
     const color = shouldColorize(stdout_file);
 
@@ -280,9 +284,9 @@ pub fn checkWorkspace(
     const ws = config.workspace_dir;
 
     // Check directory exists
-    if (std.fs.openDirAbsolute(ws, .{})) |dir| {
+    if (std.Io.Dir.openDirAbsolute(std.Options.debug_io, ws, .{})) |dir| {
         var d = dir;
-        d.close();
+        d.close(std.Options.debug_io);
         try items.append(allocator, DiagItem.ok(cat, try std.fmt.allocPrint(allocator, "directory exists: {s}", .{ws})));
     } else |_| {
         try items.append(allocator, DiagItem.err(cat, try std.fmt.allocPrint(allocator, "directory missing: {s}", .{ws})));
@@ -294,15 +298,15 @@ pub fn checkWorkspace(
     const probe_path = try std.fs.path.join(allocator, &.{ ws, probe_name });
     defer allocator.free(probe_path);
 
-    if (std.fs.createFileAbsolute(probe_path, .{})) |file| {
+    if (std.Io.Dir.createFileAbsolute(std.Options.debug_io, probe_path, .{})) |file| {
         file.writeStreamingAll(std.Options.debug_io, "probe") catch {
-            file.close();
-            std.fs.deleteFileAbsolute(probe_path) catch {};
+            file.close(std.Options.debug_io);
+            std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, probe_path) catch {};
             try items.append(allocator, DiagItem.err(cat, "directory write probe failed"));
             return;
         };
-        file.close();
-        std.fs.deleteFileAbsolute(probe_path) catch {};
+        file.close(std.Options.debug_io);
+        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, probe_path) catch {};
         try items.append(allocator, DiagItem.ok(cat, "directory is writable"));
     } else |_| {
         try items.append(allocator, DiagItem.err(cat, "directory is not writable"));
@@ -329,11 +333,11 @@ fn checkFileExists(
     cat: []const u8,
     items: *std.ArrayList(DiagItem),
 ) !void {
-    const dir = std.fs.openDirAbsolute(base_dir, .{}) catch return;
+    const dir = std.Io.Dir.openDirAbsolute(std.Options.debug_io, base_dir, .{}) catch return;
     var d = dir;
-    defer d.close();
+    defer d.close(std.Options.debug_io);
 
-    if (d.statFile(name)) |_| {
+    if (d.statFile(std.Options.debug_io, name, .{})) |_| {
         if (std.mem.eql(u8, name, "SOUL.md")) {
             try items.append(allocator, DiagItem.ok(cat, "SOUL.md present"));
         } else if (std.mem.eql(u8, name, "AGENTS.md")) {
@@ -353,15 +357,12 @@ fn checkFileExists(
 }
 
 fn getDiskAvailableMb(allocator: std.mem.Allocator, path: []const u8) !?u64 {
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &.{ "df", "-m", path },
-        .max_output_bytes = 4096,
-    }) catch return null;
+    const io = std.Options.debug_io;
+    const result = child_compat.run(allocator, io, &.{ "df", "-m", path }, 4096) catch return null;
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     switch (result.term) {
-        .Exited => |code| if (code != 0) return null,
+        .exited => |code| if (code != 0) return null,
         else => return null,
     }
     return parseDfAvailableMb(result.stdout);
@@ -405,7 +406,7 @@ pub fn checkDaemonState(
     const state_path = try daemon.stateFilePath(allocator, config);
     defer allocator.free(state_path);
 
-    const content = std.Io.Dir.cwd().readFileAlloc(allocator, state_path, 1024 * 1024) catch {
+    const content = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, state_path, allocator, .limited(1024 * 1024)) catch {
         try items.append(allocator, DiagItem.err(cat, try std.fmt.allocPrint(
             allocator,
             "state file not found: {s} -- is the daemon running?",
@@ -549,14 +550,10 @@ pub fn checkEnvironment(
     }
 
     // $SHELL
-    if (std.process.getEnvVarOwned(allocator, "SHELL")) |shell| {
+    if (platform.getEnvOrNull(allocator, "SHELL")) |shell| {
         defer allocator.free(shell);
-        if (shell.len > 0) {
-            try items.append(allocator, DiagItem.ok(cat, try std.fmt.allocPrint(allocator, "shell: {s}", .{shell})));
-        } else {
-            try items.append(allocator, DiagItem.warn(cat, "$SHELL not set"));
-        }
-    } else |_| {
+        try items.append(allocator, DiagItem.ok(cat, try std.fmt.allocPrint(allocator, "shell: {s}", .{shell})));
+    } else {
         try items.append(allocator, DiagItem.warn(cat, "$SHELL not set"));
     }
 
@@ -570,15 +567,12 @@ pub fn checkEnvironment(
 }
 
 fn checkCommandAvailable(allocator: std.mem.Allocator, cmd: []const u8) !?[]const u8 {
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &.{ cmd, "--version" },
-        .max_output_bytes = 1024,
-    }) catch return null;
+    const io = std.Options.debug_io;
+    const result = child_compat.run(allocator, io, &.{ cmd, "--version" }, 1024) catch return null;
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     switch (result.term) {
-        .Exited => |code| if (code != 0) return null,
+        .exited => |code| if (code != 0) return null,
         else => return null,
     }
 
@@ -709,8 +703,8 @@ test "DiagItem.iconColored returns ANSI-colored strings" {
 
 test "shouldColorize returns false for non-TTY file" {
     // Open /dev/null — it's not a TTY, so shouldColorize should return false
-    const devnull = std.fs.openFileAbsolute("/dev/null", .{}) catch return;
-    defer devnull.close();
+    const devnull = std.Io.Dir.openFileAbsolute(std.Options.debug_io, "/dev/null", .{}) catch return;
+    defer devnull.close(std.Options.debug_io);
     try std.testing.expect(!shouldColorize(devnull));
 }
 

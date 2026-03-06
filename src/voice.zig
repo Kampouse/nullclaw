@@ -297,15 +297,15 @@ fn curlPostFromFile(
     argv_buf[argc] = url;
     argc += 1;
 
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
+    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_buf[0..argc] });
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;
 
-    try child.spawn();
+    // child already spawned
 
     const stdout = child.stdout.?.readToEndAlloc(allocator, 4 * 1024 * 1024) catch return error.CurlReadError;
 
-    const term = child.wait() catch return error.CurlWaitError;
+    const term = child.wait(std.Options.debug_io) catch return error.CurlWaitError;
     switch (term) {
         .Exited => |code| if (code != 0) {
             allocator.free(stdout);

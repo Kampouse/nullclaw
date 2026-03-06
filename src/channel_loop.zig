@@ -73,10 +73,12 @@ pub fn loadTelegramUpdateOffset(
     const path = telegramUpdateOffsetPath(allocator, config, account_id) catch return null;
     defer allocator.free(path);
 
-    const file = std.fs.openFileAbsolute(path, .{}) catch return null;
-    defer file.close();
+    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch return null;
+    defer file.close(std.Options.debug_io);
 
-    const content = file.readToEndAlloc(allocator, 16 * 1024) catch return null;
+    var read_buffer: [16 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited) catch return null;
     defer allocator.free(content);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return null;
@@ -115,9 +117,9 @@ pub fn saveTelegramUpdateOffset(
     defer allocator.free(path);
 
     if (std.fs.path.dirname(path)) |dir| {
-        std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, dir, .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
-            else => try std.fs.cwd().makePath(dir),
+            else => try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir),
         };
     }
 
@@ -138,15 +140,15 @@ pub fn saveTelegramUpdateOffset(
     defer allocator.free(tmp_path);
 
     {
-        var tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
-        defer tmp_file.close();
+        var tmp_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, tmp_path, .{});
+        defer tmp_file.close(std.Options.debug_io);
         try tmp_file.writeStreamingAll(std.Options.debug_io, buf.items);
     }
 
-    std.fs.renameAbsolute(tmp_path, path) catch {
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
-        const file = try std.fs.createFileAbsolute(path, .{});
-        defer file.close();
+    std.Io.Dir.renameAbsolute(std.Options.debug_io, tmp_path, path) catch {
+        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
+        const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{});
+        defer file.close(std.Options.debug_io);
         try file.writeStreamingAll(std.Options.debug_io, buf.items);
     };
 }
@@ -1035,13 +1037,13 @@ test "telegram update offset store treats legacy payload without bot_id as stale
     const offset_path = try telegramUpdateOffsetPath(allocator, &cfg, "default");
     defer allocator.free(offset_path);
     const offset_dir = std.fs.path.dirname(offset_path).?;
-    std.fs.makeDirAbsolute(offset_dir) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, offset_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
-        else => try std.fs.cwd().makePath(offset_dir),
+        else => try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, offset_dir),
     };
-    const file = try std.fs.createFileAbsolute(offset_path, .{});
-    defer file.close();
-    try file.writeStreamingAll(std.Options.debug_io, 
+    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, offset_path, .{});
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io,
         \\{
         \\  "version": 1,
         \\  "last_update_id": 456
@@ -1074,8 +1076,8 @@ test "telegram offset persistence helper retries after write failure" {
     defer allocator.free(blocked_state_path);
 
     {
-        const blocked_state_file = try std.fs.createFileAbsolute(blocked_state_path, .{});
-        blocked_state_file.close();
+        const blocked_state_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, blocked_state_path, .{});
+        blocked_state_file.close(std.Options.debug_io);
     }
 
     var persisted_update_id: i64 = 100;
@@ -1090,7 +1092,7 @@ test "telegram offset persistence helper retries after write failure" {
     try std.testing.expectEqual(@as(i64, 100), persisted_update_id);
     try std.testing.expect(loadTelegramUpdateOffset(allocator, &cfg, "main", "12345:test-token") == null);
 
-    try std.fs.deleteFileAbsolute(blocked_state_path);
+    try std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, blocked_state_path);
 
     persistTelegramUpdateOffsetIfAdvanced(
         allocator,

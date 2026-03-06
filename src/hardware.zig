@@ -503,16 +503,14 @@ fn parseTimestampSecs(ts_str: []const u8) i64 {
 /// Linux monitor: spawn `udevadm monitor --udev --subsystem-match=usb --property`
 /// and parse header + property lines from its stdout.
 fn runLinuxMonitor(monitor: *HotplugMonitor) void {
-    var child = std.process.Child.init(
-        &.{ "udevadm", "monitor", "--udev", "--subsystem-match=usb", "--property" },
-        monitor.allocator,
-    );
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    child.spawn() catch return;
+    var child = std.process.spawn(std.Options.debug_io, .{
+        .argv = &.{ "udevadm", "monitor", "--udev", "--subsystem-match=usb", "--property" },
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch return;
     defer {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        child.kill(std.Options.debug_io);
+        _ = child.wait(std.Options.debug_io) catch {};
     }
 
     const cb = monitor.callback orelse return;

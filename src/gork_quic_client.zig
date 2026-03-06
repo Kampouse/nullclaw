@@ -107,7 +107,7 @@ pub const GorkQuicClient = struct {
             }
 
             // Wait for process to exit
-            _ = child.wait() catch {};
+            _ = child.wait(std.Options.debug_io) catch {};
 
             self.bridge_process = null;
         }

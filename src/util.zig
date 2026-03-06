@@ -54,6 +54,15 @@ pub fn timestampUnix() i64 {
     return tv.sec;
 }
 
+/// Get current Unix timestamp in nanoseconds (Zig 0.16.0 compatible)
+pub fn nanoTimestamp() i128 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const secs: i128 = @intCast(tv.sec);
+    const usecs: i128 = @intCast(tv.usec);
+    return secs * 1_000_000_000 + usecs * 1_000;
+}
+
 /// Fill buffer with random bytes (Zig 0.16.0 compatible)
 pub fn randomBytes(buf: []u8) void {
     const io = std.Options.debug_io;

@@ -454,9 +454,9 @@ pub const TelegramChannel = struct {
     pending_media_received_at: std.ArrayListUnmanaged(u64) = .empty,
     polls_since_temp_sweep: u32 = 0,
 
-    typing_mu: std.Thread.Mutex = .{},
+    typing_mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
     typing_handles: std.StringHashMapUnmanaged(*TypingTask) = .empty,
-    interaction_mu: std.Thread.Mutex = .{},
+    interaction_mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
     pending_interactions: std.StringHashMapUnmanaged(PendingInteraction) = .empty,
     interaction_seq: Atomic(u64) = Atomic(u64).init(1),
 
@@ -510,7 +510,7 @@ pub const TelegramChannel = struct {
 
     /// Build the Telegram API URL for a method.
     pub fn apiUrl(self: *const TelegramChannel, buf: []u8, method: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = std.io.FixedBufferStream.init(buf);
         const w = fbs.writer();
         try w.print("https://api.telegram.org/bot{s}/{s}", .{ self.bot_token, method });
         return fbs.getWritten();
@@ -703,8 +703,8 @@ pub const TelegramChannel = struct {
             if (task.thread) |t| t.join();
         }
 
-        self.typing_mu.lock();
-        defer self.typing_mu.unlock();
+        self.typing_mu.lock(std.Options.debug_io) catch return error.Unknown;
+        defer self.typing_mu.unlock(std.Options.debug_io);
         try self.typing_handles.put(self.allocator, key_copy, task);
     }
 
@@ -712,12 +712,12 @@ pub const TelegramChannel = struct {
         var removed_key: ?[]u8 = null;
         var removed_task: ?*TypingTask = null;
 
-        self.typing_mu.lock();
+        self.typing_mu.lock(std.Options.debug_io) catch return;
         if (self.typing_handles.fetchRemove(chat_id)) |entry| {
             removed_key = @constCast(entry.key);
             removed_task = entry.value;
         }
-        self.typing_mu.unlock();
+        self.typing_mu.unlock(std.Options.debug_io);
 
         if (removed_task) |task| {
             task.stop_requested.store(true, .release);
@@ -730,10 +730,10 @@ pub const TelegramChannel = struct {
     }
 
     fn stopAllTyping(self: *TelegramChannel) void {
-        self.typing_mu.lock();
+        self.typing_mu.lock(std.Options.debug_io) catch return;
         var handles = self.typing_handles;
         self.typing_handles = .empty;
-        self.typing_mu.unlock();
+        self.typing_mu.unlock(std.Options.debug_io);
 
         var it = handles.iterator();
         while (it.next()) |entry| {
@@ -747,10 +747,10 @@ pub const TelegramChannel = struct {
     }
 
     fn deinitPendingInteractions(self: *TelegramChannel) void {
-        self.interaction_mu.lock();
+        self.interaction_mu.lock(std.Options.debug_io) catch return;
         var interactions = self.pending_interactions;
         self.pending_interactions = .empty;
-        self.interaction_mu.unlock();
+        self.interaction_mu.unlock(std.Options.debug_io);
 
         var it = interactions.iterator();
         while (it.next()) |entry| {
@@ -935,8 +935,8 @@ pub const TelegramChannel = struct {
             .options = options,
         };
 
-        self.interaction_mu.lock();
-        defer self.interaction_mu.unlock();
+        self.interaction_mu.lock(std.Options.debug_io) catch return error.Unknown;
+        defer self.interaction_mu.unlock(std.Options.debug_io);
         try self.pending_interactions.put(self.allocator, key, pending);
     }
 
@@ -948,8 +948,8 @@ pub const TelegramChannel = struct {
         }
 
         const now = root.nowEpochSecs();
-        self.interaction_mu.lock();
-        defer self.interaction_mu.unlock();
+        self.interaction_mu.lock(std.Options.debug_io) catch return;
+        defer self.interaction_mu.unlock(std.Options.debug_io);
 
         var it = self.pending_interactions.iterator();
         while (it.next()) |entry| {
@@ -993,8 +993,8 @@ pub const TelegramChannel = struct {
         clicker_identity: []const u8,
         chat_id: []const u8,
     ) !CallbackSelectionResult {
-        self.interaction_mu.lock();
-        defer self.interaction_mu.unlock();
+        self.interaction_mu.lock(std.Options.debug_io) catch return error.Unknown;
+        defer self.interaction_mu.unlock(std.Options.debug_io);
 
         const now = root.nowEpochSecs();
         const pending_ptr = self.pending_interactions.getPtr(token) orelse return .not_found;
@@ -1278,13 +1278,13 @@ pub const TelegramChannel = struct {
         argv_buf[argc] = url;
         argc += 1;
 
-        var child = std.process.Child.init(argv_buf[0..argc], allocator);
+        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_buf[0..argc] });
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Ignore;
-        try child.spawn();
+        // child already spawned
 
         _ = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch return error.CurlReadError;
-        const term = child.wait() catch return error.CurlWaitError;
+        const term = child.wait(std.Options.debug_io) catch return error.CurlWaitError;
         switch (term) {
             .Exited => |code| if (code != 0) return error.CurlFailed,
             else => return error.CurlFailed,
@@ -4147,11 +4147,11 @@ test "telegram consumeCallbackSelection rejects expired interaction" {
     defer directive.deinit(allocator);
 
     try ch.registerPendingInteraction("tok3", "12345", null, false, true, 42, directive);
-    ch.interaction_mu.lock();
+    ch.interaction_mu.lock(std.Options.debug_io) catch return;
     if (ch.pending_interactions.getPtr("tok3")) |pending| {
         pending.*.expires_at = 0;
     }
-    ch.interaction_mu.unlock();
+    ch.interaction_mu.unlock(std.Options.debug_io);
 
     const res = try ch.consumeCallbackSelection(allocator, "tok3", "yes", "alice", "12345");
     switch (res) {

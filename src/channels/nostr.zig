@@ -325,14 +325,14 @@ pub const NostrChannel = struct {
         const args = filterArgs(N, bounded, &argv_buf);
         if (args.len == 0) return error.NakCommandFailed;
 
-        var child = std.process.Child.init(args, self.allocator);
+        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = args });
         child.stdin_behavior = if (stdin_data != null) .Pipe else .Inherit;
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Inherit; // avoid deadlock from unread pipe buffer
-        try child.spawn();
+        // child already spawned
         errdefer {
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            _ = child.kill(std.Options.debug_io) catch {};
+            _ = child.wait(std.Options.debug_io) catch {};
         }
 
         if (stdin_data) |data| {
@@ -353,7 +353,7 @@ pub const NostrChannel = struct {
             try output.appendSlice(self.allocator, read_buf[0..n]);
         }
 
-        const term = child.wait() catch return error.NakCommandFailed;
+        const term = child.wait(std.Options.debug_io) catch return error.NakCommandFailed;
         switch (term) {
             .Exited => |code| {
                 if (code != 0) {
@@ -800,8 +800,8 @@ pub const NostrChannel = struct {
 
     pub fn stopListener(self: *NostrChannel) void {
         if (self.listener) |*child| {
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            _ = child.kill(std.Options.debug_io) catch {};
+            _ = child.wait(std.Options.debug_io) catch {};
             self.listener = null;
         }
     }
@@ -875,10 +875,10 @@ pub const NostrChannel = struct {
         const args = filterArgs(MAX_LISTENER_ARGS, bounded, &argv_buf);
         if (args.len < 15) return error.ListenerStartFailed;
 
-        var child = std.process.Child.init(args, self.allocator);
+        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = args });
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Inherit;
-        try child.spawn();
+        // child already spawned
 
         self.listener = child;
         errdefer self.stopListener();

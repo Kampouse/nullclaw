@@ -439,7 +439,7 @@ pub const OtelObserver = struct {
     }
 
     fn nowNs() u64 {
-        return @intCast(std.time.nanoTimestamp());
+        return @intCast(util.nanoTimestamp());
     }
 
     fn addSpan(self: *OtelObserver, name: []const u8, start_ns: u64, end_ns: u64, attrs: []const OtelAttribute) void {

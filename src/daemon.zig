@@ -96,7 +96,9 @@ pub fn writeStateFile(allocator: std.mem.Allocator, path: []const u8, state: *co
 
     try buf.appendSlice(allocator, "{\n");
     try buf.appendSlice(allocator, "  \"status\": \"running\",\n");
-    try std.fmt.format(buf.writer(allocator), "  \"gateway\": \"{s}:{d}\",\n", .{ state.gateway_host, state.gateway_port });
+    const gateway_str = try std.fmt.allocPrint(allocator, "  \"gateway\": \"{s}:{d}\",\n", .{ state.gateway_host, state.gateway_port });
+    defer allocator.free(gateway_str);
+    try buf.appendSlice(allocator, gateway_str);
 
     // Components array
     try buf.appendSlice(allocator, "  \"components\": [\n");
@@ -105,16 +107,21 @@ pub fn writeStateFile(allocator: std.mem.Allocator, path: []const u8, state: *co
         if (comp_opt) |comp| {
             if (!first) try buf.appendSlice(allocator, ",\n");
             first = false;
-            try std.fmt.format(buf.writer(allocator),
+            const comp_str = try std.fmt.allocPrint(allocator,
                 \\    {{"name": "{s}", "running": {}, "restart_count": {d}}}
             , .{ comp.name, comp.running, comp.restart_count });
+            defer allocator.free(comp_str);
+            try buf.appendSlice(allocator, comp_str);
         }
     }
     try buf.appendSlice(allocator, "\n  ]\n}\n");
 
-    const file = try std.fs.createFileAbsolute(path, .{});
-    defer file.close();
-    try file.writeStreamingAll(std.Options.debug_io, buf.items);
+    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{});
+    defer file.close(std.Options.debug_io);
+    var write_buf: [4096]u8 = undefined;
+    var file_bw = file.writer(std.Options.debug_io, &write_buf);
+    const file_writer = &file_bw.interface;
+    try file_writer.writeAll(buf.items);
 }
 
 /// Compute exponential backoff duration.
@@ -164,13 +171,13 @@ fn heartbeatThread(allocator: std.mem.Allocator, config: *const Config, state: *
         null,
     );
     const heartbeat_interval_ns: i128 = @as(i128, @intCast(heartbeat_engine.interval_minutes)) * 60 * std.time.ns_per_s;
-    var next_heartbeat_tick_at_ns: i128 = std.time.nanoTimestamp() + heartbeat_interval_ns;
+    var next_heartbeat_tick_at_ns: i128 = util.timestampUnix() * std.time.ns_per_s + heartbeat_interval_ns;
 
     while (!isShutdownRequested()) {
         writeStateFile(allocator, state_path, state) catch {};
         health.markComponentOk("heartbeat");
 
-        const now_ns = std.time.nanoTimestamp();
+        const now_ns = util.timestampUnix() * std.time.ns_per_s;
         if (heartbeat_engine.enabled and now_ns >= next_heartbeat_tick_at_ns) {
             const tick_result = heartbeat_engine.tick(allocator) catch |err| {
                 log.warn("heartbeat tick failed: {s}", .{@errorName(err)});
@@ -775,7 +782,7 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
     state.addComponent("scheduler");
 
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
     try stdout.print("nullclaw gateway runtime started\n", .{});
     try stdout.print("  Gateway:  http://{s}:{d}\n", .{ state.gateway_host, state.gateway_port });

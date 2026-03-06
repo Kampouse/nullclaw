@@ -9,7 +9,7 @@ Read `AGENTS.md` before any code change. It is the authoritative engineering pro
 ## Build & Test Commands
 
 ```bash
-# Requires exactly Zig 0.15.2 (verify: zig version)
+# Requires exactly Zig 0.16.0 (verify: zig version)
 zig build                           # dev build
 zig build -Doptimize=ReleaseSmall   # release build (target: <1 MB binary)
 zig build test --summary all        # run all 3,371+ tests (must pass with 0 leaks)

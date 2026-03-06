@@ -18,6 +18,7 @@ const memory_root = @import("memory/root.zig");
 const http_util = @import("http_util.zig");
 const json_util = @import("json_util.zig");
 const util = @import("util.zig");
+const child_compat = @import("child_compat.zig");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -312,7 +313,7 @@ pub fn fetchModels(allocator: std.mem.Allocator, provider: []const u8, api_key: 
     defer allocator.free(state_dir);
 
     // Ensure state directory exists
-    std.fs.makeDirAbsolute(state_dir) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, state_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return dupeFallbackModels(allocator, provider),
     };
@@ -448,10 +449,12 @@ fn loadModelsWithCacheInner(allocator: std.mem.Allocator, cache_dir: []const u8,
 const CACHE_TTL_SECS: i64 = 12 * 3600; // 12 hours
 
 fn readCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provider: []const u8) ![][]const u8 {
-    const file = std.fs.openFileAbsolute(cache_path, .{}) catch return error.CacheNotFound;
-    defer file.close();
+    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, cache_path, .{}) catch return error.CacheNotFound;
+    defer file.close(std.Options.debug_io);
 
-    const content = file.readToEndAlloc(allocator, 256 * 1024) catch return error.CacheReadError;
+    var read_buffer: [256 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited) catch return error.CacheReadError;
     defer allocator.free(content);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return error.CacheParseError;
@@ -512,9 +515,12 @@ fn saveCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
 
     try buf.appendSlice(allocator, "]\n}\n");
 
-    const file = std.fs.createFileAbsolute(cache_path, .{}) catch return;
-    defer file.close();
-    file.writeStreamingAll(std.Options.debug_io, buf.items) catch {};
+    const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, cache_path, .{}) catch return;
+    defer file.close(std.Options.debug_io);
+    var write_buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(std.Options.debug_io, &write_buffer);
+    const w = &file_writer.interface;
+    w.writeAll(buf.items) catch {};
 }
 
 /// Parse a mock OpenRouter-style JSON response and extract model IDs.
@@ -571,8 +577,8 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     var stdout_buf: [4096]u8 = undefined;
     var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
-    try stdout.writeStreamingAll(std.Options.debug_io, BANNER);
-    try stdout.writeStreamingAll(std.Options.debug_io, "  Quick Setup -- generating config with sensible defaults...\n\n");
+    try stdout.writeAll(BANNER);
+    try stdout.writeAll("  Quick Setup -- generating config with sensible defaults...\n\n");
 
     // Load or create config
     var cfg = Config.load(allocator) catch try initFreshConfig(allocator);
@@ -610,14 +616,9 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
 
     // Ensure parent config directory and workspace directory exist
     if (std.fs.path.dirname(cfg.workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch {};
     }
-    std.fs.makeDirAbsolute(cfg.workspace_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-    };
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, cfg.workspace_dir, .default_dir) catch {};
 
     // Scaffold workspace files
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
@@ -633,18 +634,18 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     }
     try stdout.print("  [OK] API Key:    {s}\n", .{if (cfg.defaultProviderKey() != null) "set" else "not set (use --api-key or edit config)"});
     try stdout.print("  [OK] Memory:     {s}\n", .{cfg.memory.backend});
-    try stdout.writeStreamingAll(std.Options.debug_io, "\n  Next steps:\n");
+    try stdout.writeAll("\n  Next steps:\n");
     if (cfg.defaultProviderKey() == null) {
         const env_hint = providerEnvVar(cfg.default_provider);
         try stdout.print("    1. Set your API key:  export {s}=\"sk-...\"\n", .{env_hint});
-        try stdout.writeStreamingAll(std.Options.debug_io, "    2. Chat:              nullclaw agent -m \"Hello!\"\n");
-        try stdout.writeStreamingAll(std.Options.debug_io, "    3. Gateway:           nullclaw gateway\n");
+        try stdout.writeAll("    2. Chat:              nullclaw agent -m \"Hello!\"\n");
+        try stdout.writeAll("    3. Gateway:           nullclaw gateway\n");
     } else {
-        try stdout.writeStreamingAll(std.Options.debug_io, "    1. Chat:     nullclaw agent -m \"Hello!\"\n");
-        try stdout.writeStreamingAll(std.Options.debug_io, "    2. Gateway:  nullclaw gateway\n");
-        try stdout.writeStreamingAll(std.Options.debug_io, "    3. Status:   nullclaw status\n");
+        try stdout.writeAll("    1. Chat:     nullclaw agent -m \"Hello!\"\n");
+        try stdout.writeAll("    2. Gateway:  nullclaw gateway\n");
+        try stdout.writeAll("    3. Status:   nullclaw status\n");
     }
-    try stdout.writeStreamingAll(std.Options.debug_io, "\n");
+    try stdout.writeAll("\n");
     try stdout.flush();
 }
 
@@ -662,28 +663,28 @@ pub fn runChannelsOnly(allocator: std.mem.Allocator) !void {
     resetStdinLineReader();
 
     var cfg = Config.load(allocator) catch {
-        try stdout.writeStreamingAll(std.Options.debug_io, "No existing config found. Run `nullclaw onboard` first.\n");
+        try stdout.writeAll("No existing config found. Run `nullclaw onboard` first.\n");
         try stdout.flush();
         return error.ConfigNotFound;
     };
     defer cfg.deinit();
 
-    try stdout.writeStreamingAll(std.Options.debug_io, "Channel setup wizard:\n");
+    try stdout.writeAll("Channel setup wizard:\n");
     const changed = try configureChannelsInteractive(allocator, &cfg, stdout, &input_buf, "");
     if (changed) {
         try cfg.save();
-        try stdout.writeStreamingAll(std.Options.debug_io, "Channel configuration saved.\n\n");
+        try stdout.writeAll("Channel configuration saved.\n\n");
     } else {
-        try stdout.writeStreamingAll(std.Options.debug_io, "No channel changes applied.\n\n");
+        try stdout.writeAll("No channel changes applied.\n\n");
     }
 
-    try stdout.writeStreamingAll(std.Options.debug_io, "Channel configuration status:\n\n");
+    try stdout.writeAll("Channel configuration status:\n\n");
     for (channel_catalog.known_channels) |meta| {
         var status_buf: [64]u8 = undefined;
         const status_text = channel_catalog.statusText(&cfg, meta, &status_buf);
         try stdout.print("  {s}: {s}\n", .{ meta.label, status_text });
     }
-    try stdout.writeStreamingAll(std.Options.debug_io, "\nConfig file:\n");
+    try stdout.writeAll("\nConfig file:\n");
     try stdout.print("  {s}\n", .{cfg.config_path});
     try stdout.flush();
 }
@@ -733,7 +734,7 @@ fn resetStdinLineReader() void {
 fn readLine(buf: []u8) ?[]const u8 {
     const stdin = std.Io.File.stdin();
     var read_buffer: [256]u8 = undefined;
-    const stdin_reader = stdin.reader(std.Options.debug_io, &read_buffer);
+    var stdin_reader = stdin.reader(std.Options.debug_io, &read_buffer);
 
     while (true) {
         if (stdin_line_reader.popLine(buf)) |line| return line;
@@ -743,7 +744,7 @@ fn readLine(buf: []u8) ?[]const u8 {
         }
 
         const read_dst = stdin_line_reader.pending[stdin_line_reader.pending_len..];
-        const n = stdin_reader.read(read_dst) catch return null;
+        const n = std.Io.Reader.readSliceShort(&stdin_reader.interface, read_dst) catch return null;
         if (n == 0) {
             return stdin_line_reader.flushRemainder(buf);
         }
@@ -754,7 +755,7 @@ fn readLine(buf: []u8) ?[]const u8 {
 /// Prompt for a line of input with optional message and default value.
 /// Returns null on EOF.
 fn prompt(out: *std.Io.Writer, buf: []u8, message: []const u8, default_val: []const u8) ?[]const u8 {
-    out.writeStreamingAll(std.Options.debug_io, message) catch return null;
+    out.writeAll(message) catch return null;
     out.flush() catch return null;
     const line = readLine(buf) orelse return null;
     if (line.len == 0) return default_val;
@@ -1291,15 +1292,12 @@ fn configureNostrChannel(cfg: *Config, out: *std.Io.Writer, input_buf: []u8, pre
 
 /// Run a nak subprocess, capture stdout, trim whitespace, return owned slice or null on failure.
 fn nakRun(allocator: std.mem.Allocator, argv: []const []const u8) ?[]u8 {
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = argv,
-        .max_output_bytes = 4096,
-    }) catch return null;
+    const io = std.Options.debug_io;
+    const result = child_compat.run(allocator, io, argv, 4096) catch return null;
     defer allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             allocator.free(result.stdout);
             return null;
         },
@@ -1309,7 +1307,7 @@ fn nakRun(allocator: std.mem.Allocator, argv: []const []const u8) ?[]u8 {
         },
     }
 
-    const trimmed = std.mem.trimRight(u8, result.stdout, " \t\r\n");
+    const trimmed = std.mem.trimEnd(u8, result.stdout, " \t\r\n");
     if (trimmed.len == result.stdout.len) return result.stdout;
     defer allocator.free(result.stdout);
     return allocator.dupe(u8, trimmed) catch null;
@@ -1318,12 +1316,12 @@ fn nakRun(allocator: std.mem.Allocator, argv: []const []const u8) ?[]u8 {
 /// Interactive wizard entry point — runs the full setup interactively.
 pub fn runWizard(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const out = &bw.interface;
     resetStdinLineReader();
-    try out.writeStreamingAll(std.Options.debug_io, BANNER);
-    try out.writeStreamingAll(std.Options.debug_io, "  Welcome to nullclaw -- the fastest, smallest AI assistant.\n");
-    try out.writeStreamingAll(std.Options.debug_io, "  This wizard will configure your agent.\n\n");
+    try out.writeAll(BANNER);
+    try out.writeAll("  Welcome to nullclaw -- the fastest, smallest AI assistant.\n");
+    try out.writeAll("  This wizard will configure your agent.\n\n");
     try out.flush();
 
     var input_buf: [512]u8 = undefined;
@@ -1333,13 +1331,13 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     defer cfg.deinit();
 
     // ── Step 1: Provider selection ──
-    try out.writeStreamingAll(std.Options.debug_io, "  Step 1/8: Select a provider\n");
+    try out.writeAll("  Step 1/8: Select a provider\n");
     for (known_providers, 0..) |p, i| {
         try out.print("    [{d}] {s}\n", .{ i + 1, p.label });
     }
-    try out.writeStreamingAll(std.Options.debug_io, "  Choice [1]: ");
+    try out.writeAll("  Choice [1]: ");
     const provider_idx = promptChoice(out, &input_buf, known_providers.len, 0) orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
@@ -1351,7 +1349,7 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     const env_hint = selected_provider.env_var;
     try out.print("  Step 2/8: Enter API key (or press Enter to use env var {s}): ", .{env_hint});
     const api_key_input = prompt(out, &input_buf, "", "") orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
@@ -1360,14 +1358,14 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
         const entries = try cfg.allocator.alloc(config_mod.ProviderEntry, 1);
         entries[0] = .{ .name = try cfg.allocator.dupe(u8, cfg.default_provider), .api_key = try cfg.allocator.dupe(u8, api_key_input) };
         cfg.providers = entries;
-        try out.writeStreamingAll(std.Options.debug_io, "  -> API key set\n\n");
+        try out.writeAll("  -> API key set\n\n");
     } else {
         try out.print("  -> Will use ${s} from environment\n\n", .{env_hint});
     }
 
     // ── Step 3: Model (with live fetching) ──
-    try out.writeStreamingAll(std.Options.debug_io, "  Step 3/8: Select a model\n");
-    try out.writeStreamingAll(std.Options.debug_io, "  Fetching available models...\n");
+    try out.writeAll("  Step 3/8: Select a model\n");
+    try out.writeAll("  Fetching available models...\n");
     try out.flush();
 
     const live_models = fetchModels(allocator, selected_provider.key, cfg.defaultProviderKey()) catch
@@ -1392,7 +1390,7 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     }
     try out.print("  Choice [1] or model name [{s}]: ", .{selected_provider.default_model});
     const model_input = prompt(out, &input_buf, "", "") orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
@@ -1420,13 +1418,13 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     // ── Step 4: Memory backend ──
     const backends = try selectableBackendsForWizard(allocator);
     defer allocator.free(backends);
-    try out.writeStreamingAll(std.Options.debug_io, "  Step 4/8: Memory backend\n");
+    try out.writeAll("  Step 4/8: Memory backend\n");
     for (backends, 0..) |b, i| {
         try out.print("    [{d}] {s}\n", .{ i + 1, b.label });
     }
-    try out.writeStreamingAll(std.Options.debug_io, "  Choice [1]: ");
+    try out.writeAll("  Choice [1]: ");
     const mem_idx = promptChoice(out, &input_buf, backends.len, 0) orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
@@ -1436,11 +1434,11 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     try out.print("  -> {s}\n\n", .{backends[mem_idx].label});
 
     // ── Step 5: Tunnel ──
-    try out.writeStreamingAll(std.Options.debug_io, "  Step 5/8: Tunnel\n");
-    try out.writeStreamingAll(std.Options.debug_io, "    [1] none\n    [2] cloudflare\n    [3] ngrok\n    [4] tailscale\n");
-    try out.writeStreamingAll(std.Options.debug_io, "  Choice [1]: ");
+    try out.writeAll("  Step 5/8: Tunnel\n");
+    try out.writeAll("    [1] none\n    [2] cloudflare\n    [3] ngrok\n    [4] tailscale\n");
+    try out.writeAll("  Choice [1]: ");
     const tunnel_idx = promptChoice(out, &input_buf, tunnel_options.len, 0) orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
@@ -1448,11 +1446,11 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     try out.print("  -> {s}\n\n", .{tunnel_options[tunnel_idx]});
 
     // ── Step 6: Autonomy level ──
-    try out.writeStreamingAll(std.Options.debug_io, "  Step 6/8: Autonomy level\n");
-    try out.writeStreamingAll(std.Options.debug_io, "    [1] supervised\n    [2] autonomous\n    [3] fully_autonomous\n");
-    try out.writeStreamingAll(std.Options.debug_io, "  Choice [1]: ");
+    try out.writeAll("  Step 6/8: Autonomy level\n");
+    try out.writeAll("    [1] supervised\n    [2] autonomous\n    [3] fully_autonomous\n");
+    try out.writeAll("  Choice [1]: ");
     const autonomy_idx = promptChoice(out, &input_buf, autonomy_options.len, 0) orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
@@ -1483,24 +1481,24 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     try out.print("  -> {s}\n\n", .{autonomy_options[autonomy_idx]});
 
     // ── Step 7: Channels ──
-    try out.writeStreamingAll(std.Options.debug_io, "  Step 7/8: Configure channels now? [Y/n]: ");
+    try out.writeAll("  Step 7/8: Configure channels now? [Y/n]: ");
     const chan_input = prompt(out, &input_buf, "", "y") orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
     if (chan_input.len > 0 and (chan_input[0] == 'y' or chan_input[0] == 'Y')) {
         _ = try configureChannelsInteractive(allocator, &cfg, out, &input_buf, "  ");
-        try out.writeStreamingAll(std.Options.debug_io, "\n");
+        try out.writeAll("\n");
     } else {
-        try out.writeStreamingAll(std.Options.debug_io, "  -> Skipped (CLI enabled by default)\n\n");
+        try out.writeAll("  -> Skipped (CLI enabled by default)\n\n");
     }
 
     // ── Step 8: Workspace path ──
     const default_workspace = try getDefaultWorkspace(allocator);
     try out.print("  Step 8/8: Workspace path [{s}]: ", .{default_workspace});
     const ws_input = prompt(out, &input_buf, "", default_workspace) orelse {
-        try out.writeStreamingAll(std.Options.debug_io, "\n  Aborted.\n");
+        try out.writeAll("\n  Aborted.\n");
         try out.flush();
         return;
     };
@@ -1513,14 +1511,9 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     // ── Apply ──
     // Ensure parent config directory and workspace directory exist
     if (std.fs.path.dirname(cfg.workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch {};
     }
-    std.fs.makeDirAbsolute(cfg.workspace_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-    };
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, cfg.workspace_dir, .default_dir) catch {};
 
     // Scaffold workspace files
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
@@ -1529,7 +1522,7 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     try cfg.save();
 
     // Print summary
-    try out.writeStreamingAll(std.Options.debug_io, "  ── Configuration complete ──\n\n");
+    try out.writeAll("  ── Configuration complete ──\n\n");
     try out.print("  [OK] Provider:   {s}\n", .{cfg.default_provider});
     if (cfg.default_model) |m| {
         try out.print("  [OK] Model:      {s}\n", .{m});
@@ -1539,17 +1532,17 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     try out.print("  [OK] Tunnel:     {s}\n", .{cfg.tunnel.provider});
     try out.print("  [OK] Workspace:  {s}\n", .{cfg.workspace_dir});
     try out.print("  [OK] Config:     {s}\n", .{cfg.config_path});
-    try out.writeStreamingAll(std.Options.debug_io, "\n  Next steps:\n");
+    try out.writeAll("\n  Next steps:\n");
     if (cfg.defaultProviderKey() == null) {
         try out.print("    1. Set your API key:  export {s}=\"sk-...\"\n", .{env_hint});
-        try out.writeStreamingAll(std.Options.debug_io, "    2. Chat:              nullclaw agent -m \"Hello!\"\n");
-        try out.writeStreamingAll(std.Options.debug_io, "    3. Gateway:           nullclaw gateway\n");
+        try out.writeAll("    2. Chat:              nullclaw agent -m \"Hello!\"\n");
+        try out.writeAll("    3. Gateway:           nullclaw gateway\n");
     } else {
-        try out.writeStreamingAll(std.Options.debug_io, "    1. Chat:     nullclaw agent -m \"Hello!\"\n");
-        try out.writeStreamingAll(std.Options.debug_io, "    2. Gateway:  nullclaw gateway\n");
-        try out.writeStreamingAll(std.Options.debug_io, "    3. Status:   nullclaw status\n");
+        try out.writeAll("    1. Chat:     nullclaw agent -m \"Hello!\"\n");
+        try out.writeAll("    2. Gateway:  nullclaw gateway\n");
+        try out.writeAll("    3. Status:   nullclaw status\n");
     }
-    try out.writeStreamingAll(std.Options.debug_io, "\n");
+    try out.writeAll("\n");
     try out.flush();
 }
 
@@ -1571,14 +1564,14 @@ const catalog_providers = [_]ModelsCatalogProvider{
 /// Saves results to ~/.nullclaw/models_cache.json.
 pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const out = &bw.interface;
-    try out.writeStreamingAll(std.Options.debug_io, "Refreshing model catalog...\n");
+    try out.writeAll("Refreshing model catalog...\n");
     try out.flush();
 
     // Build cache path
     const home = platform.getHomeDir(allocator) catch {
-        try out.writeStreamingAll(std.Options.debug_io, "Could not determine HOME directory.\n");
+        try out.writeAll("Could not determine HOME directory.\n");
         try out.flush();
         return;
     };
@@ -1589,10 +1582,10 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     defer allocator.free(cache_dir);
 
     // Ensure directory exists
-    std.fs.makeDirAbsolute(cache_dir) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, cache_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => {
-            try out.writeStreamingAll(std.Options.debug_io, "Could not create config directory.\n");
+            try out.writeAll("Could not create config directory.\n");
             try out.flush();
             return;
         },
@@ -1610,10 +1603,8 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
         try out.flush();
 
         // Run curl to fetch models list
-        const result = std.process.Child.run(.{
-            .allocator = allocator,
-            .argv = &.{ "curl", "-sf", "--max-time", "10", cp.url },
-        }) catch {
+        const io = std.Options.debug_io;
+        const result = child_compat.run(allocator, io, &.{ "curl", "-sf", "--max-time", "10", cp.url }, 1024 * 1024) catch {
             try out.print("  [SKIP] {s}: curl failed\n", .{cp.name});
             try out.flush();
             continue;
@@ -1679,14 +1670,14 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     try results_buf.appendSlice(allocator, "\n}\n");
 
     // Write cache file
-    const file = std.fs.createFileAbsolute(cache_path, .{}) catch {
-        try out.writeStreamingAll(std.Options.debug_io, "Could not write cache file.\n");
+    const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, cache_path, .{}) catch {
+        try out.writeAll("Could not write cache file.\n");
         try out.flush();
         return;
     };
     defer file.close();
-    file.writeStreamingAll(std.Options.debug_io, results_buf.items) catch {
-        try out.writeStreamingAll(std.Options.debug_io, "Error writing cache file.\n");
+    file.writeAll(results_buf.items) catch {
+        try out.writeAll("Error writing cache file.\n");
         try out.flush();
         return;
     };
@@ -1728,12 +1719,12 @@ pub fn resetWorkspacePromptFiles(
     options: ResetWorkspacePromptFilesOptions,
 ) !ResetWorkspacePromptFilesReport {
     if (std.fs.path.dirname(workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
     }
-    std.fs.makeDirAbsolute(workspace_dir) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, workspace_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
     };
 
@@ -1794,7 +1785,7 @@ fn overwriteWorkspaceFile(
 
     const file = try std.fs.createFileAbsolute(path, .{ .truncate = true });
     defer file.close();
-    try file.writeStreamingAll(std.Options.debug_io, content);
+    try file.writeAll(content);
     return true;
 }
 
@@ -1822,8 +1813,8 @@ fn writeIfMissing(allocator: std.mem.Allocator, dir: []const u8, filename: []con
     defer allocator.free(path);
 
     // Only write if file doesn't exist
-    if (std.fs.openFileAbsolute(path, .{})) |f| {
-        f.close();
+    if (std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{})) |f| {
+        f.close(std.Options.debug_io);
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
@@ -1833,7 +1824,7 @@ fn writeIfMissing(allocator: std.mem.Allocator, dir: []const u8, filename: []con
         error.PathAlreadyExists => return,
     };
     defer file.close();
-    try file.writeStreamingAll(std.Options.debug_io, content);
+    try file.writeAll(content);
 }
 
 fn ensureBootstrapLifecycle(
@@ -1930,12 +1921,14 @@ fn readWorkspaceOnboardingState(
     const path = try workspaceStatePath(allocator, workspace_dir);
     defer allocator.free(path);
 
-    const file = std.fs.openFileAbsolute(path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return .{},
     };
-    defer file.close();
+    defer file.close(std.Options.debug_io);
 
-    const raw = file.readToEndAlloc(allocator, 64 * 1024) catch return .{};
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const raw = std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited) catch return .{};
     defer allocator.free(raw);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch return .{};
@@ -1994,7 +1987,7 @@ fn writeWorkspaceOnboardingState(
     defer allocator.free(path);
 
     if (std.fs.path.dirname(path)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -2022,28 +2015,30 @@ fn writeWorkspaceOnboardingState(
 
     const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
     errdefer tmp_file.close();
-    try tmp_file.writeStreamingAll(std.Options.debug_io, buf.items);
+    try tmp_file.writeAll(buf.items);
     tmp_file.close();
 
     std.fs.renameAbsolute(tmp_path, path) catch {
         std.fs.deleteFileAbsolute(tmp_path) catch {};
         const file = try std.fs.createFileAbsolute(path, .{});
         defer file.close();
-        try file.writeStreamingAll(std.Options.debug_io, buf.items);
+        try file.writeAll(buf.items);
     };
 }
 
 fn readFileIfPresent(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) !?[]u8 {
-    const file = std.fs.openFileAbsolute(path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
     };
-    defer file.close();
-    return try file.readToEndAlloc(allocator, max_bytes);
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [4096]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    return try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .limited(max_bytes));
 }
 
 fn fileExistsAbsolute(path: []const u8) bool {
-    const file = std.fs.openFileAbsolute(path, .{}) catch return false;
-    file.close();
+    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch return false;
+    file.close(std.Options.debug_io);
     return true;
 }
 
@@ -2358,12 +2353,12 @@ test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom-agents-content");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-agents-content");
     }
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom-user-content");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-user-content");
     }
 
     const base = try std.testing.allocator.dupe(u8, ".");
@@ -2391,7 +2386,7 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom-memory");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-memory");
     }
 
     var has_distinct_case_memory_file = true;
@@ -2403,7 +2398,7 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     };
     if (alt) |f| {
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom-memory-lower");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom-memory-lower");
     }
 
     const base = try std.testing.allocator.dupe(u8, ".");
@@ -2477,12 +2472,12 @@ test "scaffoldWorkspace does not recreate BOOTSTRAP after onboarding completion"
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{ .truncate = true });
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom identity");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom identity");
     }
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom user");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom user");
     }
 
     try tmp.dir.deleteFile("BOOTSTRAP.md");
@@ -2506,12 +2501,12 @@ test "scaffoldWorkspace does not seed BOOTSTRAP for legacy completed workspace" 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom identity");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom identity");
     }
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, "custom user");
+        try f.writeAll(std.Options.debug_io, std.Options.debug_io, "custom user");
     }
 
     const base = try std.testing.allocator.dupe(u8, ".");
@@ -3077,7 +3072,7 @@ test "cache read returns error for expired cache" {
     const old_json = "{\"fetched_at\": 1000000, \"myprov\": [\"old-model\"]}";
     const file = try tmp.dir.createFile(std.Options.debug_io, "models_cache.json", .{});
     defer file.close();
-    try file.writeStreamingAll(std.Options.debug_io, old_json);
+    try file.writeAll(old_json);
 
     const result = readCachedModels(std.testing.allocator, cache_path, "myprov");
     try std.testing.expectError(error.CacheExpired, result);

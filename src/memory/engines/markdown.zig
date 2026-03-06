@@ -77,10 +77,10 @@ pub const MarkdownMemory = struct {
 
         const line = try std.fmt.allocPrint(allocator, "{s}\n", .{content});
         defer allocator.free(line);
-        
+
         var buf: [4096]u8 = undefined;
         var writer = file.writer(io, &buf);
-        try writer.interface.writeStreamingAll(std.Options.debug_io, line);
+        try writer.interface.writeAll(line);
         try writer.interface.flush();
     }
 

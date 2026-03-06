@@ -171,9 +171,9 @@ pub const ApiMemory = struct {
         return error.NotImplemented;
 
         // Old code (unreachable):
-        // var child = std.process.Child.init(argv_buf[0..argc], alloc);
+        // var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_buf[0..argc] });
         // child.spawn() ...
-        // const term = child.wait() ...
+        // const term = child.wait(std.Options.debug_io) ...
         // return parseCurlOutput(alloc, raw_out);
     }
 

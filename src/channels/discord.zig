@@ -24,7 +24,7 @@ pub const DiscordChannel = struct {
     intents: u32 = 37377, // GUILDS|GUILD_MESSAGES|MESSAGE_CONTENT|DIRECT_MESSAGES
     bus: ?*bus_mod.Bus = null,
 
-    typing_mu: std.Thread.Mutex = .{},
+    typing_mu: std.Io.Mutex = .{},
     typing_handles: std.StringHashMapUnmanaged(*TypingTask) = .empty,
 
     // Gateway state

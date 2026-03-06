@@ -1285,7 +1285,7 @@ fn copyDirRecursiveSecure(allocator: std.mem.Allocator, src_root: []const u8, ds
             errdefer allocator.free(dst_child);
 
             if (entry.kind == .directory) {
-                std.fs.makeDirAbsolute(dst_child) catch |err| switch (err) {
+                std.Io.Dir.createDirAbsolute(std.Options.debug_io, dst_child, .default_dir) catch |err| switch (err) {
                     error.PathAlreadyExists => {},
                     else => return err,
                 };
@@ -1317,7 +1317,7 @@ fn installSkillDirectoryToWorkspace(
 
     const skills_dir_path = try std.fmt.allocPrint(allocator, "{s}/skills", .{workspace_dir});
     defer allocator.free(skills_dir_path);
-    std.fs.makeDirAbsolute(skills_dir_path) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, skills_dir_path, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -1326,7 +1326,7 @@ fn installSkillDirectoryToWorkspace(
     defer allocator.free(target_path);
     const target_existed = pathExists(target_path);
     if (target_existed) return error.SkillAlreadyExists;
-    std.fs.makeDirAbsolute(target_path) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, target_path, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -1406,7 +1406,7 @@ fn installSkillFromGit(
 ) !void {
     const skills_dir_path = try std.fmt.allocPrint(allocator, "{s}/skills", .{workspace_dir});
     defer allocator.free(skills_dir_path);
-    std.fs.makeDirAbsolute(skills_dir_path) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, skills_dir_path, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -1621,7 +1621,7 @@ fn readSyncMarker(marker_path: []const u8, buf: []u8) ?i64 {
 /// Write a timestamp into the marker file, creating parent directories as needed.
 fn writeSyncMarkerWithTimestamp(allocator: std.mem.Allocator, marker_path: []const u8, timestamp: i64) !void {
     if (std.fs.path.dirname(marker_path)) |dir| {
-        std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, dir, .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -2169,7 +2169,7 @@ test "loadSkill reads metadata from SKILL.toml" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "skills/toml-meta/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "from-toml"
             \\description = "TOML metadata"
@@ -2201,7 +2201,7 @@ test "loadSkill prefers SKILL.toml metadata over skill.json" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "skills/dual/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "toml-name"
             \\description = "toml wins"
@@ -2577,7 +2577,7 @@ test "auditSkillDirectory rejects TOML tool command with shell chaining" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "unsafe-toml"
             \\description = "unsafe"
@@ -2606,7 +2606,7 @@ test "auditSkillDirectory rejects TOML tool entries without command" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "missing-command"
             \\description = "unsafe"
@@ -2634,7 +2634,7 @@ test "auditSkillDirectory rejects TOML shell tool with empty command" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "empty-command"
             \\description = "unsafe"
@@ -2683,7 +2683,7 @@ test "auditSkillDirectory rejects TOML prompts with high-risk content" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "unsafe-prompts"
             \\description = "unsafe"
@@ -2708,7 +2708,7 @@ test "auditSkillDirectory rejects multiline TOML prompts with high-risk content"
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "unsafe-prompts-multiline"
             \\description = "unsafe"
@@ -2736,7 +2736,7 @@ test "auditSkillDirectory rejects malformed TOML string literals" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "source/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "broken
             \\description = "unsafe"
@@ -2983,7 +2983,7 @@ test "installSkillFromPath supports SKILL.toml-only source directory" {
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "source-toml/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "example-skill"
             \\description = "toml-only"
@@ -3170,7 +3170,7 @@ test "installSkillFromGit installs SKILL.toml entry from repository skills direc
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "repo/skills/toml_only/SKILL.toml", .{});
         defer f.close(std.Options.debug_io);
-        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io, 
+        try f.writeStreamingAll(std.Options.debug_io, std.Options.debug_io, std.Options.debug_io,
             \\[skill]
             \\name = "toml-only"
             \\description = "marker-only entry"

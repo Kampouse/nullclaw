@@ -129,7 +129,7 @@ fn stopServiceForRestart(allocator: std.mem.Allocator) !void {
 
 fn serviceStatus(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const w = &bw.interface;
 
     if (comptime builtin.os.tag == .macos) {
@@ -201,7 +201,7 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
 
     // Ensure parent directory exists
     if (std.mem.lastIndexOfScalar(u8, plist, '/')) |idx| {
-        std.fs.makeDirAbsolute(plist[0..idx]) catch |err| switch (err) {
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, plist[0..idx], .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -209,13 +209,13 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
 
     // Get current executable path
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_path = try std.fs.selfExePath(&exe_buf);
+    const exe_path = try std.process.selfExePath(&exe_buf);
 
     const home = try getHomeDir(allocator);
     defer allocator.free(home);
     const logs_dir = try std.fmt.allocPrint(allocator, "{s}/.nullclaw/logs", .{home});
     defer allocator.free(logs_dir);
-    std.fs.makeDirAbsolute(logs_dir) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, logs_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -430,7 +430,7 @@ fn windowsServiceState(query_output: []const u8) []const u8 {
 }
 
 fn runCaptureStatus(allocator: std.mem.Allocator, argv: []const []const u8) !CaptureStatus {
-    var child = std.process.Child.init(argv, allocator);
+    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv });
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     child.spawn() catch |err| switch (err) {
@@ -442,20 +442,20 @@ fn runCaptureStatus(allocator: std.mem.Allocator, argv: []const []const u8) !Cap
     };
 
     const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
         return error.CommandFailed;
     };
     errdefer allocator.free(stdout);
     const stderr = child.stderr.?.readToEndAlloc(allocator, 1024 * 1024) catch {
         allocator.free(stdout);
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
         return error.CommandFailed;
     };
     errdefer allocator.free(stderr);
 
-    const result = try child.wait();
+    const result = try child.wait(std.Options.debug_io);
     const success = switch (result) {
         .Exited => |code| code == 0,
         else => false,
@@ -483,10 +483,11 @@ fn assertLinuxSystemdUserAvailable(allocator: std.mem.Allocator) !void {
 }
 
 fn runChecked(allocator: std.mem.Allocator, argv: []const []const u8) !void {
-    var child = std.process.Child.init(argv, allocator);
+    _ = allocator; // TODO: use for process spawning
+    var child = std.process.Child.init(argv, std.Options.debug_io);
     // Avoid deadlocks: we do not consume pipes in runChecked.
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
+    child.stdout = .inherit;
+    child.stderr = .inherit;
     child.spawn() catch |err| switch (err) {
         error.FileNotFound => {
             if (argv.len > 0 and std.mem.eql(u8, argv[0], "systemctl")) return error.SystemctlUnavailable;
@@ -494,7 +495,7 @@ fn runChecked(allocator: std.mem.Allocator, argv: []const []const u8) !void {
         },
         else => return err,
     };
-    const result = try child.wait();
+    const result = try child.wait(std.Options.debug_io);
     switch (result) {
         .Exited => |code| if (code != 0) return error.CommandFailed,
         else => return error.CommandFailed,
@@ -502,10 +503,10 @@ fn runChecked(allocator: std.mem.Allocator, argv: []const []const u8) !void {
 }
 
 fn runCapture(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
+    var child = std.process.Child.init(argv, std.Options.debug_io);
+    child.stdout = .pipe;
     // We only need stdout here; inheriting/ignoring stderr prevents pipe backpressure hangs.
-    child.stderr_behavior = .Ignore;
+    child.stderr = .ignore;
     child.spawn() catch |err| switch (err) {
         error.FileNotFound => {
             if (argv.len > 0 and std.mem.eql(u8, argv[0], "systemctl")) return error.SystemctlUnavailable;
@@ -514,12 +515,12 @@ fn runCapture(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
         else => return err,
     };
     const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
         return error.CommandFailed;
     };
     errdefer allocator.free(stdout);
-    _ = child.wait() catch {
+    _ = child.wait(std.Options.debug_io) catch {
         return error.CommandFailed;
     };
     return stdout;

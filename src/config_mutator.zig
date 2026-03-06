@@ -217,7 +217,7 @@ fn writeAtomic(allocator: std.mem.Allocator, path: []const u8, content: []const 
     // For now, just write directly (not atomic)
     const dir = std.fs.path.dirname(path) orelse return error.InvalidPath;
     _ = dir; // TODO: create directory if needed
-    
+
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
 
@@ -227,17 +227,17 @@ fn writeAtomic(allocator: std.mem.Allocator, path: []const u8, content: []const 
         defer file.close(io);
         var write_buf: [1024 * 1024]u8 = undefined;
         var writer = file.writer(io, &write_buf);
-        try writer.interface.writeStreamingAll(std.Options.debug_io, content);
+        try writer.interface.writeAll(content);
         try writer.interface.flush();
         return;
     };
     defer tmp_file.close(io);
-    
+
     var write_buf: [1024 * 1024]u8 = undefined;
     var writer = tmp_file.writer(io, &write_buf);
-    try writer.interface.writeStreamingAll(std.Options.debug_io, content);
+    try writer.interface.writeAll(content);
     try writer.interface.flush();
-    
+
     // Note: renameAbsolute not available in sans-I/O
     // Just keep the .tmp file for now
 }
@@ -356,12 +356,12 @@ pub fn mutateDefaultConfig(
         if (current.existed) {
             const backup_path = try std.fmt.allocPrint(allocator, "{s}.bak", .{config_path});
             errdefer allocator.free(backup_path);
-            
+
             if (std.Io.Dir.createFileAbsolute(io, backup_path, .{})) |backup_file| {
                 defer backup_file.close(io);
                 var write_buf: [1024 * 1024]u8 = undefined;
                 var writer = backup_file.writer(io, &write_buf);
-                writer.interface.writeStreamingAll(std.Options.debug_io, current.content) catch {};
+                writer.interface.writeAll(current.content) catch {};
                 writer.interface.flush() catch {};
                 backup_path_opt = backup_path;
             } else |_| {

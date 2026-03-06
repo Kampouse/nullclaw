@@ -91,7 +91,7 @@ pub const HeartbeatEngine = struct {
         const heartbeat_path = try std.fs.path.join(allocator, &.{ self.workspace_dir, "HEARTBEAT.md" });
         defer allocator.free(heartbeat_path);
 
-        const file = std.fs.openFileAbsolute(heartbeat_path, .{}) catch |err| switch (err) {
+        const file = std.fs.cwd().openFile(heartbeat_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return .{ .outcome = .skipped_missing_file, .task_count = 0 },
             else => return err,
         };

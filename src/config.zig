@@ -10,16 +10,16 @@ fn writeJsonStr(w: anytype, s: []const u8) !void {
     try w.writeByte('"');
     for (s) |c| {
         switch (c) {
-            '"' => try w.writeStreamingAll(std.Options.debug_io, "\\\""),
-            '\\' => try w.writeStreamingAll(std.Options.debug_io, "\\\\"),
-            '\n' => try w.writeStreamingAll(std.Options.debug_io, "\\n"),
-            '\r' => try w.writeStreamingAll(std.Options.debug_io, "\\r"),
-            '\t' => try w.writeStreamingAll(std.Options.debug_io, "\\t"),
+            '"' => try w.writeAll("\\\""),
+            '\\' => try w.writeAll("\\\\"),
+            '\n' => try w.writeAll("\\n"),
+            '\r' => try w.writeAll("\\r"),
+            '\t' => try w.writeAll("\\t"),
             else => {
                 if (c < 0x20) {
                     var esc: [6]u8 = undefined;
                     const escape = std.fmt.bufPrint(&esc, "\\u{x:0>4}", .{c}) catch unreachable;
-                    try w.writeStreamingAll(std.Options.debug_io, escape);
+                    try w.writeAll(escape);
                 } else {
                     try w.writeByte(c);
                 }
@@ -301,15 +301,15 @@ pub const Config = struct {
             const rel_nl = std.mem.indexOfScalar(u8, json[start..], '\n');
             if (rel_nl) |nl| {
                 const end = start + nl;
-                try w.writeStreamingAll(std.Options.debug_io, json[start..end]);
-                try w.writeStreamingAll(std.Options.debug_io, "\n");
+                try w.writeAll(json[start..end]);
+                try w.writeAll("\n");
                 const next_start = end + 1;
                 if (next_start < json.len) {
-                    try w.writeStreamingAll(std.Options.debug_io, continuation_indent);
+                    try w.writeAll(continuation_indent);
                 }
                 start = next_start;
             } else {
-                try w.writeStreamingAll(std.Options.debug_io, json[start..]);
+                try w.writeAll(json[start..]);
                 break;
             }
         }
@@ -544,16 +544,16 @@ pub const Config = struct {
         const dir = std.fs.path.dirname(self.config_path) orelse return error.InvalidConfigPath;
 
         // Ensure parent directory exists
-        std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+        std.Io.Dir.createDirAbsolute(std.Options.debug_io, dir, .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
 
-        const file = try std.fs.createFileAbsolute(self.config_path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, self.config_path, .{});
+        defer file.close(std.Options.debug_io);
 
         var buf: [8192]u8 = undefined;
-        var bw = file.writer(&buf);
+        var bw = file.writer(std.Options.debug_io, &buf);
         const w = &bw.interface;
 
         try w.print("{{\n", .{});
@@ -1227,9 +1227,11 @@ test "save includes channels section by default" {
     };
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"channels\": {") != null);
@@ -1265,9 +1267,11 @@ test "save writes configured telegram channel account" {
     };
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"telegram\": {") != null);
@@ -1310,9 +1314,11 @@ test "save roundtrip preserves telegram interactive settings" {
     };
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -1351,9 +1357,11 @@ test "save roundtrip preserves diagnostics logging flags" {
     cfg.diagnostics.log_llm_io = true;
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -1408,9 +1416,11 @@ test "save roundtrip preserves reliability settings" {
     cfg.reliability.model_fallbacks = &model_fallbacks;
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -1621,9 +1631,11 @@ test "save roundtrip preserves extended config sections" {
 
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 256 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [256 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -1713,9 +1725,11 @@ test "save escapes mcp_servers strings safely" {
 
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -2663,9 +2677,11 @@ test "save and load roundtrip" {
     try cfg.save();
 
     // load back by reading and parsing the saved file
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 1024 * 64);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [1024 * 64]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
 
     var cfg2 = Config{
         .workspace_dir = base,
@@ -2941,9 +2957,11 @@ test "save writes provider native_tools when false" {
 
     try cfg.save();
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"native_tools\": false") != null);
@@ -3944,11 +3962,13 @@ test "save includes nostr channel when configured" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
 
-    const file = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     // Must contain nostr channel fields
@@ -3987,11 +4007,13 @@ test "save includes dm_relays in nostr section" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
 
-    const file = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"dm_relays\"") != null);
@@ -4016,11 +4038,13 @@ test "dm_relays round-trips through save and load" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
 
-    const file = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     // Use an arena so all allocations made by parseJson are freed in bulk.
@@ -4057,11 +4081,13 @@ test "nostr display_name with special chars round-trips correctly" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
 
-    const file_content = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file_content.close();
-    const raw = try file_content.readToEndAlloc(allocator, 64 * 1024);
+    const file_content = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    defer file_content.close(std.Options.debug_io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file_content.reader(std.Options.debug_io, &read_buffer);
+    const raw = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(raw);
 
     // Verify the escaping is present in the raw JSON

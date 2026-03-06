@@ -718,6 +718,7 @@ pub const CronScheduler = struct {
         if (!self.enabled) return;
 
         const poll_ns: u64 = poll_secs * std.time.ns_per_s;
+        _ = poll_ns; // TODO: use with std.Thread.sleep() migration
 
         while (true) {
             const now = 0;
@@ -742,10 +743,9 @@ pub const CronScheduler = struct {
             switch (job.job_type) {
                 .shell => {
                     // Execute shell command via child process
-                    const result = std.process.Child.run(.{
-                        .allocator = self.allocator,
+                    const result = std.process.run(self.allocator, std.Options.debug_io, .{
                         .argv = &.{ platform.getShell(), platform.getShellFlag(), job.command },
-                        .cwd = self.shell_cwd,
+                        .cwd = if (self.shell_cwd) |cwd| .{ .path = cwd } else .inherit,
                     }) catch |err| {
                         log.err("cron job '{s}' failed to start: {}", .{ job.id, err });
                         job.last_status = "error";
@@ -981,16 +981,16 @@ fn runAgentJob(
     try argv.append(allocator, "-m");
     try argv.append(allocator, prompt);
 
-    var child = std.process.Child.init(argv.items, allocator);
+    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv.items });
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     child.cwd = cwd;
 
-    try child.spawn();
+    // child already spawned
     errdefer {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
     }
 
     const start_ns = 0;
@@ -1009,7 +1009,7 @@ fn runAgentJob(
         start_ns,
     );
 
-    const term = try child.wait();
+    const term = try child.wait(std.Options.debug_io);
     const success = !timed_out and switch (term) {
         .Exited => |code| code == 0,
         else => false,
@@ -1055,7 +1055,7 @@ fn deliverResult(allocator: std.mem.Allocator, delivery: DeliveryConfig, output:
 }
 
 /// Load jobs strictly (returns errors)
-fn loadJobsStrict(scheduler: *CronScheduler) !void {
+pub fn loadJobsStrict(scheduler: *CronScheduler) !void {
     _ = scheduler;
     // TODO: Zig 0.16.0 - Stub until file I/O migration complete
 }
@@ -1067,8 +1067,7 @@ fn cronJsonPath(allocator: std.mem.Allocator) ![]const u8 {
     return error.NotImplemented;
 }
 
-test "loadJobs stub" {
-}
+test "loadJobs stub" {}
 
 /// Replace in-memory jobs with the persisted store content.
 pub fn reloadJobs(scheduler: *CronScheduler) !void {
@@ -1268,8 +1267,7 @@ pub fn cliRunJob(allocator: std.mem.Allocator, id: []const u8) !void {
         log.info("Running job '{s}': {s}", .{ id, job.command });
         switch (job.job_type) {
             .shell => {
-                const result = std.process.Child.run(.{
-                    .allocator = allocator,
+                const result = std.process.run(allocator, std.Options.debug_io, .{
                     .argv = &.{ platform.getShell(), platform.getShellFlag(), job.command },
                     .cwd = scheduler.shell_cwd,
                 }) catch |err| {
@@ -1972,10 +1970,10 @@ test "collectChildOutputWithTimeout disables timeout when set to zero" {
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    try child.spawn();
+    // child already spawned
     errdefer {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
     }
 
     var stdout: std.ArrayList(u8) = .empty;
@@ -1991,7 +1989,7 @@ test "collectChildOutputWithTimeout disables timeout when set to zero" {
         0,
         0,
     );
-    const term = try child.wait();
+    const term = try child.wait(std.Options.debug_io);
 
     try std.testing.expect(!timed_out);
     switch (term) {
@@ -2009,10 +2007,10 @@ test "collectChildOutputWithTimeout kills process after deadline" {
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    try child.spawn();
+    // child already spawned
     errdefer {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
     }
 
     var stdout: std.ArrayList(u8) = .empty;
@@ -2028,7 +2026,7 @@ test "collectChildOutputWithTimeout kills process after deadline" {
         1,
         0,
     );
-    const term = try child.wait();
+    const term = try child.wait(std.Options.debug_io);
 
     try std.testing.expect(timed_out);
     const completed_ok = switch (term) {

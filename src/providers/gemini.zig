@@ -694,7 +694,7 @@ pub const GeminiProvider = struct {
     return error.NotSupported;
         // child.stdout_behavior = .Pipe;
         // child.stderr_behavior = .Ignore;
- //         // try child.spawn();
+ //         // // child already spawned
  //         // // Read stdout line by line, parse SSE events
         // var accumulated: std.ArrayListUnmanaged(u8) = .empty;
         // defer accumulated.deinit(allocator);
@@ -748,7 +748,7 @@ pub const GeminiProvider = struct {
             // const n = file.read(&read_buf) catch break;
             // if (n == 0) break;
         // }
- //         // const term = child.wait() catch return error.CurlWaitError;
+ //         // const term = child.wait(std.Options.debug_io) catch return error.CurlWaitError;
         // switch (term) {
             // .Exited => |code| if (code != 0) return error.CurlFailed,
             // else => return error.CurlFailed,

@@ -7,7 +7,6 @@
 
 const std = @import("std");
 
-
 fn getEnvVarOwned(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
     const key_z = try allocator.dupeZ(u8, key);
     defer allocator.free(key_z);
@@ -123,10 +122,10 @@ const ArrayListPool = struct {
 
     pub fn deinit(self: *ArrayListPool) void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
+        // // TODO: Zig 0.16.0 - needs io
+        // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
+        // defer self.mutex.unlock(io);
 
         for (self.available.items) |list| {
             list.deinit(self.allocator);
@@ -137,10 +136,10 @@ const ArrayListPool = struct {
 
     pub fn acquire(self: *ArrayListPool) *std.ArrayList([]const u8) {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
+        // // TODO: Zig 0.16.0 - needs io
+        // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
+        // defer self.mutex.unlock(io);
 
         if (self.available.items.len > 0) {
             return self.available.pop();
@@ -153,10 +152,10 @@ const ArrayListPool = struct {
 
     pub fn release(self: *ArrayListPool, list: *std.ArrayList([]const u8)) void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
+        // // TODO: Zig 0.16.0 - needs io
+        // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
+        // defer self.mutex.unlock(io);
 
         list.clearRetainingCapacity();
         self.available.append(self.allocator, list) catch {
@@ -229,7 +228,7 @@ pub fn logAudit(event: AuditEvent, details: []const u8) void {
         .security_violation => "SECURITY_VIOLATION",
     };
 
-    std.log.info("AUDIT: {s} {s}", .{event_str, details});
+    std.log.info("AUDIT: {s} {s}", .{ event_str, details });
 }
 
 /// Validate binary path (no directory traversal, must exist and be executable)
@@ -308,7 +307,7 @@ pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) Sign
     _ = std.Io.Dir.openFileAbsolute(io, sig_path, .{}) catch |err| {
         // Signature file not found - this is OK, signature is optional
         if (err == error.FileNotFound) return .not_found;
-        std.log.warn("Failed to open signature file '{s}': {}", .{sig_path, err});
+        std.log.warn("Failed to open signature file '{s}': {}", .{ sig_path, err });
         return .verification_error;
     };
     // TODO: Zig 0.16.0 - needs io
@@ -329,13 +328,13 @@ pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) Sign
 }
 
 /// Compute SHA-256 hash of a file
-    //     logAudit(.security_violation, "Binary signature verification failed");
+//     logAudit(.security_violation, "Binary signature verification failed");
 
 /// Compute SHA-256 hash of a file
 fn computeSha256(allocator: Allocator, path: []const u8) ![]u8 {
     const file = try std.Io.Dir.openFileAbsolute(path, .{});
     // TODO: Zig 0.16.0 - needs io
-        // defer file.close();
+    // defer file.close();
 
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     var buf: [8192]u8 = undefined;
@@ -363,6 +362,7 @@ pub fn waitWithTimeout(child: *std.process.Child, timeout_ms: u64) !std.process.
         .{},
         struct {
             fn watchdog(child_ptr: *std.process.Child, timeout: u64) void {
+                _ = timeout; // TODO: use for sleep duration after Zig 0.16 migration
                 // std.Thread.sleep() - TODO: Fix for Zig 0.16
                 _ = child_ptr.kill() catch {};
             }
@@ -372,7 +372,7 @@ pub fn waitWithTimeout(child: *std.process.Child, timeout_ms: u64) !std.process.
     defer watchdog_result.join();
 
     // Wait for the child to complete
-    return child.wait();
+    return child.wait(std.Options.debug_io);
 }
 
 /// System state
@@ -433,7 +433,7 @@ pub const IncomingMessage = struct {
 const SeenMessageCache = struct {
     /// Cache entry with timestamp
     const Entry = struct {
-        seen_at: i64,  // When we saw this message
+        seen_at: i64, // When we saw this message
     };
 
     /// StringHashMap for message IDs -> seen timestamp
@@ -457,10 +457,10 @@ const SeenMessageCache = struct {
 
     fn deinit(self: *SeenMessageCache) void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
+        // // TODO: Zig 0.16.0 - needs io
+        // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
+        // defer self.mutex.unlock(io);
 
         // Free all keys
         var it = self.cache.iterator();
@@ -473,10 +473,10 @@ const SeenMessageCache = struct {
     /// Check if message ID has been seen before
     fn isSeen(self: *SeenMessageCache, message_id: []const u8) bool {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
+        // // TODO: Zig 0.16.0 - needs io
+        // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
+        // defer self.mutex.unlock(io);
 
         const now = 0;
 
@@ -493,10 +493,10 @@ const SeenMessageCache = struct {
     /// Mark message as seen
     fn markSeen(self: *SeenMessageCache, message_id: []const u8) !void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
+        // // TODO: Zig 0.16.0 - needs io
+        // self.mutex.lock();
         // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
+        // defer self.mutex.unlock(io);
 
         const now = 0;
 
@@ -522,7 +522,7 @@ const SeenMessageCache = struct {
         var keys_to_remove = std.ArrayList([]const u8).initCapacity(self.allocator, 10) catch return;
         defer {
             for (keys_to_remove.items) |k| {
-                self.allocator.free(k);  // Free the copies we made
+                self.allocator.free(k); // Free the copies we made
             }
             keys_to_remove.deinit(self.allocator);
         }
@@ -543,7 +543,7 @@ const SeenMessageCache = struct {
         // Remove from cache and free original keys
         for (keys_to_remove.items) |key_copy| {
             if (self.cache.remove(key_copy)) |kv| {
-                self.allocator.free(kv.key);  // Free the actual key from cache
+                self.allocator.free(kv.key); // Free the actual key from cache
             }
         }
     }
@@ -581,19 +581,19 @@ state: State,
 daemon: ?daemon_mod.DaemonProcess,
 poller: ?poller_mod.Poller,
 event_callback: *const fn (Allocator, Event) void,
-message_queue_size: std.atomic.Value(u32),  // Current queue size
-message_queue_max: u32,                         // Maximum queue size from config
-circuit_breaker: CircuitBreaker,               // Circuit breaker for resilience
-rate_limiter: ?*RateLimiter,                   // Per-agent rate limiting
-metrics: Metrics,                               // Metrics collection
-seen_message_cache: SeenMessageCache,          // Replay attack protection
-array_pool: ArrayListPool,                      // Pool for ArrayList instances
+message_queue_size: std.atomic.Value(u32), // Current queue size
+message_queue_max: u32, // Maximum queue size from config
+circuit_breaker: CircuitBreaker, // Circuit breaker for resilience
+rate_limiter: ?*RateLimiter, // Per-agent rate limiting
+metrics: Metrics, // Metrics collection
+seen_message_cache: SeenMessageCache, // Replay attack protection
+array_pool: ArrayListPool, // Pool for ArrayList instances
 
 /// Circuit breaker state
 pub const CircuitBreakerState = enum {
-    closed,     // Normal operation
-    open,       // Failing, reject requests
-    half_open,  // Testing if service recovered
+    closed, // Normal operation
+    open, // Failing, reject requests
+    half_open, // Testing if service recovered
 };
 
 /// Circuit breaker for resilience
@@ -602,9 +602,9 @@ pub const CircuitBreaker = struct {
     failure_count: u32 = 0,
     success_count: u32 = 0,
     last_failure_time: i64 = 0,
-    threshold: u32 = 5,              // Open after N failures
-    timeout_ns: u64 = 60 * std.time.ns_per_s,  // Open for 60 seconds
-    half_open_attempts: u32 = 3,     // Try N requests in half-open
+    threshold: u32 = 5, // Open after N failures
+    timeout_ns: u64 = 60 * std.time.ns_per_s, // Open for 60 seconds
+    half_open_attempts: u32 = 3, // Try N requests in half-open
 
     /// Check if operation should be allowed
     pub fn allow(self: *CircuitBreaker) bool {
@@ -677,9 +677,9 @@ pub const RateLimiter = struct {
 
     allocator: Allocator,
     map: AgentMap,
-    max_requests: u32 = 100,           // Max requests per window
-    window_ns: u64 = 60 * std.time.ns_per_s,  // 60 second window
-    cleanup_threshold: u32 = 1000,      // Cleanup after N entries
+    max_requests: u32 = 100, // Max requests per window
+    window_ns: u64 = 60 * std.time.ns_per_s, // 60 second window
+    cleanup_threshold: u32 = 1000, // Cleanup after N entries
 
     pub fn init(allocator: Allocator) RateLimiter {
         return .{
@@ -859,11 +859,11 @@ pub const Config = struct {
     enable_fallback: bool = true,
 
     // Reputation settings
-    min_reputation: u32 = 50,             // Minimum reputation to interact
-    block_below_reputation: u32 = 20,     // Block agents below this
+    min_reputation: u32 = 50, // Minimum reputation to interact
+    block_below_reputation: u32 = 20, // Block agents below this
 
     // Queue settings
-    max_message_queue_size: u32 = 1000,   // Maximum queued messages
+    max_message_queue_size: u32 = 1000, // Maximum queued messages
 
     // Rate limiting
     enable_rate_limiting: bool = true,
@@ -875,8 +875,8 @@ pub const Config = struct {
 
     // Replay protection
     enable_replay_protection: bool = true,
-    max_message_age_secs: u32 = 300,      // Reject messages older than 5 minutes
-    seen_message_cache_size: u32 = 10000,  // Max seen message IDs to track
+    max_message_age_secs: u32 = 300, // Reject messages older than 5 minutes
+    seen_message_cache_size: u32 = 10000, // Max seen message IDs to track
 
     /// Validate configuration values
     pub fn validate(self: *const Config) !void {
@@ -1111,7 +1111,7 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
         const err_detail = createDetailedError(
             err,
             "Invalid message content",
-            try std.fmt.allocPrint(self.allocator, "Message to '{s}' failed validation (len={})", .{to, content.len}),
+            try std.fmt.allocPrint(self.allocator, "Message to '{s}' failed validation (len={})", .{ to, content.len }),
             "Use printable ASCII/UTF-8 only, max 10KB",
         );
         const msg = err_detail.format(self.allocator) catch "Invalid message";
@@ -1123,9 +1123,7 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
 
     // Check reputation before sending
     _ = self.checkReputation(to) catch {
-        const audit_msg = std.fmt.allocPrint(
-            self.allocator, "Failed to check reputation for {s}", .{to}
-        ) catch "Failed to check reputation";
+        const audit_msg = std.fmt.allocPrint(self.allocator, "Failed to check reputation for {s}", .{to}) catch "Failed to check reputation";
         logAudit(.security_violation, audit_msg);
         self.allocator.free(audit_msg);
         _ = self.metrics.security_violations.fetchAdd(1, .seq_cst);
@@ -1144,7 +1142,7 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
 
     // Audit log
     {
-        const msg = std.fmt.allocPrint(self.allocator, "to={s}, len={d}", .{to, content.len}) catch unreachable;
+        const msg = std.fmt.allocPrint(self.allocator, "to={s}, len={d}", .{ to, content.len }) catch unreachable;
         logAudit(.message_sent, msg);
         self.allocator.free(msg);
     }
@@ -1158,7 +1156,7 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
     // // TODO: Zig 0.16.0 - needs io
     // self.mutex.lock();
     const is_degraded = self.state == .degraded or self.daemon == null;
-    
+
     // Try sending and track success/failure for metrics
     const send_result: anyerror!void = if (is_degraded) blk: {
         // Release mutex during CLI call since it may take time
@@ -1221,7 +1219,7 @@ fn validateMessageTimestamp(config: Config, message_timestamp: u64, allocator: A
         // Message is from the past
         const age = now - message_timestamp;
         if (age > max_age) {
-            const msg = std.fmt.allocPrint(allocator, "Message too old: {d}s old (max {d}s)", .{age, max_age}) catch return error.MessageTooOld;
+            const msg = std.fmt.allocPrint(allocator, "Message too old: {d}s old (max {d}s)", .{ age, max_age }) catch return error.MessageTooOld;
             logAudit(.suspicious_activity, msg);
             allocator.free(msg);
             return error.MessageTooOld;
@@ -1269,7 +1267,7 @@ pub fn discover(self: *Hybrid, capability: []const u8, limit: u32) ![]AgentInfo 
 
     // Audit log
     {
-        const msg = std.fmt.allocPrint(self.allocator, "capability={s}, limit={d}", .{capability, limit}) catch return error.OutOfMemory;
+        const msg = std.fmt.allocPrint(self.allocator, "capability={s}, limit={d}", .{ capability, limit }) catch return error.OutOfMemory;
         logAudit(.agent_discovered, msg);
         self.allocator.free(msg);
     }
@@ -1359,7 +1357,7 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
 
     defer self.allocator.free(result.stderr);
     defer self.allocator.free(result.stdout);
-    
+
     // Parse reputation from output
     return 0; // TODO: Implement actual parsing
 }
@@ -1443,11 +1441,7 @@ pub fn checkReputation(self: *Hybrid, agent_id: []const u8) !bool {
 
     // Check if agent is blocked
     if (rep < self.config.block_below_reputation) {
-        const msg = std.fmt.allocPrint(
-            self.allocator,
-            "Blocked agent {s} with reputation {d} below threshold {d}",
-            .{ agent_id, rep, self.config.block_below_reputation }
-        ) catch return error.OutOfMemory;
+        const msg = std.fmt.allocPrint(self.allocator, "Blocked agent {s} with reputation {d} below threshold {d}", .{ agent_id, rep, self.config.block_below_reputation }) catch return error.OutOfMemory;
         logAudit(.security_violation, msg);
         self.allocator.free(msg);
         return false;
@@ -1455,11 +1449,7 @@ pub fn checkReputation(self: *Hybrid, agent_id: []const u8) !bool {
 
     // Check if agent meets minimum reputation
     if (rep < self.config.min_reputation) {
-        const msg = std.fmt.allocPrint(
-            self.allocator,
-            "Agent {s} below min reputation ({d} < {d})",
-            .{ agent_id, rep, self.config.min_reputation }
-        ) catch return error.OutOfMemory;
+        const msg = std.fmt.allocPrint(self.allocator, "Agent {s} below min reputation ({d} < {d})", .{ agent_id, rep, self.config.min_reputation }) catch return error.OutOfMemory;
         logAudit(.invalid_input, msg);
         self.allocator.free(msg);
         return false;

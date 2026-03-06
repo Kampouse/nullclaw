@@ -206,7 +206,7 @@ fn migrateOpenclawConfig(
     if (dry_run) return true;
 
     const dst_dir = std.fs.path.dirname(target_config_path) orelse return error.InvalidConfigPath;
-    std.fs.makeDirAbsolute(dst_dir) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, dst_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -694,7 +694,7 @@ test "migrateOpenclawConfig copies and normalizes config json" {
     const source_cfg_rel = ".openclaw/config.json";
     const source_cfg = try tmp.dir.createFile(source_cfg_rel, .{});
     defer source_cfg.close();
-    try source_cfg.writeStreamingAll(std.Options.debug_io, 
+    try source_cfg.writeStreamingAll(std.Options.debug_io,
         \\{"gatewayPort":3000,"httpRequest":{"allowedDomains":["example.com"]},"session":{"idleMinutes":30}}
     );
 

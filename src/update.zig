@@ -352,8 +352,9 @@ fn downloadAndInstall(
 /// Streams the data to avoid memory buffer limits.
 /// Returns the number of bytes downloaded.
 fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.fs.File) !usize {
+    _ = allocator; // TODO: use for buffer allocation
     const argv = &[_][]const u8{ "curl", "-sfL", "--max-time", "60", url };
-    var child = std.process.Child.init(argv, allocator);
+    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv });
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;
 
@@ -371,8 +372,8 @@ fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.fs.F
     while (true) {
         const bytes_read = stdout.read(&buffer) catch |err| {
             log.err("curl read failed: {}", .{err});
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            _ = child.kill(std.Options.debug_io) catch {};
+            _ = child.wait(std.Options.debug_io) catch {};
             return error.CurlFailed;
         };
 
@@ -380,14 +381,14 @@ fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.fs.F
 
         file.writeStreamingAll(std.Options.debug_io, buffer[0..bytes_read]) catch |err| {
             log.err("download write failed: {}", .{err});
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            _ = child.kill(std.Options.debug_io) catch {};
+            _ = child.wait(std.Options.debug_io) catch {};
             return err;
         };
         total_bytes += bytes_read;
     }
 
-    const term = child.wait() catch |err| {
+    const term = child.wait(std.Options.debug_io) catch |err| {
         log.err("curl wait failed: {}", .{err});
         return error.CurlFailed;
     };

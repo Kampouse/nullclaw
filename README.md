@@ -64,9 +64,9 @@ ls -lh zig-out/bin/nullclaw
 
 ## Quick Start
 
-> **Prerequisite:** use **Zig 0.15.2** (exact version).
-> `0.16.0-dev` and other Zig versions are currently unsupported and may fail to build.
-> Verify before building: `zig version` should print `0.15.2`.
+> **Prerequisite:** use **Zig 0.16.0** (exact version).
+> `0.16.0` and other Zig versions are currently unsupported and may fail to build.
+> Verify before building: `zig version` should print `0.16.0`.
 
 ```bash
 git clone https://github.com/nullclaw/nullclaw.git
@@ -486,7 +486,7 @@ Use `channels.web` for browser UI events (WebChannel v1):
 
 ## Development
 
-Build and tests are pinned to **Zig 0.15.2**.
+Build and tests are pinned to **Zig 0.16.0**.
 
 ```bash
 zig build                          # Dev build
@@ -507,7 +507,7 @@ Channel CJM coverage (ingress parsing/filtering, session key routing, account pr
 ### Project Stats
 
 ```
-Language:     Zig 0.15.2
+Language:     Zig 0.16.0
 Source files: ~110
 Lines of code: ~45,000
 Tests:        3,230+

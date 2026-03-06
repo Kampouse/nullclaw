@@ -44,7 +44,7 @@ pub const Session = struct {
     last_consolidated: u64 = 0,
     session_key: []const u8, // owned copy
     turn_count: u64,
-    mutex: std.Thread.Mutex,
+    mutex: std.Io.Mutex,
 
     pub fn deinit(self: *Session, allocator: Allocator) void {
         self.agent.deinit();
@@ -68,7 +68,7 @@ pub const SessionManager = struct {
     observer: Observer,
     policy: ?*const SecurityPolicy = null,
 
-    mutex: std.Thread.Mutex,
+    mutex: std.Io.Mutex,
     sessions: std.StringHashMapUnmanaged(*Session),
 
     pub fn init(
@@ -92,7 +92,7 @@ pub const SessionManager = struct {
             .session_store = session_store,
             .response_cache = response_cache,
             .observer = observer_i,
-            .mutex = .{},
+            .mutex = .{ .state = .{} },
             .sessions = .{},
         };
     }
@@ -108,8 +108,8 @@ pub const SessionManager = struct {
 
     /// Find or create a session for the given key. Thread-safe.
     pub fn getOrCreate(self: *SessionManager, session_key: []const u8) !*Session {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return error.Unknown;
+        defer self.mutex.unlock(std.Options.debug_io);
 
         if (self.sessions.get(session_key)) |session| {
             session.last_active = 0;
@@ -233,8 +233,8 @@ pub const SessionManager = struct {
 
         const session = try self.getOrCreate(session_key);
 
-        session.mutex.lock();
-        defer session.mutex.unlock();
+        session.mutex.lock(std.Options.debug_io) catch return error.Unknown;
+        defer session.mutex.unlock(std.Options.debug_io);
 
         // Set conversation context for this turn (Signal-specific for now)
         session.agent.conversation_context = conversation_context;
@@ -300,8 +300,8 @@ pub const SessionManager = struct {
 
     /// Number of active sessions.
     pub fn sessionCount(self: *SessionManager) usize {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return 0;
+        defer self.mutex.unlock(std.Options.debug_io);
         return self.sessions.count();
     }
 
@@ -314,8 +314,8 @@ pub const SessionManager = struct {
     /// Reload skill-backed system prompts for all active sessions.
     /// Each session is reloaded under its own lock to avoid in-flight turn races.
     pub fn reloadSkillsAll(self: *SessionManager) ReloadSkillsResult {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return .{};
+        defer self.mutex.unlock(std.Options.debug_io);
 
         var result = ReloadSkillsResult{};
 
@@ -323,9 +323,9 @@ pub const SessionManager = struct {
         while (it.next()) |entry| {
             const session = entry.value_ptr.*;
             result.sessions_seen += 1;
-            session.mutex.lock();
+            session.mutex.lock(std.Options.debug_io) catch continue;
             session.agent.has_system_prompt = false;
-            session.mutex.unlock();
+            session.mutex.unlock(std.Options.debug_io);
             result.sessions_reloaded += 1;
         }
 
@@ -334,8 +334,8 @@ pub const SessionManager = struct {
 
     /// Evict sessions idle longer than max_idle_secs. Returns number evicted.
     pub fn evictIdle(self: *SessionManager, max_idle_secs: u64) usize {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return 0;
+        defer self.mutex.unlock(std.Options.debug_io);
 
         const now = 0;
         var evicted: usize = 0;

@@ -8,15 +8,15 @@ const yc = @import("nullclaw");
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
     _ = error_return_trace;
     _ = ret_addr;
-    
+
     // Use debug_io for panic output in Zig 0.16.0
     var buffer: [1024]u8 = undefined;
     const stderr = std.debug.lockStderr(&buffer);
     defer std.debug.unlockStderr();
-    
-    stderr.file_writer.interface.writeStreamingAll(std.Options.debug_io, "panic: ") catch {};
-    stderr.file_writer.interface.writeStreamingAll(std.Options.debug_io, msg) catch {};
-    stderr.file_writer.interface.writeStreamingAll(std.Options.debug_io, "\n") catch {};
+
+    stderr.file_writer.interface.writeAll("panic: ") catch {};
+    stderr.file_writer.interface.writeAll(msg) catch {};
+    stderr.file_writer.interface.writeAll("\n") catch {};
     std.process.exit(1);
 }
 
@@ -83,10 +83,10 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
 
     // Zig 0.16.0: Use Args from minimal parameter
     var args_iter = std.process.Args.Iterator.init(minimal.args);
-    
+
     var args_list: std.ArrayList([:0]const u8) = .empty;
     defer args_list.deinit(allocator);
-    
+
     while (args_iter.next()) |arg| {
         try args_list.append(allocator, arg);
     }

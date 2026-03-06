@@ -53,7 +53,7 @@ pub const McpServer = struct {
         return error.McpNotSupported;
         
         // Old code (needs update):
-        // var child = std.process.Child.init(argv_list.items, self.allocator);
+        // var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_list.items });
         // child.stdin_behavior = .Pipe;
         // ...
     }

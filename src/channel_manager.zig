@@ -362,6 +362,7 @@ pub const ChannelManager = struct {
     pub fn supervisionLoop(self: *ChannelManager, state: *daemon.DaemonState) void {
         const STALE_THRESHOLD_SECS: i64 = 600;
         const WATCH_INTERVAL_SECS: u64 = 10;
+        _ = WATCH_INTERVAL_SECS; // TODO: use with std.Thread.sleep() migration
 
         while (!daemon.isShutdownRequested()) {
             // std.Thread.sleep() - TODO: Fix for Zig 0.16

@@ -599,6 +599,7 @@ pub fn pollDeviceCode(
     defer allocator.free(payload);
 
     const interval_ns: u64 = @as(u64, interval_s) * std.time.ns_per_s;
+    _ = interval_ns; // TODO: use for std.Thread.sleep() migration
     const max_attempts: u32 = 120;
 
     for (0..max_attempts) |_| {
@@ -886,7 +887,7 @@ test "Allocating writer deinit frees full buffer — no invalid free on sub-slic
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
 
-        try aw.writer.writeStreamingAll(std.Options.debug_io, 
+        try aw.writer.writeStreamingAll(std.Options.debug_io,
             \\{"access_token":"test_tok","refresh_token":"test_rt","expires_in":7200,"token_type":"Bearer"}
         );
 
@@ -907,7 +908,7 @@ test "Allocating writer deinit frees full buffer — no invalid free on sub-slic
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
 
-        try aw.writer.writeStreamingAll(std.Options.debug_io, 
+        try aw.writer.writeStreamingAll(std.Options.debug_io,
             \\{"device_code":"dev123","user_code":"ABCD-1234","verification_uri":"https://example.com/verify","interval":5,"expires_in":900}
         );
 

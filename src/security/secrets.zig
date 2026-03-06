@@ -204,23 +204,26 @@ pub const SecretStore = struct {
         const path = self.keyPath();
 
         // Try to read existing key
-        const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+        const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch |err| {
             // If file doesn't exist, create a new key
             if (err == error.FileNotFound) {
                 return self.createNewKey(path);
             }
             return err;
         };
-        defer file.close();
+        defer file.close(std.Options.debug_io);
 
-        // Read hex-encoded key
+        // Read hex-encoded key using reader
         var hex_buf: [KEY_LEN * 2]u8 = undefined;
-        const bytes_read = file.readAll(&hex_buf) catch return error.KeyReadFailed;
-        if (bytes_read != hex_buf.len) return error.KeyReadFailed;
+        var read_buffer: [256]u8 = undefined;
+        var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+        const bytes_read = std.Io.Reader.take(&file_reader.interface, hex_buf.len) catch return error.KeyReadFailed;
+        if (bytes_read.len != hex_buf.len) return error.KeyReadFailed;
+        @memcpy(hex_buf[0..bytes_read.len], bytes_read);
 
         // Decode hex to bytes
         var key: [KEY_LEN]u8 = undefined;
-        hexDecode(&hex_buf, &key) catch return error.KeyReadFailed;
+        _ = hexDecode(&hex_buf, &key) catch return error.KeyReadFailed;
 
         return key;
     }
@@ -239,18 +242,18 @@ pub const SecretStore = struct {
 
         // Ensure parent dir exists
         if (std.fs.path.dirname(path)) |parent| {
-            std.fs.cwd().createDirPath(std.Options.debug_io, parent) catch |err| {
+            std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch |err| {
                 log.err("failed to create parent dir {s}: {}", .{ parent, err });
             };
         }
 
-        const file = std.fs.cwd().createFile(path, .{}) catch return error.KeyWriteFailed;
-        defer file.close();
+        const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{}) catch return error.KeyWriteFailed;
+        defer file.close(std.Options.debug_io);
         file.writeStreamingAll(std.Options.debug_io, &hex_buf) catch return error.KeyWriteFailed;
 
         // Set restrictive permissions (Unix: 0600, owner-only)
         if (@import("builtin").os.tag != .windows) {
-            file.chmod(0o600) catch |err| {
+            file.setPermissions(std.Options.debug_io, @enumFromInt(0o600)) catch |err| {
                 log.err("failed to set 0600 permissions on {s}: {}", .{ path, err });
             };
         }

@@ -420,7 +420,7 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
     const safe_name = try sanitizePathComponent(candidate.result_name);
 
     // Ensure skills directory exists
-    std.fs.makeDirAbsolute(skills_dir) catch |err| switch (err) {
+    std.Io.Dir.createDirAbsolute(std.Options.debug_io, skills_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return IntegrationResult{
             .skill_name = safe_name,
@@ -435,10 +435,7 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
     defer allocator.free(target_path);
 
     // Clone the repository using git
-    var child = std.process.Child.init(
-        &.{ "git", "clone", "--depth", "1", candidate.repo_url, target_path },
-        allocator,
-    );
+    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = &.{"git"} });
     child.stderr_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
 
@@ -450,7 +447,7 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
             .error_message = "Failed to spawn git clone",
         };
     };
-    const term = child.wait() catch {
+    const term = child.wait(std.Options.debug_io) catch {
         return IntegrationResult{
             .skill_name = safe_name,
             .install_path = skills_dir,
