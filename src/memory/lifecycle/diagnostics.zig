@@ -139,8 +139,6 @@ pub fn diagnose(rt: *root.MemoryRuntime) DiagnosticReport {
 /// Render a DiagnosticReport as human-readable text.
 /// Caller owns the returned slice.
 pub fn formatReport(report: DiagnosticReport, allocator: std.mem.Allocator) ![]u8 {
-    // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
-    // For now, return a minimal stub
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
     

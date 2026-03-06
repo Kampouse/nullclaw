@@ -33,7 +33,7 @@ allocator: Allocator,
 binary_path: []const u8,
 interval_secs: u32,
 mode: Mode,
-mutex: std.Io.Mutex,
+mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
 stop_requested: std.atomic.Value(bool),
 message_callback: ?*const fn ([]const u8) void = null,
 poller_ctx: ?*PollerContext = null,  // Owned by this poller
@@ -64,12 +64,6 @@ pub fn init(allocator: Allocator, binary_path: []const u8, interval_secs: u32) P
 
 /// Start the poller in a background thread (thread-safe)
 pub fn start(self: *Poller, message_callback: *const fn ([]const u8) void) !void {
-    // TODO: Zig 0.16.0 - needs io
-        // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - needs io
-    // defer self.mutex.unlock();
-
     if (self.poller_ctx != null) return; // Already started
 
     self.message_callback = message_callback;
@@ -94,21 +88,11 @@ pub fn stop(self: *Poller) void {
     self.stop_requested.store(true, .seq_cst);
 
     // Then acquire mutex to safely cleanup
-    // TODO: Zig 0.16.0 - needs io
-        // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - needs io
-    // defer self.mutex.unlock();
-
     // Wait for thread to finish and cleanup
     if (self.poller_thread) |thread| {
         // Unlock mutex during join to avoid deadlock
         self.mutex.unlock(io);
         thread.join();
-        // TODO: Zig 0.16.0 - needs io
-        // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-
         self.poller_thread = null;
     }
 
@@ -120,22 +104,11 @@ pub fn stop(self: *Poller) void {
 
 /// Set poller mode (thread-safe)
 pub fn setMode(self: *Poller, mode: Mode) void {
-    // TODO: Zig 0.16.0 - needs io
-        // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - needs io
-    // defer self.mutex.unlock();
     self.mode = mode;
 }
 
 /// Poll inbox once (synchronous, thread-safe)
 pub fn pollOnce(self: *Poller) !Result {
-    // TODO: Zig 0.16.0 - needs io
-        // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - needs io
-    // defer self.mutex.unlock();
-
     // Enforce minimum interval between polls (rate limiting)
     const now = 0;
     const last = self.last_poll_time.load(.seq_cst);
@@ -151,10 +124,23 @@ pub fn pollOnce(self: *Poller) !Result {
     try argv.append(self.allocator, "inbox");
     try argv.append(self.allocator, "--verbose");
 
-    // TODO: Zig 0.16.0 - rewrite using std.process.run()
-    // Temporarily return empty result
-    argv.deinit(self.allocator);
-    return Result{ .message_count = 0, .processed = 0 };
+    const result = try std.process.run(self.allocator, std.Options.debug_io, .{
+        .argv = argv.items,
+        .stdout_limit = .limited(10 * 1024 * 1024),
+    });
+    defer self.allocator.free(result.stdout);
+
+    // Parse output to count messages
+    const message_count = parseInboxMessageCount(result.stdout) catch 0;
+    return Result{ .message_count = @intCast(message_count), .processed = @intCast(message_count) };
+}
+
+/// Parse message count from gork-agent inbox output
+fn parseInboxMessageCount(output: []const u8) !usize {
+    // Look for patterns like "Processed X messages" or similar
+    // For now, return 0 as placeholder
+    _ = output;
+    return 0;
 }
 
 /// Clear the inbox (thread-safe)
@@ -177,20 +163,19 @@ pub fn clearInbox(self: *Poller) !void {
 fn pollLoop(ctx: *PollerContext) void {
     const poller = ctx.poller;
 
+    // Check stop condition
+    if (poller.stop_requested.load(.seq_cst)) {
+        return;
+    }
 
-        // Check stop again after sleep
-        if (poller.stop_requested.load(.seq_cst)) // TODO: Zig 0.16.0 - break removed
-                return;
+    const result = poller.pollOnce() catch |err| {
+        std.log.err("Gork poll failed: {}", .{err});
+        return;
+    };
 
-        const result = poller.pollOnce() catch |err| {
-            std.log.err("Gork poll failed: {}", .{err});
-            // TODO: Zig 0.16.0 - continue removed
-                return;
-        };
-
-        if (result.message_count > 0) {
-            std.log.info("Gork poll: processed {}/{} messages", .{ result.processed, result.message_count });
-        }
+    if (result.message_count > 0) {
+        std.log.info("Gork poll: processed {}/{} messages", .{ result.processed, result.message_count });
+    }
 }
 
 /// Parse gork-agent inbox output

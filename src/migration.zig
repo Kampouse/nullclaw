@@ -683,7 +683,7 @@ test "resolveOpenclawConfigPath finds parent config for workspace layout" {
     cfg_file.close(std.Options.debug_io);
 
     const workspace_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".openclaw/workspace", std.testing.allocator);
-    defer std.testing.allocator.free(workspace_abs);
+    defer std.testing.allocator.free(workspace_abs.ptr[0 .. workspace_abs.len + 1]);
 
     const resolved = try resolveOpenclawConfigPath(std.Options.debug_io, std.testing.allocator, workspace_abs);
     defer if (resolved) |p| std.testing.allocator.free(p);
@@ -708,9 +708,9 @@ test "migrateOpenclawConfig copies and normalizes config json" {
     );
 
     const workspace_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".openclaw/workspace", std.testing.allocator);
-    defer std.testing.allocator.free(workspace_abs);
+    defer std.testing.allocator.free(workspace_abs.ptr[0 .. workspace_abs.len + 1]);
     const target_cfg_abs = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".nullclaw", std.testing.allocator);
-    defer std.testing.allocator.free(target_cfg_abs);
+    defer std.testing.allocator.free(target_cfg_abs.ptr[0 .. target_cfg_abs.len + 1]);
     const target_cfg_path = try std.fs.path.join(std.testing.allocator, &.{ target_cfg_abs, "config.json" });
     defer std.testing.allocator.free(target_cfg_path);
 
@@ -797,13 +797,13 @@ test "backup and restore roundtrip" {
 
     // Get absolute paths via realpath
     const src_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, "test.db", std.testing.allocator);
-    defer std.testing.allocator.free(src_path);
+    defer std.testing.allocator.free(src_path.ptr[0 .. src_path.len + 1]);
 
     const backup_name = "test.db.backup-1234";
     const backup_file = try tmp_dir.dir.createFile(std.Options.debug_io, backup_name, .{});
     backup_file.close(std.Options.debug_io);
     const backup_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, backup_name, std.testing.allocator);
-    defer std.testing.allocator.free(backup_path);
+    defer std.testing.allocator.free(backup_path.ptr[0 .. backup_path.len + 1]);
 
     // Copy source to backup
     try copyFileAbsolute(std.Options.debug_io, src_path, backup_path);

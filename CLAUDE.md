@@ -13,11 +13,44 @@ Read `AGENTS.md` before any code change. It is the authoritative engineering pro
 zig build                           # dev build
 zig build -Doptimize=ReleaseSmall   # release build (target: <1 MB binary)
 zig build test --summary all        # run all 3,371+ tests (must pass with 0 leaks)
+zig build test -Dtest-file=<pattern> --summary all  # run tests from files matching pattern
 zig fmt src/                        # format all source files
 zig fmt --check src/                # check formatting (used by pre-commit hook)
 ```
 
+### Test Filtering
+
+Use `-Dtest-file=<pattern>` to run tests only from files matching the pattern (substring match):
+
+```bash
+# Run tests from a specific file
+zig build test -Dtest-file=file_append --summary all
+
+# Run tests from files containing 'memory' in the path
+zig build test -Dtest-file=memory --summary all
+
+# Run tests from tools directory
+zig build test -Dtest-file=tools/ --summary all
+```
+
 Primary validation command is `zig build test --summary all` (project-wide). Individual files can still be run with `zig test <file>.zig` when needed.
+
+### Test Filtering
+
+Filter tests by file pattern to speed up development iteration:
+
+```bash
+# Run tests only from files containing 'file_append' in the path
+zig build test -Dtest-file=file_append --summary all
+
+# Run tests only from files containing 'memory' in the path
+zig build test -Dtest-file=memory --summary all
+
+# Run tests only from files containing 'tools' in the path
+zig build test -Dtest-file=tools --summary all
+```
+
+The `-Dtest-file` option accepts a substring that matches against the full test name (which includes the module path). This is useful for focused testing during development.
 
 ### Build Flags
 

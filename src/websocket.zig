@@ -57,7 +57,7 @@ pub const WsClient = struct {
     allocator: std.mem.Allocator,
     stream: std.posix.socket_t,
     tls: *TlsState,
-    write_mu: std.Io.Mutex,
+    write_mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
 
     /// Connect to wss://host:port/path.
     /// `extra_headers`: additional HTTP request headers (without trailing CRLF).

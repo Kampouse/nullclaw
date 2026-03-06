@@ -503,7 +503,7 @@ test "downloadToFile streams from local file URL" {
     try src_file.sync(std.Options.debug_io);
 
     const src_abs = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, src_name, allocator);
-    defer allocator.free(src_abs);
+    defer allocator.free(src_abs.ptr[0 .. src_abs.len + 1]);
 
     const file_url = try std.fmt.allocPrint(allocator, "file://{s}", .{src_abs});
     defer allocator.free(file_url);

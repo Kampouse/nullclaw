@@ -149,7 +149,7 @@ test "file_edit basic replace" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
@@ -174,7 +174,7 @@ test "file_edit old_text not found" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
@@ -194,7 +194,7 @@ test "file_edit empty file returns not found" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "empty.txt", .data = "" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
@@ -214,7 +214,7 @@ test "file_edit replaces only first occurrence" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "dup.txt", .data = "aaa bbb aaa" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
@@ -278,7 +278,7 @@ test "file_edit empty old_text" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "content" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileEditTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const t = ft.tool();
@@ -310,7 +310,7 @@ test "file_edit absolute path with allowed_paths works" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
     const abs_file = try std.fs.path.join(std.testing.allocator, &.{ ws_path[0..ws_path.len], "test.txt" });
     defer std.testing.allocator.free(abs_file);
 

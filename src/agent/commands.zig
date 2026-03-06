@@ -2417,8 +2417,6 @@ fn handleMemoryCommand(self: anytype, arg: []const u8) ![]const u8 {
         };
         defer memory_mod.retrieval.freeCandidates(self.allocator, results);
 
-        // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
-        // For now, return simplified results
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
         const allocator = self.allocator;

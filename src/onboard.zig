@@ -1690,13 +1690,57 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
 
 /// Create essential workspace files if they don't already exist.
 pub fn scaffoldWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8, ctx: *const ProjectContext) !void {
-    _ = allocator;
-    _ = workspace_dir;
-    _ = ctx;
-    // TODO: Zig 0.16.0 - makeDirAbsolute removed
-    return error.NotImplemented;
+    const io = std.Options.debug_io;
 
-    // AGENTS.md (operational guidelines — loaded by prompt.zig)
+    // Create workspace directory if it doesn't exist
+    std.Io.Dir.cwd().createDirPath(io, workspace_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+
+    // Create core workspace files
+    const agents_md = agentsTemplate();
+    const tools_md = toolsTemplate();
+    const identity_md = try identityTemplate(allocator, ctx);
+    defer allocator.free(identity_md);
+    const soul_md = try soulTemplate(allocator, ctx);
+    defer allocator.free(soul_md);
+    const user_md = try userTemplate(allocator, ctx);
+    defer allocator.free(user_md);
+    const heartbeat_md = heartbeatTemplate();
+
+    const files = [_]struct {
+        filename: []const u8,
+        content: []const u8,
+    }{
+        .{ .filename = "AGENTS.md", .content = agents_md },
+        .{ .filename = "TOOLS.md", .content = tools_md },
+        .{ .filename = "IDENTITY.md", .content = identity_md },
+        .{ .filename = "SOUL.md", .content = soul_md },
+        .{ .filename = "USER.md", .content = user_md },
+        .{ .filename = "HEARTBEAT.md", .content = heartbeat_md },
+    };
+
+    for (files) |entry| {
+        const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ workspace_dir, entry.filename });
+        defer allocator.free(path);
+
+        // Only create if doesn't exist
+        if (std.Io.Dir.cwd().openFile(io, path, .{})) |file| {
+            file.close(io);
+            continue; // File exists, skip
+        } else |err| {
+            if (err == error.FileNotFound) {
+                var file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+                try file.writeStreamingAll(io, entry.content);
+                file.close(io);
+            } else {
+                return err;
+            }
+        }
+    }
+
+    // MEMORY.md is optional - created on demand by memory writes
 }
 
 pub const ResetWorkspacePromptFilesOptions = struct {
@@ -1718,13 +1762,15 @@ pub fn resetWorkspacePromptFiles(
     ctx: *const ProjectContext,
     options: ResetWorkspacePromptFilesOptions,
 ) !ResetWorkspacePromptFilesReport {
+    const io = std.Options.debug_io;
+
     if (std.fs.path.dirname(workspace_dir)) |parent| {
-        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(io, parent) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
     }
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, workspace_dir, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(io, workspace_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -2321,7 +2367,8 @@ test "scaffoldWorkspace creates core files and leaves MEMORY.md optional" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const ctx = ProjectContext{};
@@ -2332,8 +2379,13 @@ test "scaffoldWorkspace creates core files and leaves MEMORY.md optional" {
     defer agents.close(std.Options.debug_io);
     var agents_buf: [16 * 1024]u8 = undefined;
     var agents_reader = agents.reader(std.Options.debug_io, &agents_buf);
-    const agents_content = try agents_reader.interface.readAlloc(std.testing.allocator, 16 * 1024);
-    defer std.testing.allocator.free(agents_content);
+    // ReadSliceAll returns void and reads until EOF
+    agents_reader.interface.readSliceAll(&agents_buf) catch |err| {
+        // File might be smaller than buffer, that's ok
+        if (err != error.EndOfStream) return err;
+    };
+    // Find the actual end by looking for first zero byte or use max buffer size
+    const agents_content = agents_buf[0..agents_buf.len];  // Will contain null padding if file is smaller
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "AGENTS.md - Your Workspace") != null);
 
     // OpenClaw-style scaffold keeps MEMORY.md optional (created on demand by memory writes).
@@ -2344,7 +2396,8 @@ test "scaffoldWorkspace is idempotent" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const ctx = ProjectContext{};
@@ -2368,7 +2421,8 @@ test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
         try f.writeStreamingAll(std.Options.debug_io, "custom-user-content");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const report = try resetWorkspacePromptFiles(std.testing.allocator, base, &ProjectContext{}, .{});
@@ -2409,7 +2463,8 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
         try f.writeStreamingAll(std.Options.debug_io, "custom-memory-lower");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const dry_report = try resetWorkspacePromptFiles(std.testing.allocator, base, &ProjectContext{}, .{

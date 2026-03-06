@@ -53,7 +53,7 @@ pub const SubagentManager = struct {
     allocator: Allocator,
     tasks: std.AutoHashMapUnmanaged(u64, *TaskState),
     next_id: u64,
-    mutex: std.Io.Mutex,
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
     config: SubagentConfig,
     bus: ?*bus_mod.Bus,
 

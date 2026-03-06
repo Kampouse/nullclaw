@@ -122,11 +122,6 @@ const ArrayListPool = struct {
 
     pub fn deinit(self: *ArrayListPool) void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // // TODO: Zig 0.16.0 - needs io
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - mutex.unlock() needs io
-        // defer self.mutex.unlock(io);
-
         for (self.available.items) |list| {
             list.deinit(self.allocator);
             self.allocator.destroy(list);
@@ -136,11 +131,6 @@ const ArrayListPool = struct {
 
     pub fn acquire(self: *ArrayListPool) *std.ArrayList([]const u8) {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // // TODO: Zig 0.16.0 - needs io
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - mutex.unlock() needs io
-        // defer self.mutex.unlock(io);
-
         if (self.available.items.len > 0) {
             return self.available.pop();
         }
@@ -152,11 +142,6 @@ const ArrayListPool = struct {
 
     pub fn release(self: *ArrayListPool, list: *std.ArrayList([]const u8)) void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // // TODO: Zig 0.16.0 - needs io
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - mutex.unlock() needs io
-        // defer self.mutex.unlock(io);
-
         list.clearRetainingCapacity();
         self.available.append(self.allocator, list) catch {
             list.deinit(self.allocator);
@@ -246,9 +231,6 @@ pub fn validateBinaryPath(path: []const u8) SecurityError!void {
         const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch {
             return error.BinaryNotFound;
         };
-        // TODO: Zig 0.16.0 - needs io
-        // defer file.close();
-
         // Check it's a regular file
         const stat = file.stat(io) catch {
             return error.CannotStatBinary;
@@ -310,9 +292,6 @@ pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) Sign
         std.log.warn("Failed to open signature file '{s}': {}", .{ sig_path, err });
         return .verification_error;
     };
-    // TODO: Zig 0.16.0 - needs io
-    // defer sig_file.close();
-
     // Read hex-encoded signature (128 hex chars = 64 bytes)
     const sig_hex_buf: [256]u8 = undefined;
     // TODO: Zig 0.16.0 - file.read() API changed, use reader
@@ -333,9 +312,6 @@ pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) Sign
 /// Compute SHA-256 hash of a file
 fn computeSha256(allocator: Allocator, path: []const u8) ![]u8 {
     const file = try std.Io.Dir.openFileAbsolute(path, .{});
-    // TODO: Zig 0.16.0 - needs io
-    // defer file.close();
-
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     var buf: [8192]u8 = undefined;
 
@@ -457,11 +433,6 @@ const SeenMessageCache = struct {
 
     fn deinit(self: *SeenMessageCache) void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // // TODO: Zig 0.16.0 - needs io
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - mutex.unlock() needs io
-        // defer self.mutex.unlock(io);
-
         // Free all keys
         var it = self.cache.iterator();
         while (it.next()) |entry| {
@@ -473,11 +444,6 @@ const SeenMessageCache = struct {
     /// Check if message ID has been seen before
     fn isSeen(self: *SeenMessageCache, message_id: []const u8) bool {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // // TODO: Zig 0.16.0 - needs io
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - mutex.unlock() needs io
-        // defer self.mutex.unlock(io);
-
         const now = 0;
 
         // Clean up old entries first
@@ -493,11 +459,6 @@ const SeenMessageCache = struct {
     /// Mark message as seen
     fn markSeen(self: *SeenMessageCache, message_id: []const u8) !void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        // // TODO: Zig 0.16.0 - needs io
-        // self.mutex.lock();
-        // TODO: Zig 0.16.0 - mutex.unlock() needs io
-        // defer self.mutex.unlock(io);
-
         const now = 0;
 
         // Clean up old entries first
@@ -960,11 +921,6 @@ pub fn setActiveHybrid(self: *Hybrid) void {
 /// Start the hybrid system (thread-safe)
 pub fn start(self: *Hybrid) !void {
     // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
-
     if (self.state != .stopped) return error.AlreadyRunning;
 
     self.state = .starting;
@@ -996,11 +952,6 @@ pub fn start(self: *Hybrid) !void {
 /// Stop the hybrid system (thread-safe)
 pub fn stop(self: *Hybrid) void {
     // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
-
     if (self.state == .stopped) return;
 
     self.state = .stopping;
@@ -1153,12 +1104,8 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
     // Hold mutex for the entire send operation to avoid race condition
     // where daemon crashes between state check and message send
     // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    const is_degraded = self.state == .degraded or self.daemon == null;
-
     // Try sending and track success/failure for metrics
-    const send_result: anyerror!void = if (is_degraded) blk: {
+    const send_result: anyerror!void = if (self.state == .degraded) blk: {
         // Release mutex during CLI call since it may take time
         self.mutex.unlock(io);
         break :blk self.sendViaCli(to, content);
@@ -1273,15 +1220,10 @@ pub fn discover(self: *Hybrid, capability: []const u8, limit: u32) ![]AgentInfo 
     }
 
     // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    const binary_path = self.config.binary_path;
-    self.mutex.unlock(io);
-
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
 
-    try argv.append(self.allocator, binary_path);
+    try argv.append(self.allocator, self.config.binary_path);
     try argv.append(self.allocator, "discover");
     try argv.append(self.allocator, "--capability");
     try argv.append(self.allocator, capability);
@@ -1322,15 +1264,10 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
     try validateAgentId(agent_id);
 
     // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    const binary_path = self.config.binary_path;
-    self.mutex.unlock(io);
-
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
 
-    try argv.append(self.allocator, binary_path);
+    try argv.append(self.allocator, self.config.binary_path);
     try argv.append(self.allocator, "list");
     try argv.append(self.allocator, "--limit");
     try argv.append(self.allocator, "100");
@@ -1365,10 +1302,6 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
 /// Get current state (thread-safe)
 pub fn getState(self: *Hybrid) State {
     // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - mutex.unlock() needs io
-    // defer self.mutex.unlock(io);
     return self.state;
 }
 
@@ -1414,15 +1347,10 @@ fn startPoller(self: *Hybrid, mode: poller_mod.Mode) !void {
 fn sendViaCli(self: *Hybrid, to: []const u8, content: []const u8) !void {
     // Note: Validation is done in sendMessage before calling this
     // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-    // // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    const binary_path = self.config.binary_path;
-    self.mutex.unlock(io);
-
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
 
-    try argv.append(self.allocator, binary_path);
+    try argv.append(self.allocator, self.config.binary_path);
     try argv.append(self.allocator, "send");
     try argv.append(self.allocator, "--to");
     try argv.append(self.allocator, to);

@@ -2216,9 +2216,8 @@ test "Agent buildProviderMessages allows workspace image paths" {
 
     const allocator = std.testing.allocator;
     const workspace_path_z = try tmp_dir.dir.realPathFileAlloc(io, ".", allocator);
-    defer allocator.free(workspace_path_z);
-    const workspace_path = workspace_path_z[0 .. workspace_path_z.len - 1]; // Drop sentinel
-    defer allocator.free(workspace_path);
+    defer allocator.free(workspace_path_z.ptr[0 .. workspace_path_z.len + 1]);
+    const workspace_path = workspace_path_z[0..workspace_path_z.len]; // Drop sentinel
     const image_path = try std.fs.path.join(allocator, &.{ workspace_path, "screen.png" });
     defer allocator.free(image_path);
 

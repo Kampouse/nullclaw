@@ -104,8 +104,11 @@ fn openWorkspaceFileWithGuards(
 /// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
 fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
     const result = try dir.realPathFileAlloc(io, ".", allocator);
-    // Convert from [:0]u8 to []u8 (drop the sentinel)
-    return result[0 .. result.len - 1];
+    // result is [:0]u8 with allocation size len+1 (includes sentinel)
+    // Dupe the content without sentinel, then free the original
+    const path = try allocator.dupe(u8, result[0..result.len]);
+    allocator.free(result.ptr[0 .. result.len + 1]);
+    return path;
 }
 
 /// Conversation context for the current turn (Signal-specific for now).
@@ -183,16 +186,14 @@ pub fn buildSystemPrompt(
     allocator: std.mem.Allocator,
     ctx: PromptContext,
 ) ![]const u8 {
-    // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
-    // For now, return a minimal stub
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    
+
     try buf.appendSlice(allocator, "System prompt builder (stubbed)\n");
     try buf.appendSlice(allocator, "Workspace: ");
     try buf.appendSlice(allocator, ctx.workspace_dir);
     try buf.appendSlice(allocator, "\n");
-    
+
     return try buf.toOwnedSlice(allocator);
 }
 
@@ -576,7 +577,7 @@ test "buildSystemPrompt injects memory.md when MEMORY.md is absent" {
     {
         const f = try tmp.dir.createFile(io, "memory.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"alt-memory");
+        try f.writeStreamingAll(io, "alt-memory");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -602,7 +603,7 @@ test "buildSystemPrompt injects BOOTSTRAP.md when present" {
     {
         const f = try tmp.dir.createFile(io, "BOOTSTRAP.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"bootstrap-welcome-line");
+        try f.writeStreamingAll(io, "bootstrap-welcome-line");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -626,7 +627,7 @@ test "buildSystemPrompt injects HEARTBEAT.md when present" {
     {
         const f = try tmp.dir.createFile(io, "HEARTBEAT.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"- heartbeat-check-item");
+        try f.writeStreamingAll(io, "- heartbeat-check-item");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -650,7 +651,7 @@ test "buildSystemPrompt injects IDENTITY.md when present" {
     {
         const f = try tmp.dir.createFile(io, "IDENTITY.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"- **Name:** identity-test-bot");
+        try f.writeStreamingAll(io, "- **Name:** identity-test-bot");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -674,7 +675,7 @@ test "buildSystemPrompt injects USER.md when present" {
     {
         const f = try tmp.dir.createFile(io, "USER.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"- **Name:** user-test\n- **Timezone:** UTC");
+        try f.writeStreamingAll(io, "- **Name:** user-test\n- **Timezone:** UTC");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -698,7 +699,7 @@ test "workspacePromptFingerprint is stable when files are unchanged" {
     {
         const f = try tmp.dir.createFile(io, "SOUL.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"soul-v1");
+        try f.writeStreamingAll(io, "soul-v1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -716,7 +717,7 @@ test "workspacePromptFingerprint changes when tracked file changes" {
     {
         const f = try tmp.dir.createFile(io, "SOUL.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"short");
+        try f.writeStreamingAll(io, "short");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -727,7 +728,7 @@ test "workspacePromptFingerprint changes when tracked file changes" {
     {
         const f = try tmp.dir.createFile(io, "SOUL.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"longer-content-after-change");
+        try f.writeStreamingAll(io, "longer-content-after-change");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -741,7 +742,7 @@ test "workspacePromptFingerprint changes when MEMORY.md changes" {
     {
         const f = try tmp.dir.createFile(io, "MEMORY.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"memory-v1");
+        try f.writeStreamingAll(io, "memory-v1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -752,7 +753,7 @@ test "workspacePromptFingerprint changes when MEMORY.md changes" {
     {
         const f = try tmp.dir.createFile(io, "MEMORY.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"memory-v2-updated");
+        try f.writeStreamingAll(io, "memory-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -766,7 +767,7 @@ test "workspacePromptFingerprint changes when memory.md changes" {
     {
         const f = try tmp.dir.createFile(io, "memory.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"alt-memory-v1");
+        try f.writeStreamingAll(io, "alt-memory-v1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -777,7 +778,7 @@ test "workspacePromptFingerprint changes when memory.md changes" {
     {
         const f = try tmp.dir.createFile(io, "memory.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"alt-memory-v2-updated");
+        try f.writeStreamingAll(io, "alt-memory-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -791,7 +792,7 @@ test "workspacePromptFingerprint changes when BOOTSTRAP.md changes" {
     {
         const f = try tmp.dir.createFile(io, "BOOTSTRAP.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"bootstrap-v1");
+        try f.writeStreamingAll(io, "bootstrap-v1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -802,7 +803,7 @@ test "workspacePromptFingerprint changes when BOOTSTRAP.md changes" {
     {
         const f = try tmp.dir.createFile(io, "BOOTSTRAP.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"bootstrap-v2-updated");
+        try f.writeStreamingAll(io, "bootstrap-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -816,7 +817,7 @@ test "workspacePromptFingerprint changes when HEARTBEAT.md changes" {
     {
         const f = try tmp.dir.createFile(io, "HEARTBEAT.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"- check-1");
+        try f.writeStreamingAll(io, "- check-1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -827,7 +828,7 @@ test "workspacePromptFingerprint changes when HEARTBEAT.md changes" {
     {
         const f = try tmp.dir.createFile(io, "HEARTBEAT.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"- check-2-updated");
+        try f.writeStreamingAll(io, "- check-2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -841,7 +842,7 @@ test "workspacePromptFingerprint changes when IDENTITY.md changes" {
     {
         const f = try tmp.dir.createFile(io, "IDENTITY.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"- **Name:** v1");
+        try f.writeStreamingAll(io, "- **Name:** v1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -852,7 +853,7 @@ test "workspacePromptFingerprint changes when IDENTITY.md changes" {
     {
         const f = try tmp.dir.createFile(io, "IDENTITY.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"- **Name:** v2-updated");
+        try f.writeStreamingAll(io, "- **Name:** v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -866,7 +867,7 @@ test "workspacePromptFingerprint changes when AGENTS.md changes" {
     {
         const f = try tmp.dir.createFile(io, "AGENTS.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"startup-v1");
+        try f.writeStreamingAll(io, "startup-v1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -877,7 +878,7 @@ test "workspacePromptFingerprint changes when AGENTS.md changes" {
     {
         const f = try tmp.dir.createFile(io, "AGENTS.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"startup-v2-updated");
+        try f.writeStreamingAll(io, "startup-v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -891,7 +892,7 @@ test "workspacePromptFingerprint changes when USER.md changes" {
     {
         const f = try tmp.dir.createFile(io, "USER.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"- **Name:** v1");
+        try f.writeStreamingAll(io, "- **Name:** v1");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -902,7 +903,7 @@ test "workspacePromptFingerprint changes when USER.md changes" {
     {
         const f = try tmp.dir.createFile(io, "USER.md", .{ .truncate = true });
         defer f.close(io);
-        try f.writeStreamingAll(io,"- **Name:** v2-updated");
+        try f.writeStreamingAll(io, "- **Name:** v2-updated");
     }
 
     const after = try workspacePromptFingerprint(std.testing.allocator, workspace);
@@ -929,7 +930,7 @@ test "buildSystemPrompt includes both MEMORY.md and memory.md when distinct" {
     };
     if (alt) |f| {
         defer f.close(io);
-        try f.writeStreamingAll(io,"alt-memory");
+        try f.writeStreamingAll(io, "alt-memory");
     }
 
     const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
@@ -1059,7 +1060,7 @@ test "appendSkillsSection renders summary XML for always=false skill" {
     {
         const f = try tmp.dir.createFile(io, "skills/greeter/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"greeter\", \"version\": \"1.0.0\", \"description\": \"Greets the user\", \"author\": \"dev\"}");
+        try f.writeStreamingAll(io, "{\"name\": \"greeter\", \"version\": \"1.0.0\", \"description\": \"Greets the user\", \"author\": \"dev\"}");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
@@ -1118,7 +1119,7 @@ test "appendSkillsSection escapes XML attributes in summary output" {
     {
         const f = try tmp.dir.createFile(io, "skills/xml-escape/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"xml-escape\", \"description\": \"Use \\\"quotes\\\" & <tags>\"}");
+        try f.writeStreamingAll(io, "{\"name\": \"xml-escape\", \"description\": \"Use \\\"quotes\\\" & <tags>\"}");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
@@ -1172,7 +1173,7 @@ test "appendSkillsSection supports markdown-only installed skill" {
     {
         const f = try tmp.dir.createFile(io, "skills/md-only/SKILL.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"# Markdown only skill");
+        try f.writeStreamingAll(io, "# Markdown only skill");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
@@ -1228,12 +1229,12 @@ test "appendSkillsSection renders full instructions for always=true skill" {
     {
         const f = try tmp.dir.createFile(io, "skills/commit/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"commit\", \"description\": \"Git commit helper\", \"always\": true}");
+        try f.writeStreamingAll(io, "{\"name\": \"commit\", \"description\": \"Git commit helper\", \"always\": true}");
     }
     {
         const f = try tmp.dir.createFile(io, "skills/commit/SKILL.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"Always stage before committing.");
+        try f.writeStreamingAll(io, "Always stage before committing.");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
@@ -1293,19 +1294,19 @@ test "appendSkillsSection renders mixed always=true and always=false" {
     {
         const f = try tmp.dir.createFile(io, "skills/full-skill/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"full-skill\", \"description\": \"Full loader\", \"always\": true}");
+        try f.writeStreamingAll(io, "{\"name\": \"full-skill\", \"description\": \"Full loader\", \"always\": true}");
     }
     {
         const f = try tmp.dir.createFile(io, "skills/full-skill/SKILL.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"Full instructions here.");
+        try f.writeStreamingAll(io, "Full instructions here.");
     }
 
     // always=false skill (default)
     {
         const f = try tmp.dir.createFile(io, "skills/lazy-skill/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"lazy-skill\", \"description\": \"Lazy loader\"}");
+        try f.writeStreamingAll(io, "{\"name\": \"lazy-skill\", \"description\": \"Lazy loader\"}");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
@@ -1366,7 +1367,7 @@ test "appendSkillsSection renders unavailable skill with missing deps" {
     {
         const f = try tmp.dir.createFile(io, "skills/docker-deploy/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"docker-deploy\", \"description\": \"Deploy with docker\", \"requires_bins\": [\"nullclaw_fake_docker_xyz\"], \"requires_env\": [\"NULLCLAW_FAKE_TOKEN_XYZ\"]}");
+        try f.writeStreamingAll(io, "{\"name\": \"docker-deploy\", \"description\": \"Deploy with docker\", \"requires_bins\": [\"nullclaw_fake_docker_xyz\"], \"requires_env\": [\"NULLCLAW_FAKE_TOKEN_XYZ\"]}");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
@@ -1426,12 +1427,12 @@ test "appendSkillsSection unavailable always=true skill renders in XML not full"
     {
         const f = try tmp.dir.createFile(io, "skills/broken-always/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"broken-always\", \"description\": \"Broken always skill\", \"always\": true, \"requires_bins\": [\"nullclaw_nonexistent_xyz_aaa\"]}");
+        try f.writeStreamingAll(io, "{\"name\": \"broken-always\", \"description\": \"Broken always skill\", \"always\": true, \"requires_bins\": [\"nullclaw_nonexistent_xyz_aaa\"]}");
     }
     {
         const f = try tmp.dir.createFile(io, "skills/broken-always/SKILL.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"These instructions should NOT appear in prompt.");
+        try f.writeStreamingAll(io, "These instructions should NOT appear in prompt.");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
@@ -1489,12 +1490,12 @@ test "installSkill end-to-end appears in buildSystemPrompt" {
     {
         const f = try tmp.dir.createFile(io, "source/skill.json", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"{\"name\": \"e2e-installed-skill\", \"description\": \"Installed via installSkill\"}");
+        try f.writeStreamingAll(io, "{\"name\": \"e2e-installed-skill\", \"description\": \"Installed via installSkill\"}");
     }
     {
         const f = try tmp.dir.createFile(io, "source/SKILL.md", .{});
         defer f.close(io);
-        try f.writeStreamingAll(io,"Follow the installed skill instructions.");
+        try f.writeStreamingAll(io, "Follow the installed skill instructions.");
     }
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);

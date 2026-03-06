@@ -262,7 +262,7 @@ test "shell cwd inside workspace works without allowed_paths" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
     var args_buf: [512]u8 = undefined;
     const args = try std.fmt.bufPrint(&args_buf, "{{\"command\": \"pwd\", \"cwd\": \"{s}\"}}", .{tmp_path});
@@ -287,7 +287,7 @@ test "shell cwd outside workspace without allowed_paths is rejected" {
     try tmp_dir.dir.createDirPath(std.Options.debug_io, "ws");
     try tmp_dir.dir.createDirPath(std.Options.debug_io, "other");
     const root_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(root_path);
+    defer std.testing.allocator.free(root_path.ptr[0 .. root_path.len + 1]);
     const ws_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "ws" });
     defer std.testing.allocator.free(ws_path);
     const other_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "other" });
@@ -322,7 +322,7 @@ test "shell cwd with allowed_paths runs in cwd" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
     var args_buf: [512]u8 = undefined;
     const args = try std.fmt.bufPrint(&args_buf, "{{\"command\": \"pwd\", \"cwd\": \"{s}\"}}", .{tmp_path});

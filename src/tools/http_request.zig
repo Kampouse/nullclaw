@@ -112,7 +112,7 @@ pub const HttpRequestTool = struct {
 
         const body: ?[]const u8 = root.getString(args, "body");
 
-        // Build extra headers
+        // Build extra headers from custom headers
         var extra_headers_buf: [32]std.http.Header = undefined;
         var extra_count: usize = 0;
         for (custom_headers) |h| {
@@ -120,14 +120,14 @@ pub const HttpRequestTool = struct {
             extra_headers_buf[extra_count] = .{ .name = h[0], .value = h[1] };
             extra_count += 1;
         }
+        const extra_headers = extra_headers_buf[0..extra_count];
 
-        var req = client.request(method, uri, .{}) catch |err| {
+        // Create request with custom headers
+        var req = client.request(method, uri, .{ .extra_headers = extra_headers }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "HTTP request failed: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg };
         };
         defer req.deinit();
-
-        // TODO: Zig 0.16.0 - add custom headers support (Headers API changed)
 
         // Send body if present, otherwise send bodiless
         if (body) |b| {

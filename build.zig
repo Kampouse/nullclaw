@@ -53,26 +53,26 @@ fn verifyVendoredSqliteHashes(b: *std.Build) !void {
                 return err;
             };
             defer file.close(b.graph.io);
-            
+
             // Get file size
             const stat = file.stat(b.graph.io) catch |err| {
                 std.log.err("failed to stat {s}: {s}", .{ file_path, @errorName(err) });
                 return err;
             };
-            
+
             // Read entire file
             const content = b.allocator.alloc(u8, stat.size) catch |err| {
                 std.log.err("failed to allocate memory for {s}: {s}", .{ file_path, @errorName(err) });
                 return err;
             };
-            
+
             var buffer: [1024 * 1024]u8 = undefined;
             var reader_stream = file.reader(b.graph.io, &buffer);
             reader_stream.interface.readSliceAll(content) catch |err| {
                 std.log.err("failed to read {s}: {s}", .{ file_path, @errorName(err) });
                 return err;
             };
-            
+
             break :blk content;
         };
         defer b.allocator.free(bytes);
@@ -457,7 +457,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("build_options", build_options_module);
-        
+
         // Web channel disabled - requires external websocket library
         // Can be re-enabled by adding websocket dependency to build.zig.zon
         // if (enable_channel_web) {
@@ -533,8 +533,25 @@ pub fn build(b: *std.Build) void {
 
     // ---------- tests ----------
     const test_step = b.step("test", "Run all tests");
+
+    // Test file filter: run tests only from matching files
+    // Usage: zig build test -Dtest-file=file_append (runs tests from file_append.zig)
+    //        zig build test -Dtest-file=tools/file_append (runs tests from tools/file_append.zig)
+    //        zig build test -Dtest-file=memory (runs tests from any file containing 'memory')
+    const test_file_filter = b.option([]const u8, "test-file", "Filter tests by file pattern (substring match)");
+
     if (!is_wasi) {
-        const lib_tests = b.addTest(.{ .root_module = lib_mod.? });
+        // Build filters array if specified
+        const filters: []const []const u8 = if (test_file_filter) |filter| blk: {
+            const filters_array = b.allocator.alloc([]const u8, 1) catch @panic("OOM");
+            filters_array[0] = filter;
+            break :blk filters_array;
+        } else &[_][]const u8{};
+
+        const lib_tests = b.addTest(.{
+            .root_module = lib_mod.?,
+            .filters = filters,
+        });
         if (sqlite3) |lib| {
             lib_tests.root_module.linkLibrary(lib);
         }
@@ -542,7 +559,11 @@ pub fn build(b: *std.Build) void {
             lib_tests.root_module.linkSystemLibrary("pq", .{});
         }
 
-        const exe_tests = b.addTest(.{ .root_module = exe.root_module });
+        const exe_tests = b.addTest(.{
+            .root_module = exe.root_module,
+            .filters = filters,
+        });
+
         test_step.dependOn(&b.addRunArtifact(lib_tests).step);
         test_step.dependOn(&b.addRunArtifact(exe_tests).step);
     }

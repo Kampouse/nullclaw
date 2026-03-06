@@ -110,7 +110,7 @@ test "file_read reads existing file" {
 
     // Get the real path of the tmp dir
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -128,7 +128,7 @@ test "file_read nonexistent file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -181,7 +181,7 @@ test "file_read nested path" {
     try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "sub/dir/deep.txt", .data = "deep content" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -201,7 +201,7 @@ test "file_read empty file" {
     try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "empty.txt", .data = "" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -240,7 +240,7 @@ test "file_read absolute path with allowed_paths works" {
     try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "hello.txt", .data = "allowed content" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
     const abs_file = try std.fs.path.join(std.testing.allocator, &.{ ws_path, "hello.txt" });
     defer std.testing.allocator.free(abs_file);
 

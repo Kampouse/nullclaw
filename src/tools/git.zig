@@ -436,7 +436,7 @@ test "git cwd inside workspace works without allowed_paths" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"operation\":\"unknown_op\",\"cwd\":{f}}}", .{std.json.fmt(ws_path, .{})});
     defer std.testing.allocator.free(args);
@@ -459,7 +459,7 @@ test "git cwd outside workspace without allowed_paths is rejected" {
     try tmp_dir.dir.createDirPath(std.Options.debug_io, "other");
 
     const root_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(root_path);
+    defer std.testing.allocator.free(root_path.ptr[0 .. root_path.len + 1]);
     const ws_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "ws" });
     defer std.testing.allocator.free(ws_path);
     const other_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "other" });

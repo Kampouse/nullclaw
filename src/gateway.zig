@@ -104,7 +104,7 @@ const GatewayTurnToolEvent = struct {
 /// Used to enrich webhook responses with tool execution summaries.
 const GatewayThreadObserver = struct {
     allocator: std.mem.Allocator,
-    mutex: std.Io.Mutex = undefined,
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
     next_seq: u64 = 0,
     events: std.ArrayListUnmanaged(GatewayObservedToolEvent) = .empty,
 

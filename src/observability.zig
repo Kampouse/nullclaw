@@ -379,7 +379,7 @@ pub const OtelObserver = struct {
     endpoint: []const u8,
     service_name: []const u8,
     spans: std.ArrayListUnmanaged(OtelSpan),
-    mutex: std.Io.Mutex,
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
     current_trace_id: [32]u8,
     current_start_ns: u64,
     requests_total: Atomic(u64),

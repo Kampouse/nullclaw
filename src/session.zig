@@ -44,7 +44,7 @@ pub const Session = struct {
     last_consolidated: u64 = 0,
     session_key: []const u8, // owned copy
     turn_count: u64,
-    mutex: std.Io.Mutex,
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
 
     pub fn deinit(self: *Session, allocator: Allocator) void {
         self.agent.deinit();
@@ -68,7 +68,7 @@ pub const SessionManager = struct {
     observer: Observer,
     policy: ?*const SecurityPolicy = null,
 
-    mutex: std.Io.Mutex,
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
     sessions: std.StringHashMapUnmanaged(*Session),
 
     pub fn init(
@@ -92,7 +92,7 @@ pub const SessionManager = struct {
             .session_store = session_store,
             .response_cache = response_cache,
             .observer = observer_i,
-            .mutex = undefined,
+            .mutex = .{ .state = .init(.unlocked) },
             .sessions = .{},
         };
     }

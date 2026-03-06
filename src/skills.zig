@@ -907,7 +907,7 @@ fn auditMarkdownLinkTarget(
 
     const linked_canonical = std.Io.Dir.cwd().realPathFileAlloc(io, linked_path, allocator) catch
         return error.SkillSecurityAuditFailed;
-    defer allocator.free(linked_canonical);
+    defer allocator.free(linked_canonical.ptr[0 .. linked_canonical.len + 1]);
 
     if (!pathWithinRoot(linked_canonical, canonical_root)) return error.SkillSecurityAuditFailed;
     if (!isRegularFile(linked_canonical)) return error.SkillSecurityAuditFailed;
@@ -1106,7 +1106,7 @@ fn auditSkillDirectory(allocator: std.mem.Allocator, root_dir_path: []const u8) 
     if (try pathIsSymlink(root_dir_path)) return error.SkillSecurityAuditFailed;
     const canonical_root = std.Io.Dir.cwd().realPathFileAlloc(io, root_dir_path, allocator) catch
         return error.SkillSecurityAuditFailed;
-    defer allocator.free(canonical_root);
+    defer allocator.free(canonical_root.ptr[0 .. canonical_root.len + 1]);
     if (!(try hasSkillMarkers(allocator, canonical_root))) return error.SkillSecurityAuditFailed;
 
     var stack: std.ArrayListUnmanaged([]u8) = .empty;
@@ -1525,7 +1525,7 @@ pub fn installSkillFromPath(allocator: std.mem.Allocator, source_path: []const u
         error.FileNotFound, error.NotDir => return error.ManifestNotFound,
         else => return err,
     };
-    defer allocator.free(source_abs);
+    defer allocator.free(source_abs.ptr[0 .. source_abs.len + 1]);
 
     if (!(try hasInstallableSkillContent(allocator, source_abs))) return error.ManifestNotFound;
 

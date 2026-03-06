@@ -199,8 +199,7 @@ pub fn buildManifestJson(
     cfg_opt: ?*const Config,
     runtime_tools: ?[]const Tool,
 ) ![]u8 {
-    // TODO: Zig 0.16.0 - Rewrite without ArrayList.writer()
-    // For now, return a minimal stub
+    // Stub implementation - returns minimal JSON
     _ = cfg_opt;
     _ = runtime_tools;
     return try allocator.dupe(u8, "{}");

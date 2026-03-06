@@ -254,7 +254,7 @@ test "isResolvedPathAllowed allows via allowed_paths" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
     try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "test.txt", .data = "" });
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_path, "test.txt" });
@@ -290,7 +290,7 @@ test "isResolvedPathAllowed trims allowed path entries before resolving" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
     try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "test.txt", .data = "" });
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_path, "test.txt" });

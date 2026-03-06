@@ -158,36 +158,49 @@ pub const DataUriImage = struct {
 /// Returns raw bytes and MIME type. Caller owns the returned `data` slice.
 /// Path is validated against `allowed_dirs` to prevent arbitrary file reads.
 pub fn readLocalImage(allocator: std.mem.Allocator, path: []const u8, config: MultimodalConfig) !ImageData {
-    // Resolve to absolute path (realpathAlloc resolves ".." and symlinks)
-    // TODO: Zig 0.16.0 - realpathAlloc API changed, use path as-is for now
-    const resolved = path;
+    // Security: Reject paths with traversal patterns
+    if (std.mem.indexOf(u8, path, "..") != null) {
+        return error.PathTraversalNotAllowed;
+    }
 
-    // Verify the resolved path is within an allowed directory
+    // Verify the path is within an allowed directory
     if (config.allowed_dirs.len == 0) return error.LocalReadNotAllowed;
     const allowed = blk: {
         for (config.allowed_dirs) |dir| {
             const trimmed = std.mem.trim(u8, dir, "/\\");
             if (trimmed.len == 0) continue;
-            if (path_security.pathStartsWith(resolved, trimmed)) break :blk true;
-
-            // Compare against canonicalized allowed dir too (/var -> /private/var on macOS).
-            // TODO: Zig 0.16.0 - realpathAlloc API changed, skip canonical path check for now
+            if (path_security.pathStartsWith(path, trimmed)) break :blk true;
         }
         break :blk false;
     };
     if (!allowed) return error.PathNotAllowed;
 
-    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, resolved, .{}) catch return error.PathNotFound;
+    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch return error.PathNotFound;
     return readFromFile(allocator, file, config.max_image_size_bytes);
 }
 
 fn readFromFile(allocator: std.mem.Allocator, file: std.Io.File, max_size: u64) !ImageData {
-    _ = allocator;
     defer file.close(std.Options.debug_io);
 
-    // TODO: Zig 0.16.0 - file read API changed, stubbed for now
-    _ = max_size;
-    return error.ImageTooLarge;
+    // Read file contents using new Zig 0.16 API
+    var buf: [1024 * 1024]u8 = undefined; // 1MB buffer
+    var reader = file.reader(std.Options.debug_io, &buf);
+
+    const data = reader.interface.readAlloc(allocator, @intCast(max_size)) catch {
+        return error.ImageReadFailed;
+    };
+    errdefer allocator.free(data);
+
+    // Detect MIME type from header
+    const mime_type = detectMimeType(data) orelse {
+        allocator.free(data);
+        return error.UnsupportedImageFormat;
+    };
+
+    return ImageData{
+        .data = data,
+        .mime_type = mime_type,
+    };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -750,22 +763,21 @@ test "prepareMessagesForProvider skips assistant messages" {
 }
 
 test "readLocalImage rejects path traversal via allowed_dirs" {
-    // On Unix: realpathAlloc resolves ".." -> path doesn't match empty allowed_dirs -> LocalReadNotAllowed
-    // On Windows: /tmp doesn't exist -> realpathAlloc fails -> PathNotFound
+    // Path traversal with ".." is now explicitly rejected
     if (readLocalImage(std.testing.allocator, "/tmp/../etc/passwd", .{})) |_| {
         @panic("expected readLocalImage to fail for traversal path");
     } else |err| {
-        try std.testing.expect(err == error.LocalReadNotAllowed or err == error.PathNotFound);
+        try std.testing.expect(err == error.PathTraversalNotAllowed or err == error.LocalReadNotAllowed);
     }
 }
 
 test "readLocalImage rejects when no allowed_dirs" {
-    // Create a real temp file so realpath succeeds, then verify allowed_dirs rejection
+    // Create a real temp file, then verify allowed_dirs rejection
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "test.png", .data = "\x89PNG\x0d\x0a\x1a\x0a" });
     const dir_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(dir_path);
+    defer std.testing.allocator.free(dir_path.ptr[0 .. dir_path.len + 1]);
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ dir_path, "test.png" });
     defer std.testing.allocator.free(file_path);
 
@@ -783,7 +795,7 @@ test "prepareMessagesForProvider does not delete nullclaw temp image files" {
     });
 
     const dir_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(dir_path);
+    defer std.testing.allocator.free(dir_path.ptr[0 .. dir_path.len + 1]);
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ dir_path, "nullclaw_photo_123.png" });
     defer std.testing.allocator.free(file_path);
 

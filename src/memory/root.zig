@@ -1301,7 +1301,10 @@ const TestWorkspace = struct {
     fn init(allocator: std.mem.Allocator) !TestWorkspace {
         var tmp = std.testing.tmpDir(.{});
         const path_z = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", allocator);
-        const path = path_z[0 .. path_z.len - 1]; // Drop sentinel
+        // path_z is [:0]u8 with allocation size len+1 (includes sentinel)
+        // Dupe the content without sentinel, then free the original
+        const path = try allocator.dupe(u8, path_z[0..path_z.len]);
+        allocator.free(path_z.ptr[0 .. path_z.len + 1]);
         return .{ .tmp = tmp, .path = path };
     }
 

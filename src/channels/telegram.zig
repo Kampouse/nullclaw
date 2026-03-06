@@ -13,8 +13,11 @@ const io = std.Options.debug_io;
 /// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
 fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
     const result = try dir.realPathFileAlloc(io, ".", allocator);
-    // Convert from [:0]u8 to []u8 (drop the sentinel)
-    return result[0 .. result.len - 1];
+    // result is [:0]u8 with allocation size len+1 (includes sentinel)
+    // Dupe the content without sentinel, then free the original
+    const path = try allocator.dupe(u8, result[0..result.len]);
+    allocator.free(result.ptr[0 .. result.len + 1]);
+    return path;
 }
 
 const log = std.log.scoped(.telegram);

@@ -346,8 +346,8 @@ test "audit logger disabled does not create file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path_z);
-    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = false };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);
@@ -463,8 +463,8 @@ test "audit logger enabled writes to file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path_z);
-    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = true, .log_path = "test_audit.log" };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);
@@ -483,8 +483,8 @@ test "audit logger multiple events" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path_z);
-    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = true, .log_path = "multi_audit.log" };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);
@@ -503,8 +503,8 @@ test "audit command execution log" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(tmp_path_z);
-    const tmp_path = tmp_path_z[0..tmp_path_z.len-1]; // Drop sentinel
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = true, .log_path = "cmd_audit.log" };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);

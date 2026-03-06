@@ -118,9 +118,18 @@ pub const FileWriteTool = struct {
         };
 
         // Ensure parent directory exists after policy checks pass.
-        // TODO: Zig 0.16.0 - makeDir API changed, skip directory creation for now
+        // Use createDirPath which creates all parent directories as needed
         if (std.fs.path.dirname(write_path)) |parent| {
-            _ = parent;
+            if (std.fs.path.isAbsolute(parent)) {
+                // For absolute paths, open the parent's parent and create
+                const grandparent = std.fs.path.dirname(parent);
+                if (grandparent) |gp| {
+                    std.Io.Dir.createDirPath(std.Io.Dir.cwd(), io, gp) catch {};
+                }
+            } else {
+                // For relative paths, create from current directory
+                std.Io.Dir.createDirPath(std.Io.Dir.cwd(), io, parent) catch {};
+            }
         }
 
         // Write via temp file + rename so existing hard links are not modified in place.
@@ -164,9 +173,22 @@ pub const FileWriteTool = struct {
         var file = tmp_file.?;
         defer file.close(io);
 
-        // TODO: Zig 0.16.0 - file write API changed, stubbed for now
-        _ = content;
-        return ToolResult{ .success = false, .output = "", .error_msg = try allocator.dupe(u8, "TODO: Zig 0.16.0 file write API changed") };
+        // Write content using new Zig 0.16 API
+        var write_buf: [4096]u8 = undefined;
+        var writer = file.writer(io, &write_buf);
+        try writer.interface.writeAll(content);
+
+        // Sync to ensure data is written to disk
+        try file.sync(io);
+
+        // Get the full path to the temp file
+        const tmp_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, tmp_name_buf[0..tmp_name_len] });
+        defer allocator.free(tmp_path);
+
+        // Rename temp file to final path (atomic operation)
+        try std.Io.Dir.rename(std.Io.Dir.cwd(), tmp_path, std.Io.Dir.cwd(), write_path, io);
+
+        return ToolResult{ .success = true, .output = "", .error_msg = null };
     }
 };
 
@@ -215,7 +237,7 @@ test "file_write creates file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileWriteTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -238,7 +260,7 @@ test "file_write creates parent dirs" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileWriteTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -260,7 +282,7 @@ test "file_write overwrites existing" {
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "exist.txt", .data = "old" });
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileWriteTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -322,7 +344,7 @@ test "file_write empty content" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileWriteTool{ .workspace_dir = ws_path };
     const t = ft.tool();
@@ -345,7 +367,7 @@ test "file_write blocks symlink target escape outside workspace" {
     defer outside_tmp.cleanup();
 
     const ws_path = try ws_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
     const outside_path = try outside_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(outside_path);
 
@@ -380,9 +402,9 @@ test "file_write does not mutate outside inode through hard link" {
     defer outside_tmp.cleanup();
 
     const ws_path = try ws_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
     const outside_path = try outside_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(outside_path);
+    defer std.testing.allocator.free(outside_path.ptr[0 .. outside_path.len + 1]);
 
     try outside_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "outside.txt", .data = "SAFE" });
     const outside_file = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "outside.txt" });
@@ -416,7 +438,7 @@ test "file_write keeps symlink and updates target" {
     var ws_tmp = std.testing.tmpDir(.{});
     defer ws_tmp.cleanup();
     const ws_path = try ws_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     try ws_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "target.txt", .data = "old" });
     try ws_tmp.dir.symLink(std.Options.debug_io, "target.txt", "link.txt", .{});
@@ -446,7 +468,7 @@ test "file_write preserves executable mode on overwrite" {
     var ws_tmp = std.testing.tmpDir(.{});
     defer ws_tmp.cleanup();
     const ws_path = try ws_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     try ws_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "script.sh", .data = "#!/bin/sh\necho old\n" });
     var file = try ws_tmp.dir.openFile(std.Options.debug_io, "script.sh", .{ .mode = .read_write });
@@ -476,9 +498,9 @@ test "file_write rejects disallowed absolute path without creating parent direct
     defer outside_tmp.cleanup();
 
     const ws_path = try ws_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(ws_path);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
     const outside_path = try outside_tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(outside_path);
+    defer std.testing.allocator.free(outside_path.ptr[0 .. outside_path.len + 1]);
 
     const outside_parent = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "created_by_rejected_write" });
     defer std.testing.allocator.free(outside_parent);

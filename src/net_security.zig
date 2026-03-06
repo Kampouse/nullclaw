@@ -103,11 +103,50 @@ pub fn resolveConnectHost(
     host: []const u8,
     port: u16,
 ) ResolveConnectHostError![]u8 {
-    _ = allocator;
-    _ = host;
-    _ = port;
-    // TODO: Zig 0.16.0 - getAddressList API changed
-    return error.HostResolutionFailed;
+    // Try numeric IP aliases first (e.g., "2130706433" for 127.0.0.1)
+    if (parseIpv4IntegerAlias(host)) |ip_bytes| {
+        if (isNonGlobalV4(ip_bytes)) {
+            return error.LocalAddressBlocked;
+        }
+        // Convert back to dotted decimal
+        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3] });
+    }
+
+    // Try to parse as IPv4 literal
+    if (parseIpv4(host)) |ipv4| {
+        if (isNonGlobalV4(ipv4)) {
+            return error.LocalAddressBlocked;
+        }
+        // Return the IP as-is
+        return std.fmt.allocPrint(allocator, "{s}", .{host});
+    }
+
+    // Try to parse as IPv6 literal
+    if (parseIpv6(host)) |ipv6| {
+        if (isNonGlobalV6(ipv6)) {
+            return error.LocalAddressBlocked;
+        }
+        // Return the IP as-is
+        return std.fmt.allocPrint(allocator, "{s}", .{host});
+    }
+
+    // Resolve hostname using new Zig 0.16 API
+    const resolved = std.Io.net.IpAddress.resolve(std.Options.debug_io, host, port) catch {
+        return error.HostResolutionFailed;
+    };
+
+    // Check if resolved address is local
+    const is_local = switch (resolved) {
+        .ip4 => |ip4| isNonGlobalV4(ip4.bytes),
+        .ip6 => |ip6| isNonGlobalV6Bytes(ip6.bytes),
+    };
+    if (is_local) {
+        return error.LocalAddressBlocked;
+    }
+
+    // Return the resolved address as string
+    const addr_str = try std.fmt.allocPrint(allocator, "{}", .{resolved});
+    return addr_str;
 }
 
 /// Resolve hostname and reject if any resolved IP is local/private/reserved.
@@ -115,10 +154,33 @@ pub fn resolveConnectHost(
 /// DNS rebinding-style domains that resolve to loopback/private addresses.
 pub fn hostResolvesToLocal(allocator: std.mem.Allocator, host: []const u8, port: u16) bool {
     _ = allocator;
-    _ = host;
-    _ = port;
-    // TODO: Zig 0.16.0 - getAddressList API changed
-    return true; // Treat as local for safety
+
+    // Try numeric IP aliases first (e.g., "2130706433" for 127.0.0.1)
+    if (parseIpv4IntegerAlias(host)) |ip_bytes| {
+        return isNonGlobalV4(ip_bytes);
+    }
+
+    // Try to parse as IPv4 literal
+    if (parseIpv4(host)) |ipv4| {
+        return isNonGlobalV4(ipv4);
+    }
+
+    // Try to parse as IPv6 literal
+    if (parseIpv6(host)) |ipv6| {
+        return isNonGlobalV6(ipv6);
+    }
+
+    // Resolve hostname using new Zig 0.16 API
+    const resolved = std.Io.net.IpAddress.resolve(std.Options.debug_io, host, port) catch {
+        return true; // On resolution failure, treat as local for safety
+    };
+
+    // Check if resolved address is local
+    const is_local = switch (resolved) {
+        .ip4 => |ip4| isNonGlobalV4(ip4.bytes),
+        .ip6 => |ip6| isNonGlobalV6Bytes(ip6.bytes),
+    };
+    return is_local;
 }
 
 fn stripHostBrackets(host: []const u8) []const u8 {
@@ -198,6 +260,16 @@ fn isNonGlobalV6(segs: [8]u16) bool {
         return isNonGlobalV4(ipv4);
     }
     return false;
+}
+
+/// Returns true if the IPv6 address (in [16]u8 format) is not globally routable.
+/// This converts the byte array to segments and delegates to isNonGlobalV6.
+fn isNonGlobalV6Bytes(bytes: [16]u8) bool {
+    var segs: [8]u16 = undefined;
+    for (0..8) |i| {
+        segs[i] = std.mem.readInt(u16, bytes[2*i..][0..2], .big);
+    }
+    return isNonGlobalV6(segs);
 }
 
 /// Parse a dotted-decimal IPv4 address string into 4 octets.
@@ -640,9 +712,8 @@ test "hostResolvesToLocal blocks decimal and hex loopback aliases" {
 }
 
 test "resolveConnectHost rejects loopback aliases" {
-    // TODO: Zig 0.16.0 - getAddressList API changed, functionality not yet reimplemented
-    // Re-enable this test when resolveConnectHost is properly implemented
-    if (true) return error.SkipZigTest;
+    try std.testing.expectError(error.LocalAddressBlocked, resolveConnectHost(std.testing.allocator, "2130706433", 80));
+    try std.testing.expectError(error.LocalAddressBlocked, resolveConnectHost(std.testing.allocator, "0x7f000001", 80));
 }
 
 test "hostResolvesToLocal fails closed on resolution error" {
@@ -654,7 +725,7 @@ test "resolveConnectHost fails on unresolvable host" {
 }
 
 test "resolveConnectHost returns literal for global ipv4" {
-    // TODO: Zig 0.16.0 - getAddressList API changed, functionality not yet reimplemented
-    // Re-enable this test when resolveConnectHost is properly implemented
-    if (true) return error.SkipZigTest;
+    const resolved = try resolveConnectHost(std.testing.allocator, "8.8.8.8", 443);
+    defer std.testing.allocator.free(resolved);
+    try std.testing.expectEqualStrings("8.8.8.8", resolved);
 }

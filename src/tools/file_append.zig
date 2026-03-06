@@ -59,7 +59,7 @@ pub const FileAppendTool = struct {
         // Resolve workspace path (may fail if workspace doesn't exist yet)
         const io = std.Options.debug_io;
         const ws_resolved: ?[]const u8 = std.Io.Dir.cwd().realPathFileAlloc(io, self.workspace_dir, allocator) catch null;
-        defer if (ws_resolved) |wr| allocator.free(wr);
+        defer if (ws_resolved) |wr| allocator.free(wr.ptr[0 .. wr.len + 1]);
         const ws_str = if (ws_resolved) |wr| wr[0..wr.len] else "";
 
         // Try to read existing content
@@ -67,7 +67,7 @@ pub const FileAppendTool = struct {
             const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, full_path, allocator) catch {
                 break :blk @as(?[]const u8, null);
             };
-            defer allocator.free(resolved);
+            defer allocator.free(resolved.ptr[0 .. resolved.len + 1]);
 
             if (!isResolvedPathAllowed(allocator, resolved[0..resolved.len], ws_str, self.allowed_paths)) {
                 return ToolResult.fail("Path is outside allowed areas");
@@ -123,7 +123,7 @@ pub const FileAppendTool = struct {
                 std.Io.Dir.cwd().deleteFile(io, full_path) catch {};
                 return ToolResult.fail("Failed to verify created file location");
             };
-            defer allocator.free(new_resolved);
+            defer allocator.free(new_resolved.ptr[0 .. new_resolved.len + 1]);
             if (!isResolvedPathAllowed(allocator, new_resolved[0..new_resolved.len], ws_str, self.allowed_paths)) {
                 std.Io.Dir.cwd().deleteFile(io, full_path) catch {};
                 return ToolResult.fail("Created file is outside allowed areas");
@@ -181,7 +181,7 @@ test "FileAppendTool appends to existing file" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "log.txt", .data = "line1" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(ws_path);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"log.txt\",\"content\":\"line2\"}");
@@ -204,7 +204,7 @@ test "FileAppendTool creates new file" {
     defer tmp_dir.cleanup();
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(ws_path);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"new.txt\",\"content\":\"hello\"}");
@@ -227,7 +227,7 @@ test "FileAppendTool appends to empty file" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "empty.txt", .data = "" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(ws_path);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"empty.txt\",\"content\":\"data\"}");
@@ -250,7 +250,7 @@ test "FileAppendTool multiple appends" {
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "multi.txt", .data = "A" });
 
     const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(ws_path);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
 
