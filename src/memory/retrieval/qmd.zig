@@ -4,6 +4,7 @@
 //! process_util.run() for child process spawning.
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const Allocator = std.mem.Allocator;
 const retrieval = @import("engine.zig");
 const RetrievalCandidate = retrieval.RetrievalCandidate;
@@ -305,7 +306,7 @@ pub const QmdAdapter = struct {
             return 0;
 
         const retention_ns: i128 = @as(i128, self.config.sessions.retention_days) * 24 * 3600 * std.time.ns_per_s;
-        const now_ns: i128 = 0;
+        const now_ns: i128 = std.Io.Clock.real.now(io).nanoseconds;
 
         var dir = std.Io.Dir.cwd().openDir(std.Options.debug_io, export_dir, .{ .iterate = true }) catch return 0;
         defer dir.close(std.Options.debug_io);
