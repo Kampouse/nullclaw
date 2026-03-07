@@ -185,13 +185,15 @@ fn joinNames(allocator: std.mem.Allocator, names: []const []const u8) ![]u8 {
     return try out.toOwnedSlice(allocator);
 }
 
-fn appendJsonStringArray(w: anytype, names: []const []const u8) !void {
-    try w.writeStreamingAll(std.Options.debug_io, "[");
+fn appendJsonStringArray(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, names: []const []const u8) !void {
+    try buf.appendSlice(allocator, "[");
     for (names, 0..) |name, i| {
-        if (i != 0) try w.writeStreamingAll(std.Options.debug_io, ", ");
-        try w.print("{f}", .{std.json.fmt(name, .{})});
+        if (i != 0) try buf.appendSlice(allocator, ", ");
+        try buf.append(allocator, '"');
+        try buf.appendSlice(allocator, name);
+        try buf.append(allocator, '"');
     }
-    try w.writeStreamingAll(std.Options.debug_io, "]");
+    try buf.appendSlice(allocator, "]");
 }
 
 pub fn buildManifestJson(
@@ -199,10 +201,36 @@ pub fn buildManifestJson(
     cfg_opt: ?*const Config,
     runtime_tools: ?[]const Tool,
 ) ![]u8 {
-    // Stub implementation - returns minimal JSON
-    _ = cfg_opt;
-    _ = runtime_tools;
-    return try allocator.dupe(u8, "{}");
+    const channels_enabled = try collectChannelNames(allocator, cfg_opt, .build_enabled);
+    defer allocator.free(channels_enabled);
+    const engines_enabled = try collectMemoryEngineNames(allocator, .build_enabled);
+    defer allocator.free(engines_enabled);
+    const runtime_tool_names = try collectRuntimeToolNames(allocator, cfg_opt, runtime_tools);
+    defer allocator.free(runtime_tool_names);
+
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\n");
+
+    // Channels section
+    try buf.appendSlice(allocator, "  \"channels\": ");
+    try appendJsonStringArray(&buf, allocator, channels_enabled);
+    try buf.appendSlice(allocator, ",\n");
+
+    // Memory engines section
+    try buf.appendSlice(allocator, "  \"memory_engines\": ");
+    try appendJsonStringArray(&buf, allocator, engines_enabled);
+    try buf.appendSlice(allocator, ",\n");
+
+    // Tools section
+    try buf.appendSlice(allocator, "  \"tools\": ");
+    try appendJsonStringArray(&buf, allocator, runtime_tool_names);
+    try buf.appendSlice(allocator, "\n");
+
+    try buf.appendSlice(allocator, "}");
+
+    return buf.toOwnedSlice(allocator);
 }
 
 pub fn buildSummaryText(
