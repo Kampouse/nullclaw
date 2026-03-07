@@ -7,11 +7,16 @@ pub const RunResult = struct {
     stderr: []u8,
     success: bool,
     exit_code: ?u32 = null,
+    /// Whether stdout and stderr are owned (allocated) by this RunResult.
+    /// If false, deinit() will not free them.
+    owns_buffers: bool = true,
 
-    /// Free both stdout and stderr buffers.
+    /// Free both stdout and stderr buffers if they are owned.
     pub fn deinit(self: *const RunResult, allocator: std.mem.Allocator) void {
-        if (self.stdout.len > 0) allocator.free(self.stdout);
-        if (self.stderr.len > 0) allocator.free(self.stderr);
+        if (self.owns_buffers) {
+            if (self.stdout.len > 0) allocator.free(self.stdout);
+            if (self.stderr.len > 0) allocator.free(self.stderr);
+        }
     }
 };
 
@@ -104,6 +109,7 @@ test "RunResult deinit frees buffers" {
         .stderr = stderr,
         .success = true,
         .exit_code = 0,
+        .owns_buffers = true,
     };
     result.deinit(allocator);
 }
@@ -115,6 +121,7 @@ test "RunResult deinit with empty buffers" {
         .stderr = "",
         .success = true,
         .exit_code = 0,
+        .owns_buffers = false, // Empty string literals, not owned
     };
     result.deinit(allocator); // should not crash or attempt to free ""
 }

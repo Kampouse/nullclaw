@@ -101,12 +101,16 @@ pub const ShellTool = struct {
             allocator.free(result.stdout);
             return ToolResult{ .success = true, .output = try allocator.dupe(u8, "(no output)") };
         }
-        defer allocator.free(result.stdout);
-        if (result.exit_code != null) {
-            const err_out = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Command failed with non-zero exit code");
-            return ToolResult{ .success = false, .output = "", .error_msg = err_out, .owns_error_msg = true };
+
+        // Failure path: ensure stdout is freed before returning
+        {
+            defer allocator.free(result.stdout);
+            if (result.exit_code != null) {
+                const err_out = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Command failed with non-zero exit code");
+                return ToolResult{ .success = false, .output = "", .error_msg = err_out, .owns_error_msg = true };
+            }
+            return ToolResult{ .success = false, .output = "", .error_msg = "Command terminated by signal", .owns_error_msg = true };
         }
-        return ToolResult{ .success = false, .output = "", .error_msg = "Command terminated by signal", .owns_error_msg = true };
     }
 };
 
