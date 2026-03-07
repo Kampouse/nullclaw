@@ -75,7 +75,7 @@ pub const AuditEvent = struct {
     pub fn init(event_type: AuditEventType) AuditEvent {
         const id = @atomicRmw(u64, &next_id, .Add, 1, .monotonic);
         return .{
-            .timestamp_s = 0,
+            .timestamp_s = @import("../util.zig").timestampUnix(),
             .event_id = id,
             .event_type = event_type,
         };
