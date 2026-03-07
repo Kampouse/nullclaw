@@ -146,15 +146,21 @@ pub fn formatResultEntries(allocator: std.mem.Allocator, query: []const u8, entr
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
 
-    try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query}));
+    const header = try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query});
+    defer allocator.free(header);
+    try buf.appendSlice(allocator, header);
 
     for (entries, 0..) |entry, i| {
         const title = if (entry.title.len > 0) entry.title else "(no title)";
         const url = if (entry.url.len > 0) entry.url else "(no url)";
 
-        try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ i + 1, title, url }));
+        const line = try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ i + 1, title, url });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
         if (entry.description.len > 0) {
-            try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{entry.description}));
+            const desc_line = try std.fmt.allocPrint(allocator, "   {s}\n", .{entry.description});
+            defer allocator.free(desc_line);
+            try buf.appendSlice(allocator, desc_line);
         }
         try buf.append(allocator, '\n');
     }
@@ -172,7 +178,9 @@ pub fn formatResultsArray(
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
 
-    try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query}));
+    const header = try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query});
+    defer allocator.free(header);
+    try buf.appendSlice(allocator, header);
 
     var out_idx: usize = 0;
     for (items) |item| {
@@ -193,9 +201,13 @@ pub fn formatResultsArray(
         };
 
         out_idx += 1;
-        try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ out_idx, title, url }));
+        const line = try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ out_idx, title, url });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
         if (desc.len > 0) {
-            try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{desc}));
+            const desc_line = try std.fmt.allocPrint(allocator, "   {s}\n", .{desc});
+            defer allocator.free(desc_line);
+            try buf.appendSlice(allocator, desc_line);
         }
         try buf.append(allocator, '\n');
     }
