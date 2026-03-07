@@ -8,16 +8,26 @@ const log = std.log.scoped(.http_util);
 // Thread-local storage for the Threaded Io instance
 // std.Options.debug_io doesn't support async network operations, so we need
 // to create a proper Threaded Io instance for HTTP requests.
-threadlocal var http_threaded_io: ?std.Io.Threaded = null;
+//
+// Thread-local Io instances are created once per thread and reused for the lifetime
+// of the thread. This is intentional for performance - creating Threaded Io instances
+// is expensive. The resources are cleaned up when the thread exits.
+threadlocal var threaded_io: ?std.Io.Threaded = null;
 threadlocal var cached_io: ?std.Io = null;
 
-// Get or create a proper Threaded Io instance for HTTP requests
-// std.Options.debug_io doesn't have a "locator" and doesn't work for networking
-fn getHttpIo() std.Io {
+/// Get or create a Threaded Io instance for HTTP/network requests.
+///
+/// This function uses a thread-local singleton pattern - one Io instance per thread
+/// that persists for the thread's lifetime. This is intentional for performance:
+/// - Threaded Io instances are expensive to create
+/// - Creating multiple instances per thread wastes resources
+/// - Resources are automatically cleaned up when the thread exits
+///
+/// Returns: std.Io instance backed by a Threaded Io with default configuration
+pub fn getThreadedIo() std.Io {
     if (cached_io) |io| return io;
 
-    // Create a new Threaded Io instance with proper defaults
-    http_threaded_io = std.Io.Threaded{
+    threaded_io = std.Io.Threaded{
         .allocator = std.heap.page_allocator,
         .stack_size = std.Thread.SpawnConfig.default_stack_size,
         .async_limit = .nothing,
@@ -32,7 +42,7 @@ fn getHttpIo() std.Io {
         .worker_threads = .init(null),
         .disable_memory_mapping = false,
     };
-    cached_io = http_threaded_io.?.io();
+    cached_io = threaded_io.?.io();
     return cached_io.?;
 }
 
@@ -58,7 +68,7 @@ pub fn curlPostWithProxy(
     _ = proxy;
     _ = max_time;
 
-    const io = getHttpIo();
+    const io = getThreadedIo();
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
@@ -157,7 +167,7 @@ pub fn curlPostStream(
     callback: StreamCallback,
     callback_ctx: *anyopaque,
 ) !void {
-    const io = getHttpIo();
+    const io = getThreadedIo();
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
@@ -242,7 +252,7 @@ pub fn curlPostWithStatus(
     body: []const u8,
     headers: []const []const u8,
 ) !HttpResponse {
-    const io = getHttpIo();
+    const io = getThreadedIo();
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
@@ -296,7 +306,7 @@ pub fn curlPostWithStatus(
 
 /// HTTP PUT (no proxy, no timeout).
 pub fn curlPut(allocator: Allocator, url: []const u8, body: []const u8, headers: []const []const u8) ![]u8 {
-    const io = getHttpIo();
+    const io = getThreadedIo();
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
@@ -379,7 +389,7 @@ pub fn curlGetWithProxy(
     _ = timeout_secs;
     _ = proxy;
 
-    const io = getHttpIo();
+    const io = getThreadedIo();
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 

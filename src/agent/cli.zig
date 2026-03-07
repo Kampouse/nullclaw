@@ -31,7 +31,10 @@ const CliStreamCtx = struct {
 
 fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
     if (event.stage != .chunk or event.text.len == 0) return;
-    // Write directly to stdout file descriptor
+    // Write directly to stdout file descriptor without buffering.
+    // For streaming responses, we want chunks to appear immediately, not buffered.
+    // std.c.write is used here instead of buffered I/O to avoid delay.
+    // Errors are intentionally ignored as stdout write failures are not recoverable.
     _ = std.c.write(1, event.text.ptr, event.text.len);
 }
 

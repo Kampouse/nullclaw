@@ -148,6 +148,8 @@ pub fn curlStream(
         switch (result) {
             .delta => |delta| {
                 // Send chunk to callback
+                // SAFETY: callback must use delta synchronously and not store the pointer,
+                // as delta is freed immediately after this callback returns.
                 callback(ctx, root.StreamChunk.textDelta(delta));
                 try accumulated_content.appendSlice(allocator, delta);
                 total_tokens += @intCast((delta.len + 3) / 4);

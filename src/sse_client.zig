@@ -9,34 +9,7 @@
 
 const std = @import("std");
 const log = std.log.scoped(.sse_client);
-
-// Thread-local storage for the Threaded Io instance
-// std.Options.debug_io doesn't support async network operations
-threadlocal var sse_threaded_io: ?std.Io.Threaded = null;
-threadlocal var sse_cached_io: ?std.Io = null;
-
-// Get or create a proper Threaded Io instance for SSE requests
-fn getSseIo() std.Io {
-    if (sse_cached_io) |io| return io;
-
-    sse_threaded_io = std.Io.Threaded{
-        .allocator = std.heap.page_allocator,
-        .stack_size = std.Thread.SpawnConfig.default_stack_size,
-        .async_limit = .nothing,
-        .cpu_count_error = null,
-        .concurrent_limit = .nothing,
-        .old_sig_io = undefined,
-        .old_sig_pipe = undefined,
-        .have_signal_handler = false,
-        .argv0 = .empty,
-        .environ_initialized = true,
-        .environ = .empty,
-        .worker_threads = .init(null),
-        .disable_memory_mapping = false,
-    };
-    sse_cached_io = sse_threaded_io.?.io();
-    return sse_cached_io.?;
-}
+const root = @import("root.zig");
 
 /// Maximum SSE event size (256KB)
 /// Events larger than this are truncated to prevent memory exhaustion
@@ -73,7 +46,7 @@ pub const SseConnection = struct {
 
     /// Initialize a new SSE connection (not yet connected)
     pub fn init(allocator: std.mem.Allocator, url: []const u8) SseConnection {
-        const io = getSseIo();
+        const io = root.http_util.getThreadedIo();
         return .{
             .allocator = allocator,
             .client = std.http.Client{ .allocator = allocator, .io = io },
@@ -455,7 +428,7 @@ pub fn parseEvents(allocator: std.mem.Allocator, buffer: []const u8) ![]SseEvent
         }
 
         // Skip comments (lines starting with :)
-        if (line[0] == ':') continue;
+        if (line.len > 0 and line[0] == ':') continue;
 
         // Parse field: value (per SSE spec, strip exactly one leading space from value)
         const field_and_value = parseField(line);
