@@ -16,6 +16,7 @@
 //!   - DingTalk (WebSocket stream mode)
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const streaming = @import("../streaming.zig");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -287,7 +288,7 @@ pub fn isAllowedExact(allowed: []const []const u8, sender: []const u8) bool {
 
 /// Get current UNIX epoch seconds.
 pub fn nowEpochSecs() u64 {
-    const ns = 0;
+    const ns = std.Io.Clock.real.now(io).nanoseconds;
     if (ns < 0) return 0;
     return @intCast(@as(u128, @intCast(ns)) / 1_000_000_000);
 }

@@ -9,6 +9,7 @@
 //! sessions are processed in parallel.
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const Allocator = std.mem.Allocator;
 const Config = @import("config.zig").Config;
 const Agent = @import("agent/root.zig").Agent;
@@ -337,7 +338,8 @@ pub const SessionManager = struct {
         self.mutex.lock(std.Options.debug_io) catch return 0;
         defer self.mutex.unlock(std.Options.debug_io);
 
-        const now = 0;
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(u64, @intCast(@as(u128, @intCast(now_ns)) / 1_000_000_000));
         var evicted: usize = 0;
 
         // Collect keys to remove (can't modify map while iterating)
@@ -347,7 +349,7 @@ pub const SessionManager = struct {
         var it = self.sessions.iterator();
         while (it.next()) |entry| {
             const session = entry.value_ptr.*;
-            const idle_secs: u64 = @intCast(@max(0, now - session.last_active));
+            const idle_secs: u64 = @intCast(@max(@as(i64, 0), @as(i64, @intCast(now)) - session.last_active));
             if (idle_secs > max_idle_secs) {
                 to_remove.append(self.allocator, entry.key_ptr.*) catch continue;
             }

@@ -481,13 +481,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("zquic", zquic_dep.module("zquic"));
-
-        // Add tls for HTTPS support
-        const tls_dep = b.dependency("tls", .{
-            .target = target,
-            .optimize = optimize,
-        });
-        module.addImport("tls", tls_dep.module("tls"));
         break :blk module;
     };
 

@@ -3931,7 +3931,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
     const store_args = try tools_mod.parseTestArgs("{\"key\":\"preference.test\",\"content\":\"123\"}");
     defer store_args.deinit();
 
-    const store_result = try store_tool.execute(allocator, store_args.value.object);
+    const store_result = try store_tool.execute(allocator, store_args.parsed.value.object);
     defer if (store_result.output.len > 0) allocator.free(store_result.output);
     try std.testing.expect(store_result.success);
     try std.testing.expect(std.mem.indexOf(u8, store_result.output, "Stored memory") != null);
@@ -3947,7 +3947,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
     const recall_args = try tools_mod.parseTestArgs("{\"query\":\"preference.test\"}");
     defer recall_args.deinit();
 
-    const recall_result = try recall_tool.execute(allocator, recall_args.value.object);
+    const recall_result = try recall_tool.execute(allocator, recall_args.parsed.value.object);
     defer if (recall_result.output.len > 0) allocator.free(recall_result.output);
     try std.testing.expect(recall_result.success);
     try std.testing.expect(std.mem.indexOf(u8, recall_result.output, "preference.test") != null);
