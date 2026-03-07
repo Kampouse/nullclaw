@@ -472,8 +472,8 @@ test "markdown parseEntries preserves category" {
 test "markdown accepts session_id param" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);
     defer mem.deinit();
@@ -502,8 +502,8 @@ test "markdown reads memory.md when MEMORY.md is absent" {
         .sub_path = "memory.md",
         .data = "- legacy-memory-entry",
     });
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);
     defer mem.deinit();
@@ -543,8 +543,8 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
 
     if (!has_distinct_case_files) return;
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);
     defer mem.deinit();
@@ -570,8 +570,8 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
 test "markdown get returns latest matching entry for duplicate key" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     var mem = try MarkdownMemory.init(std.testing.allocator, base);
     defer mem.deinit();

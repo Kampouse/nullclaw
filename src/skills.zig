@@ -2060,7 +2060,7 @@ test "listSkills from empty directory" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    const skills = try listSkills(allocator, base);
+    const skills = try listSkills(allocator, base.ptr[0..base.len]);
     defer freeSkills(allocator, skills);
     try std.testing.expectEqual(@as(usize, 0), skills.len);
 }
@@ -2290,7 +2290,7 @@ test "listSkills discovers skills in subdirectories" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    const skills = try listSkills(allocator, base);
+    const skills = try listSkills(allocator, base.ptr[0..base.len]);
     defer freeSkills(allocator, skills);
 
     try std.testing.expectEqual(@as(usize, 2), skills.len);
@@ -2321,7 +2321,7 @@ test "listSkills discovers markdown-only skill directories" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    const skills = try listSkills(allocator, base);
+    const skills = try listSkills(allocator, base.ptr[0..base.len]);
     defer freeSkills(allocator, skills);
 
     try std.testing.expectEqual(@as(usize, 1), skills.len);
@@ -2357,7 +2357,7 @@ test "listSkills skips directories without valid manifest" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    const skills = try listSkills(allocator, base);
+    const skills = try listSkills(allocator, base.ptr[0..base.len]);
     defer freeSkills(allocator, skills);
 
     try std.testing.expectEqual(@as(usize, 1), skills.len);

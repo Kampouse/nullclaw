@@ -151,7 +151,7 @@ test "loadHistory reads file lines" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "history_test" });
     defer allocator.free(tmp_path);
 
     // Write a temporary history file
@@ -178,7 +178,7 @@ test "loadHistory returns empty for missing file" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "nonexistent_history_file" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "nonexistent_history_file" });
     defer allocator.free(tmp_path);
 
     const history = try loadHistory(allocator, tmp_path);
@@ -194,7 +194,7 @@ test "saveHistory writes file" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "save_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "save_history_test" });
     defer allocator.free(tmp_path);
 
     const entries = [_][]const u8{ "first", "second", "third" };
@@ -218,7 +218,7 @@ test "saveHistory and loadHistory roundtrip" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "roundtrip_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "roundtrip_history_test" });
     defer allocator.free(tmp_path);
 
     // Save
@@ -242,7 +242,7 @@ test "loadHistory trims whitespace from entries" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "trim_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "trim_history_test" });
     defer allocator.free(tmp_path);
 
     {
@@ -268,7 +268,7 @@ test "loadHistory skips blank lines" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "blank_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "blank_history_test" });
     defer allocator.free(tmp_path);
 
     {
@@ -294,7 +294,7 @@ test "loadHistory enforces max entries limit" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "max_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "max_history_test" });
     defer allocator.free(tmp_path);
 
     {

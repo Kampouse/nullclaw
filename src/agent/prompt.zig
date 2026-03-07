@@ -1500,9 +1500,9 @@ test "installSkill end-to-end appears in buildSystemPrompt" {
 
     const base = try dirRealpathAlloc(allocator, tmp.dir);
     defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try skills_mod.installSkill(allocator, source, workspace);

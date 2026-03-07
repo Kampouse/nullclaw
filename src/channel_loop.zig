@@ -1017,7 +1017,7 @@ test "telegram update offset store roundtrip" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -1039,7 +1039,7 @@ test "telegram update offset store returns null for mismatched bot id" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -1061,7 +1061,7 @@ test "telegram update offset store treats legacy payload without bot_id as stale
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -1099,7 +1099,7 @@ test "telegram offset persistence helper retries after write failure" {
 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -1108,7 +1108,7 @@ test "telegram offset persistence helper retries after write failure" {
         .allocator = allocator,
     };
 
-    const blocked_state_path = try std.fs.path.join(allocator, &.{ base, "state" });
+    const blocked_state_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "state" });
     defer allocator.free(blocked_state_path);
 
     {

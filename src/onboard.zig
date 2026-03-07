@@ -2491,8 +2491,8 @@ test "resetWorkspacePromptFiles creates missing workspace directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const nested = try std.fmt.allocPrint(std.testing.allocator, "{s}/nested/workspace", .{base});
     defer std.testing.allocator.free(nested);
 
@@ -2572,8 +2572,8 @@ test "scaffoldWorkspace does not seed BOOTSTRAP for legacy completed workspace" 
         try f.writeStreamingAll(std.Options.debug_io, "custom user");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
@@ -2599,8 +2599,8 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
         .data = "# Long-term memory\nImportant stuff",
     });
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
@@ -3148,8 +3148,8 @@ test "loadModelsWithCache falls back on fetch failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const nonexistent = try std.fs.path.join(std.testing.allocator, &.{ base, "nonexistent-dir-xyz" });
     defer std.testing.allocator.free(nonexistent);
 
@@ -3167,8 +3167,8 @@ test "loadModelsWithCache returns models for anthropic" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const models = try loadModelsWithCache(std.testing.allocator, base, "anthropic", null);
     // Anthropic returns hardcoded models (allocated copies)

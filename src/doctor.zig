@@ -853,8 +853,8 @@ test "checkDaemonState parses valid JSON state" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const state_content =
         \\{"status": "running", "updated_at": 9999999999, "components": {"scheduler": {"status": "ok"}, "channel:telegram": {"status": "ok"}}}
