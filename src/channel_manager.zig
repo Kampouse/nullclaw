@@ -4,6 +4,7 @@
 //! generic system that handles all configured channels.
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const Allocator = std.mem.Allocator;
 const bus_mod = @import("bus.zig");
 const Config = @import("config.zig").Config;
@@ -403,7 +404,8 @@ pub const ChannelManager = struct {
                 if (entry.listener_type != .polling) continue;
 
                 const polling_state = entry.polling_state orelse continue;
-                const now = 0;
+                const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+                const now = @as(u64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
                 const last = pollingLastActivity(polling_state);
                 const stale = (now - last) > STALE_THRESHOLD_SECS;
 
