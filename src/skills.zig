@@ -2057,8 +2057,8 @@ test "listSkills from empty directory" {
 
     try tmp.dir.createDirPath(std.Options.debug_io, "skills");
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const skills = try listSkills(allocator, base);
     defer freeSkills(allocator, skills);
@@ -2095,9 +2095,9 @@ test "loadSkill reads manifest and instructions" {
         try f.writeStreamingAll(io, "# Test Skill\nDo the test thing.");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const skill_dir = try std.fs.path.join(allocator, &.{ base, "skills", "test-skill" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const skill_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "skills", "test-skill" });
     defer allocator.free(skill_dir);
 
     const skill = try loadSkill(allocator, skill_dir);
@@ -2131,9 +2131,9 @@ test "loadSkill without SKILL.md still works" {
         try f.writeStreamingAll(io, "{\"name\": \"bare-skill\", \"version\": \"0.5.0\"}");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const skill_dir = try std.fs.path.join(allocator, &.{ base, "skills", "bare-skill" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const skill_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "skills", "bare-skill" });
     defer allocator.free(skill_dir);
 
     const skill = try loadSkill(allocator, skill_dir);
@@ -2156,9 +2156,9 @@ test "loadSkill without skill.json falls back to markdown-only skill" {
         try f.writeStreamingAll(io, "# Markdown Skill\nUse markdown-only format.");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const skill_dir = try std.fs.path.join(allocator, &.{ base, "skills", "md-only" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const skill_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "skills", "md-only" });
     defer allocator.free(skill_dir);
 
     const skill = try loadSkill(allocator, skill_dir);
@@ -2188,9 +2188,9 @@ test "loadSkill reads metadata from SKILL.toml" {
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const skill_dir = try std.fs.path.join(allocator, &.{ base, "skills", "toml-meta" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const skill_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "skills", "toml-meta" });
     defer allocator.free(skill_dir);
 
     const skill = try loadSkill(allocator, skill_dir);
@@ -2223,9 +2223,9 @@ test "loadSkill prefers SKILL.toml metadata over skill.json" {
         try f.writeStreamingAll(io, "{\"name\": \"json-name\", \"description\": \"json\"}");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const skill_dir = try std.fs.path.join(allocator, &.{ base, "skills", "dual" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const skill_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "skills", "dual" });
     defer allocator.free(skill_dir);
 
     const skill = try loadSkill(allocator, skill_dir);
@@ -2287,8 +2287,8 @@ test "listSkills discovers skills in subdirectories" {
         try f.writeStreamingAll(io, "Not a skill directory");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const skills = try listSkills(allocator, base);
     defer freeSkills(allocator, skills);
@@ -2318,8 +2318,8 @@ test "listSkills discovers markdown-only skill directories" {
         try f.writeStreamingAll(io, "# MD Skill\nWorks without skill.json.");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const skills = try listSkills(allocator, base);
     defer freeSkills(allocator, skills);
@@ -2354,8 +2354,8 @@ test "listSkills skips directories without valid manifest" {
         try tmp.dir.createDirPath(std.Options.debug_io, sub);
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const skills = try listSkills(allocator, base);
     defer freeSkills(allocator, skills);
@@ -2410,9 +2410,9 @@ test "snapshotSkillChildren and detectNewlyInstalledDirectory roundtrip" {
 
     try tmp.dir.createDirPath(std.Options.debug_io, "workspace/skills/existing");
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const skills_dir = try std.fs.path.join(allocator, &.{ base, "workspace", "skills" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const skills_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace", "skills" });
     defer allocator.free(skills_dir);
 
     var before = try snapshotSkillChildren(allocator, skills_dir);
@@ -2432,9 +2432,9 @@ test "detectNewlyInstalledDirectory errors for none and multiple directories" {
 
     try tmp.dir.createDirPath(std.Options.debug_io, "workspace/skills/base");
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const skills_dir = try std.fs.path.join(allocator, &.{ base, "workspace", "skills" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const skills_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace", "skills" });
     defer allocator.free(skills_dir);
 
     var before = try snapshotSkillChildren(allocator, skills_dir);
@@ -2462,9 +2462,9 @@ test "auditSkillDirectory rejects symlink entries" {
     }
     try tmp.dir.symLink(io, "/etc/passwd", "source/escape-link", .{});
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2495,9 +2495,9 @@ test "auditSkillDirectory allows large non-script files" {
         try f.writeStreamingAll(io, buf);
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try auditSkillDirectory(allocator, source);
@@ -2520,9 +2520,9 @@ test "auditSkillDirectory rejects script suffix files" {
         try f.writeStreamingAll(io, "echo unsafe");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2545,9 +2545,9 @@ test "auditSkillDirectory rejects shell shebang files" {
         try f.writeStreamingAll(io, "#!/bin/bash\necho unsafe");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2570,9 +2570,9 @@ test "auditSkillDirectory rejects markdown links escaping skill root" {
         try f.writeStreamingAll(io, "# outside");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2599,9 +2599,9 @@ test "auditSkillDirectory rejects TOML tool command with shell chaining" {
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2627,9 +2627,9 @@ test "auditSkillDirectory rejects TOML tool entries without command" {
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2656,9 +2656,9 @@ test "auditSkillDirectory rejects TOML shell tool with empty command" {
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2676,9 +2676,9 @@ test "auditSkillDirectory rejects invalid TOML manifest syntax" {
         try f.writeStreamingAll(io, "this is not valid toml {{{{");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2701,9 +2701,9 @@ test "auditSkillDirectory rejects TOML prompts with high-risk content" {
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2729,9 +2729,9 @@ test "auditSkillDirectory rejects multiline TOML prompts with high-risk content"
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2753,9 +2753,9 @@ test "auditSkillDirectory rejects malformed TOML string literals" {
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2773,9 +2773,9 @@ test "auditSkillDirectory accepts root with legacy skill.json marker" {
         try f.writeStreamingAll(io, "{\"name\":\"legacy-only\"}");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try auditSkillDirectory(allocator, source);
@@ -2788,9 +2788,9 @@ test "auditSkillDirectory rejects root without any skill markers" {
 
     try tmp.dir.createDirPath(std.Options.debug_io, "source");
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try std.testing.expectError(error.SkillSecurityAuditFailed, auditSkillDirectory(allocator, source));
@@ -2821,11 +2821,11 @@ test "installSkill and removeSkill roundtrip" {
         try f.writeStreamingAll(io, "# Instructions\nInstall me.");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     // Install
@@ -2838,7 +2838,7 @@ test "installSkill and removeSkill roundtrip" {
     try std.testing.expectEqualStrings("installable", skills[0].name);
     try std.testing.expectEqualStrings("# Instructions\nInstall me.", skills[0].instructions);
 
-    // Remove
+    // Remove (using the directory name, not the skill name from skill.json)
     try removeSkill(allocator, "source", workspace);
 
     // Verify removal
@@ -2871,11 +2871,11 @@ test "installSkillFromPath copies full source directory" {
         try f.writeStreamingAll(io, "asset-data");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
 
     try installSkillFromPath(allocator, source, workspace);
@@ -2900,11 +2900,11 @@ test "installSkillFromPath supports markdown-only source directory" {
         try f.writeStreamingAll(io, "# Markdown only install");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const source = try std.fs.path.join(allocator, &.{ base, "source-md" });
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source-md" });
     defer allocator.free(source);
 
     try installSkillFromPath(allocator, source, workspace);
@@ -2930,11 +2930,11 @@ test "installSkillFromPath supports legacy skill.json-only source directory" {
         try f.writeStreamingAll(io, "{\"name\": \"legacy-json\", \"version\": \"1.0.0\"}");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const source = try std.fs.path.join(allocator, &.{ base, "source-json" });
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source-json" });
     defer allocator.free(source);
 
     try installSkillFromPath(allocator, source, workspace);
@@ -2965,11 +2965,11 @@ test "installSkillFromPath supports SKILL.toml-only source directory" {
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const source = try std.fs.path.join(allocator, &.{ base, "source-toml" });
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source-toml" });
     defer allocator.free(source);
 
     try installSkillFromPath(allocator, source, workspace);
@@ -3010,11 +3010,11 @@ test "installSkillFromGit installs from local git repository" {
         try f.writeStreamingAll(io, "# Git Skill\nInstalled from git.");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const repo = try std.fs.path.join(allocator, &.{ base, "repo" });
+    const repo = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "repo" });
     defer allocator.free(repo);
 
     try runCommand(allocator, &.{ "git", "-C", repo, "init" });
@@ -3048,11 +3048,11 @@ test "installSkillFromGit supports root markdown-only repository" {
         try f.writeStreamingAll(io, "# Root skill\nInstalled from root markdown.");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const repo = try std.fs.path.join(allocator, &.{ base, "repo" });
+    const repo = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "repo" });
     defer allocator.free(repo);
 
     try runCommand(allocator, &.{ "git", "-C", repo, "init" });
@@ -3095,11 +3095,11 @@ test "installSkillFromGit installs all skills from repository skills directory" 
         try f.writeStreamingAll(io, "# Not a skill");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const repo = try std.fs.path.join(allocator, &.{ base, "repo" });
+    const repo = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "repo" });
     defer allocator.free(repo);
 
     try runCommand(allocator, &.{ "git", "-C", repo, "init" });
@@ -3152,11 +3152,11 @@ test "installSkillFromGit installs SKILL.toml entry from repository skills direc
         );
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const repo = try std.fs.path.join(allocator, &.{ base, "repo" });
+    const repo = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "repo" });
     defer allocator.free(repo);
 
     try runCommand(allocator, &.{ "git", "-C", repo, "init" });
@@ -3198,11 +3198,11 @@ test "installSkillFromGit keeps clone directory name when manifest name differs"
         try f.writeStreamingAll(io, "asset-data");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
-    const repo = try std.fs.path.join(allocator, &.{ base, "repo" });
+    const repo = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "repo" });
     defer allocator.free(repo);
 
     try runCommand(allocator, &.{ "git", "-C", repo, "init" });
@@ -3231,11 +3231,11 @@ test "installSkillFromPath rejects missing manifest" {
     try tmp.dir.createDirPath(std.Options.debug_io, "source");
     try tmp.dir.createDirPath(std.Options.debug_io, "workspace");
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
 
     try std.testing.expectError(error.ManifestNotFound, installSkillFromPath(allocator, source, workspace));
@@ -3286,11 +3286,11 @@ test "installSkillFromPath uses source directory name even when manifest name is
         try f.writeStreamingAll(io, "# safe content");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const source = try std.fs.path.join(allocator, &.{ base, "source" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const source = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "source" });
     defer allocator.free(source);
-    const workspace = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const workspace = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(workspace);
 
     try installSkillFromPath(allocator, source, workspace);
@@ -3323,9 +3323,9 @@ test "sync marker read/write roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const marker = try std.fs.path.join(allocator, &.{ base, "state", "skills_sync.json" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const marker = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "state", "skills_sync.json" });
     defer allocator.free(marker);
 
     // Write marker with known timestamp
@@ -3389,9 +3389,9 @@ test "loadCommunitySkills loads .md files" {
         try f.writeStreamingAll(io, "Not a skill.");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const community_dir = try std.fs.path.join(allocator, &.{ base, "community" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const community_dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "community" });
     defer allocator.free(community_dir);
 
     const skills = try loadCommunitySkills(allocator, community_dir);
@@ -3627,16 +3627,16 @@ test "loadSkill reads always field" {
         try f.writeStreamingAll(io, "{\"name\": \"always-skill\", \"always\": true, \"requires_bins\": [\"ls\"]}");
     }
 
-    const skill_dir = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(skill_dir);
+    const skill_dir = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(skill_dir.ptr[0 .. skill_dir.len + 1]);
 
-    const skill = try loadSkill(allocator, skill_dir);
+    const skill = try loadSkill(allocator, skill_dir.ptr[0..skill_dir.len]);
     defer freeSkill(allocator, &skill);
 
     try std.testing.expect(skill.always);
     try std.testing.expectEqual(@as(usize, 1), skill.requires_bins.len);
     try std.testing.expectEqualStrings("ls", skill.requires_bins[0]);
-    try std.testing.expectEqualStrings(skill_dir, skill.path);
+    try std.testing.expectEqualStrings(skill_dir.ptr[0..skill_dir.len], skill.path);
 }
 
 test "listSkillsMerged workspace overrides builtin" {
@@ -3698,11 +3698,11 @@ test "listSkillsMerged workspace overrides builtin" {
         try f.writeStreamingAll(io, "{\"name\": \"ws-only\", \"description\": \"only in workspace\"}");
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const builtin_base = try std.fs.path.join(allocator, &.{ base, "builtin" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const builtin_base = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "builtin" });
     defer allocator.free(builtin_base);
-    const ws_base = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const ws_base = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(ws_base);
 
     const skills = try listSkillsMerged(allocator, builtin_base, ws_base);
@@ -3792,11 +3792,11 @@ test "listSkillsMerged runs checkRequirements" {
     // Empty workspace
     try tmp.dir.createDirPath(std.Options.debug_io, "workspace");
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const builtin_base = try std.fs.path.join(allocator, &.{ base, "builtin" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const builtin_base = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "builtin" });
     defer allocator.free(builtin_base);
-    const ws_base = try std.fs.path.join(allocator, &.{ base, "workspace" });
+    const ws_base = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "workspace" });
     defer allocator.free(ws_base);
 
     const skills = try listSkillsMerged(allocator, builtin_base, ws_base);
@@ -3854,9 +3854,9 @@ test "countMdFiles counts only .md files" {
         f.close(io);
     }
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const dir = try std.fs.path.join(allocator, &.{ base, "countmd" });
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const dir = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "countmd" });
     defer allocator.free(dir);
 
     const count = countMdFiles(dir);

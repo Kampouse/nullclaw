@@ -3971,11 +3971,16 @@ test "session config: all dm_scope values accepted" {
 
 test "save includes nostr channel when configured" {
     const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-    const tmp_path = "/tmp/nullclaw_test_nostr_save.json";
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };
@@ -3990,7 +3995,6 @@ test "save includes nostr channel when configured" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
     defer file.close(std.Options.debug_io);
@@ -4020,10 +4024,16 @@ test "save includes nostr channel when configured" {
 
 test "save includes dm_relays in nostr section" {
     const allocator = std.testing.allocator;
-    const tmp_path = "/tmp/nullclaw_test_dm_relays_save.json";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };
@@ -4051,10 +4061,16 @@ test "save includes dm_relays in nostr section" {
 
 test "dm_relays round-trips through save and load" {
     const allocator = std.testing.allocator;
-    const tmp_path = "/tmp/nullclaw_test_dm_relays_roundtrip.json";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };
@@ -4093,10 +4109,16 @@ test "dm_relays round-trips through save and load" {
 
 test "nostr display_name with special chars round-trips correctly" {
     const allocator = std.testing.allocator;
-    const tmp_path = "/tmp/nullclaw_test_nostr_escape.json";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };

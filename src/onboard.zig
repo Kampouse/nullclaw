@@ -2509,15 +2509,15 @@ test "scaffoldWorkspace seeds bootstrap marker for new workspace" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     const bootstrap_file = try tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{});
     bootstrap_file.close(std.Options.debug_io);
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.bootstrap_seeded_at != null);
     try std.testing.expect(state.onboarding_completed_at == null);
@@ -2527,10 +2527,10 @@ test "scaffoldWorkspace does not recreate BOOTSTRAP after onboarding completion"
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     {
         const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{ .truncate = true });
@@ -2546,13 +2546,13 @@ test "scaffoldWorkspace does not recreate BOOTSTRAP after onboarding completion"
     try tmp.dir.deleteFile(std.Options.debug_io, "BOOTSTRAP.md");
     try tmp.dir.deleteFile(std.Options.debug_io, "TOOLS.md");
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
     const tools_file = try tmp.dir.openFile(std.Options.debug_io, "TOOLS.md", .{});
     tools_file.close(std.Options.debug_io);
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.onboarding_completed_at != null);
 }
@@ -2575,11 +2575,11 @@ test "scaffoldWorkspace does not seed BOOTSTRAP for legacy completed workspace" 
     const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.bootstrap_seeded_at == null);
     try std.testing.expect(state.onboarding_completed_at != null);
@@ -2602,7 +2602,7 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
     const base = try std.testing.allocator.dupe(u8, ".");
     defer std.testing.allocator.free(base);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     const identity_file = try tmp.dir.openFile(std.Options.debug_io, "IDENTITY.md", .{});
     identity_file.close(std.Options.debug_io);
@@ -2616,7 +2616,7 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
     defer std.testing.allocator.free(memory_content);
     try std.testing.expectEqualStrings("# Long-term memory\nImportant stuff", memory_content);
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.onboarding_completed_at != null);
 }
@@ -2784,10 +2784,10 @@ test "scaffoldWorkspace does not create memory subdirectory by default" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
     try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(std.Options.debug_io, "memory", .{}));
 }
 
@@ -2939,10 +2939,10 @@ test "scaffoldWorkspace creates core prompt.zig files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     // Verify core files that prompt.zig always loads exist.
     const files = [_][]const u8{
@@ -3069,8 +3069,8 @@ test "cache read returns error for missing file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const missing_path = try std.fs.path.join(std.testing.allocator, &.{ base, "nonexistent-cache-12345.json" });
     defer std.testing.allocator.free(missing_path);
 
@@ -3082,8 +3082,8 @@ test "cache round-trip: write then read fresh cache" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const cache_path = try std.fs.path.join(std.testing.allocator, &.{ base, "models_cache.json" });
     defer std.testing.allocator.free(cache_path);
 
@@ -3112,8 +3112,8 @@ test "cache read returns error for wrong provider" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const cache_path = try std.fs.path.join(std.testing.allocator, &.{ base, "models_cache.json" });
     defer std.testing.allocator.free(cache_path);
 
@@ -3129,8 +3129,8 @@ test "cache read returns error for expired cache" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const cache_path = try std.fs.path.join(std.testing.allocator, &.{ base, "models_cache.json" });
     defer std.testing.allocator.free(cache_path);
 

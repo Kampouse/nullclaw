@@ -1849,9 +1849,9 @@ test "writeStateFile produces valid content" {
     // Write to a temp path
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(dir);
-    const path = try std.fs.path.join(std.testing.allocator, &.{ dir, "daemon_state.json" });
+    const dir = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(dir.ptr[0 .. dir.len + 1]);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ dir.ptr[0..dir.len], "daemon_state.json" });
     defer std.testing.allocator.free(path);
 
     try writeStateFile(std.testing.allocator, path, &state);
