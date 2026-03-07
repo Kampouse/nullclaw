@@ -119,21 +119,14 @@ pub const FileWriteTool = struct {
 
         // Ensure parent directory exists after policy checks pass.
         // Use createDirPath which creates all parent directories as needed
-        if (std.fs.path.dirname(write_path)) |parent| {
-            if (std.fs.path.isAbsolute(parent)) {
-                // For absolute paths, open the parent's parent and create
-                const grandparent = std.fs.path.dirname(parent);
-                if (grandparent) |gp| {
-                    std.Io.Dir.createDirPath(std.Io.Dir.cwd(), io, gp) catch {};
-                }
-            } else {
-                // For relative paths, create from current directory
-                std.Io.Dir.createDirPath(std.Io.Dir.cwd(), io, parent) catch {};
-            }
+        const parent = std.fs.path.dirname(write_path) orelse write_path;
+
+        if (std.fs.path.dirname(write_path)) |parent_dir_name| {
+            // Create parent directories including the target parent
+            std.Io.Dir.createDirPath(std.Io.Dir.cwd(), io, parent_dir_name) catch {};
         }
 
         // Write via temp file + rename so existing hard links are not modified in place.
-        const parent = std.fs.path.dirname(write_path) orelse write_path;
         var parent_dir = if (std.fs.path.isAbsolute(parent))
             std.Io.Dir.cwd().openDir(io, parent, .{}) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to open directory: {}", .{err});
@@ -223,10 +216,12 @@ fn resolveNearestExistingAncestor(allocator: std.mem.Allocator, path: []const u8
 fn isSymlinkPath(path: []const u8) !bool {
     const dir_path = std.fs.path.dirname(path) orelse ".";
     const entry_name = std.fs.path.basename(path);
-    var dir = if (std.fs.path.isAbsolute(dir_path))
-        try std.Io.Dir.cwd().openDir(io, dir_path, .{})
-    else
-        try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{}) catch |err| {
+        // If directory doesn't exist, path can't be a symlink
+        if (err == error.FileNotFound or err == error.NotADirectory) return false;
+        return err;
+    };
     defer dir.close(io);
 
     var link_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -295,6 +290,9 @@ test "file_write creates parent dirs" {
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     defer result.deinit(std.testing.allocator);
 
+    if (!result.success) {
+        std.debug.print("\nERROR: {s}\n", .{result.error_msg orelse "unknown"});
+    }
     try std.testing.expect(result.success);
 
     const actual = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "a/b/c/deep.txt", std.testing.allocator, .limited(1024));
