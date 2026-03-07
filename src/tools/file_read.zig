@@ -67,17 +67,8 @@ pub const FileReadTool = struct {
             return ToolResult.fail("Path is outside allowed areas");
         }
 
-        // Check file size
-        const file = std.Io.Dir.cwd().openFile(io, resolved, .{}) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
-        };
-        defer file.close(io);
-
-        // Read contents - we'll limit by max_file_size in readAlloc
-        var buf: [1024 * 1024]u8 = undefined; // 1MB buffer
-        var reader = file.reader(io, &buf);
-        const contents = reader.interface.readAlloc(allocator, @intCast(self.max_file_size)) catch |err| {
+        // Check file size and read contents
+        const contents = std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, .limited(self.max_file_size)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };

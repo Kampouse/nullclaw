@@ -10,6 +10,7 @@
 //! - KV store for settings
 
 const std = @import("std");
+const util = @import("../../util.zig");
 const root = @import("../root.zig");
 const Memory = root.Memory;
 const MemoryCategory = root.MemoryCategory;
@@ -110,15 +111,16 @@ pub const SqliteMemory = struct {
             \\);
             \\
             \\-- FTS5 triggers: keep in sync with memories table
+            \\-- For external content tables, triggers only need to specify rowid
             \\CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-            \\  INSERT INTO memories_fts VALUES (new.rowid, new.key, new.content);
+            \\  INSERT INTO memories_fts(rowid) VALUES (new.rowid);
             \\END;
             \\CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-            \\  INSERT INTO memories_fts VALUES ('delete', old.rowid);
+            \\  INSERT INTO memories_fts(memories_fts, rowid) VALUES ('delete', old.rowid);
             \\END;
             \\CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-            \\  INSERT INTO memories_fts VALUES ('delete', old.rowid);
-            \\  INSERT INTO memories_fts VALUES (new.rowid, new.key, new.content);
+            \\  INSERT INTO memories_fts(memories_fts, rowid) VALUES ('delete', old.rowid);
+            \\  INSERT INTO memories_fts(rowid) VALUES (new.rowid);
             \\END;
             \\
             \\-- Legacy tables for backward compat
@@ -220,13 +222,7 @@ pub const SqliteMemory = struct {
 
         const cat_str = category.toString();
 
-        const sql = "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) " ++
-            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) " ++
-            "ON CONFLICT(key) DO UPDATE SET " ++
-            "content = excluded.content, " ++
-            "category = excluded.category, " ++
-            "session_id = excluded.session_id, " ++
-            "updated_at = excluded.updated_at";
+        const sql = "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(key) DO UPDATE SET content = excluded.content, category = excluded.category, session_id = excluded.session_id, updated_at = excluded.updated_at";
 
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
@@ -267,7 +263,7 @@ pub const SqliteMemory = struct {
 
         const sql = "SELECT id, key, content, category, created_at, session_id FROM memories WHERE key = ?1";
         var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
+        var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -294,7 +290,7 @@ pub const SqliteMemory = struct {
             const sql = "SELECT id, key, content, category, created_at, session_id FROM memories " ++
                 "WHERE category = ?1 ORDER BY updated_at DESC";
             var stmt: ?*c.sqlite3_stmt = null;
-            var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
+            var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
             if (rc != c.SQLITE_OK) return error.PrepareFailed;
             defer _ = c.sqlite3_finalize(stmt);
 
@@ -316,7 +312,7 @@ pub const SqliteMemory = struct {
         } else {
             const sql = "SELECT id, key, content, category, created_at, session_id FROM memories ORDER BY updated_at DESC";
             var stmt: ?*c.sqlite3_stmt = null;
-            var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
+            var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
             if (rc != c.SQLITE_OK) return error.PrepareFailed;
             defer _ = c.sqlite3_finalize(stmt);
 
@@ -343,7 +339,7 @@ pub const SqliteMemory = struct {
 
         const sql = "DELETE FROM memories WHERE key = ?1";
         var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
+        var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -360,7 +356,7 @@ pub const SqliteMemory = struct {
 
         const sql = "SELECT COUNT(*) FROM memories";
         var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
+        var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -412,7 +408,7 @@ pub const SqliteMemory = struct {
     pub fn saveMessage(self: *Self, session_id: []const u8, role_str: []const u8, content: []const u8) !void {
         const sql = "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)";
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -431,7 +427,7 @@ pub const SqliteMemory = struct {
     pub fn loadMessages(self: *Self, allocator: std.mem.Allocator, session_id: []const u8) ![]MessageEntry {
         const sql = "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC";
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -467,7 +463,7 @@ pub const SqliteMemory = struct {
     pub fn clearMessages(self: *Self, session_id: []const u8) !void {
         const sql = "DELETE FROM messages WHERE session_id = ?";
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -484,7 +480,7 @@ pub const SqliteMemory = struct {
         const sql = if (session_id != null) sql_scoped else sql_global;
 
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -579,7 +575,7 @@ pub const SqliteMemory = struct {
             "LIMIT ?2";
 
         var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
+        var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return allocator.alloc(MemoryEntry, 0);
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -645,7 +641,7 @@ pub const SqliteMemory = struct {
         try sql_buf.append(allocator, 0);
 
         var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql_buf.items.ptr, -1, &stmt, null);
+        var rc = c.sqlite3_prepare_v2(self_.db, sql_buf.items.ptr, @intCast(sql_buf.items.len), &stmt, null);
         if (rc != c.SQLITE_OK) return allocator.alloc(MemoryEntry, 0);
         defer _ = c.sqlite3_finalize(stmt);
 
@@ -789,7 +785,7 @@ pub const SqliteMemory = struct {
     fn generateId(allocator: std.mem.Allocator) ![]u8 {
         const ts = 0;
         var buf: [16]u8 = undefined;
-    // util.randomBytes(&buf);
+        util.randomBytes(&buf);
         const rand_hi = std.mem.readInt(u64, buf[0..8], .little);
         const rand_lo = std.mem.readInt(u64, buf[8..16], .little);
         return std.fmt.allocPrint(allocator, "{d}-{x}-{x}", .{ ts, rand_hi, rand_lo });
@@ -809,7 +805,7 @@ test "sqlite init configures busy timeout" {
     defer mem.deinit();
 
     var stmt: ?*c.sqlite3_stmt = null;
-    const prep_rc = c.sqlite3_prepare_v2(mem.db, "PRAGMA busy_timeout;", -1, &stmt, null);
+    const prep_rc = c.sqlite3_prepare_v2(mem.db, "PRAGMA busy_timeout;", 20, &stmt, null);
     try std.testing.expectEqual(@as(c_int, c.SQLITE_OK), prep_rc);
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -1118,7 +1114,7 @@ test "sqlite schema has fts5 table" {
 
     const sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memories_fts'";
     var stmt: ?*c.sqlite3_stmt = null;
-    var rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+    var rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
     try std.testing.expectEqual(c.SQLITE_OK, rc);
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -1137,7 +1133,7 @@ test "sqlite fts5 syncs on insert" {
 
     const sql = "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '\"unique_searchterm_xyz\"'";
     var stmt: ?*c.sqlite3_stmt = null;
-    var rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+    var rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
     try std.testing.expectEqual(c.SQLITE_OK, rc);
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -1156,7 +1152,7 @@ test "sqlite fts5 syncs on delete" {
 
     const sql = "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '\"deletable_content_abc\"'";
     var stmt: ?*c.sqlite3_stmt = null;
-    var rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+    var rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
     try std.testing.expectEqual(c.SQLITE_OK, rc);
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -1176,7 +1172,7 @@ test "sqlite fts5 syncs on update" {
     {
         const sql = "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '\"original_content_111\"'";
         var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+        var rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
         try std.testing.expectEqual(c.SQLITE_OK, rc);
         defer _ = c.sqlite3_finalize(stmt);
         rc = c.sqlite3_step(stmt);
@@ -1187,7 +1183,7 @@ test "sqlite fts5 syncs on update" {
     {
         const sql = "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '\"updated_content_222\"'";
         var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+        var rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
         try std.testing.expectEqual(c.SQLITE_OK, rc);
         defer _ = c.sqlite3_finalize(stmt);
         rc = c.sqlite3_step(stmt);
@@ -1319,7 +1315,7 @@ test "sqlite saveMessage stores messages" {
     // Verify messages table has data
     const sql = "SELECT COUNT(*) FROM messages";
     var stmt: ?*c.sqlite3_stmt = null;
-    var rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+    var rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
     try std.testing.expectEqual(c.SQLITE_OK, rc);
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -1451,7 +1447,7 @@ test "sqlite kv table exists" {
 
     const sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='kv'";
     var stmt: ?*c.sqlite3_stmt = null;
-    var rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+    var rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
     try std.testing.expectEqual(c.SQLITE_OK, rc);
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -1586,7 +1582,7 @@ test "sqlite schema has session_id column" {
     // Verify session_id column exists by querying it
     const sql = "SELECT session_id FROM memories LIMIT 0";
     var stmt: ?*c.sqlite3_stmt = null;
-    const rc = c.sqlite3_prepare_v2(mem.db, sql, -1, &stmt, null);
+    const rc = c.sqlite3_prepare_v2(mem.db, sql.ptr, @intCast(sql.len), &stmt, null);
     try std.testing.expectEqual(c.SQLITE_OK, rc);
     _ = c.sqlite3_finalize(stmt);
 }

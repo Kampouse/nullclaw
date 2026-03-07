@@ -8,8 +8,10 @@ const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
-const isPathSafe = @import("path_security.zig").isPathSafe;
-const isResolvedPathAllowed = @import("path_security.zig").isResolvedPathAllowed;
+const path_security = @import("path_security.zig");
+const isPathSafe = path_security.isPathSafe;
+const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
+const resolvePathAlloc = path_security.resolvePathAlloc;
 
 /// Default maximum file size to read before appending (10MB).
 const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -57,34 +59,24 @@ pub const FileAppendTool = struct {
         defer allocator.free(full_path);
 
         // Resolve workspace path (may fail if workspace doesn't exist yet)
-        const io = std.Options.debug_io;
-        const ws_resolved: ?[]const u8 = std.Io.Dir.cwd().realPathFileAlloc(io, self.workspace_dir, allocator) catch null;
-        defer if (ws_resolved) |wr| allocator.free(wr.ptr[0 .. wr.len + 1]);
-        const ws_str = if (ws_resolved) |wr| wr[0..wr.len] else "";
+        const ws_resolved: ?[]const u8 = resolvePathAlloc(allocator, self.workspace_dir) catch null;
+        defer if (ws_resolved) |wr| allocator.free(wr);
+        const ws_str = ws_resolved orelse "";
 
         // Try to read existing content
         const existing = blk: {
-            const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, full_path, allocator) catch {
+            const resolved = resolvePathAlloc(allocator, full_path) catch {
                 break :blk @as(?[]const u8, null);
             };
-            defer allocator.free(resolved.ptr[0 .. resolved.len + 1]);
+            defer allocator.free(resolved);
 
-            if (!isResolvedPathAllowed(allocator, resolved[0..resolved.len], ws_str, self.allowed_paths)) {
+            if (!isResolvedPathAllowed(allocator, resolved, ws_str, self.allowed_paths)) {
                 return ToolResult.fail("Path is outside allowed areas");
             }
 
-            const file = std.Io.Dir.cwd().openFile(io, resolved[0..resolved.len], .{}) catch |err| {
-                const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+            const data = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, resolved, allocator, .limited(self.max_file_size)) catch {
+                break :blk @as(?[]const u8, null);
             };
-            var file_buf: [8192]u8 = undefined;
-            var file_reader = file.reader(io, &file_buf);
-            const data = file_reader.interface.readAlloc(allocator, self.max_file_size) catch |err| {
-                file.close(io);
-                const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
-            };
-            file.close(io);
             break :blk @as(?[]const u8, data);
         };
         defer if (existing) |e| allocator.free(e);
@@ -97,15 +89,15 @@ pub const FileAppendTool = struct {
         defer allocator.free(new_contents);
 
         // Write back
-        const file_w = std.Io.Dir.cwd().createFile(io, full_path, .{ .truncate = true }) catch |err| {
+        const file_w = std.Io.Dir.cwd().createFile(std.Options.debug_io, full_path, .{ .truncate = true }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to create/open file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
-        defer file_w.close(io);
+        defer file_w.close(std.Options.debug_io);
 
         // Write all contents to file
         var buf: [4096]u8 = undefined;
-        var bw = file_w.writer(io, &buf);
+        var bw = file_w.writer(std.Options.debug_io, &buf);
         const w = &bw.interface;
 
         w.writeAll(new_contents) catch |err| {
@@ -119,13 +111,13 @@ pub const FileAppendTool = struct {
 
         // Verify newly created files are within allowed areas
         if (existing == null) {
-            const new_resolved = std.Io.Dir.cwd().realPathFileAlloc(io, full_path, allocator) catch {
-                std.Io.Dir.cwd().deleteFile(io, full_path) catch {};
+            const new_resolved = resolvePathAlloc(allocator, full_path) catch {
+                std.Io.Dir.cwd().deleteFile(std.Options.debug_io, full_path) catch {};
                 return ToolResult.fail("Failed to verify created file location");
             };
-            defer allocator.free(new_resolved.ptr[0 .. new_resolved.len + 1]);
-            if (!isResolvedPathAllowed(allocator, new_resolved[0..new_resolved.len], ws_str, self.allowed_paths)) {
-                std.Io.Dir.cwd().deleteFile(io, full_path) catch {};
+            defer allocator.free(new_resolved);
+            if (!isResolvedPathAllowed(allocator, new_resolved, ws_str, self.allowed_paths)) {
+                std.Io.Dir.cwd().deleteFile(std.Options.debug_io, full_path) catch {};
                 return ToolResult.fail("Created file is outside allowed areas");
             }
         }
