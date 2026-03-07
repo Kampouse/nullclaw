@@ -12,10 +12,12 @@ pub const RunResult = struct {
     owns_buffers: bool = true,
 
     /// Free both stdout and stderr buffers if they are owned.
+    /// std.process.run() always allocates these buffers, so we must always free them.
     pub fn deinit(self: *const RunResult, allocator: std.mem.Allocator) void {
         if (self.owns_buffers) {
-            if (self.stdout.len > 0) allocator.free(self.stdout);
-            if (self.stderr.len > 0) allocator.free(self.stderr);
+            // Always free if owned - std.process.run allocates even empty buffers
+            allocator.free(self.stdout);
+            allocator.free(self.stderr);
         }
     }
 };

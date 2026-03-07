@@ -2631,16 +2631,17 @@ test "scaffoldWorkspace treats git-backed workspace as existing and skips BOOTST
         .data = "ref: refs/heads/main\n",
     });
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer std.testing.allocator.free(base);
+    // Use the actual temp directory path, not "."
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, tmp_path.ptr[0..tmp_path.len], &ProjectContext{});
 
     const identity_file = try tmp.dir.openFile(std.Options.debug_io, "IDENTITY.md", .{});
     identity_file.close(std.Options.debug_io);
     try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, tmp_path.ptr[0..tmp_path.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.onboarding_completed_at != null);
 }
