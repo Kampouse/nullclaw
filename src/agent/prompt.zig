@@ -162,21 +162,23 @@ pub fn workspacePromptFingerprint(
         const guarded = opened.?;
         defer deinitGuardedWorkspaceFile(allocator, guarded, io);
 
-        // TODO: Zig 0.16.0 - stat not available
-        // Just hash the filename for now
-        hasher.update(filename);
         hasher.update("present");
         hasher.update(guarded.canonical_path);
+
+        // Read and hash file content
+        const content = guarded.file.readAllAlloc(allocator, 1024 * 1024) catch |err| {
+            // If we can't read the file, hash the error name
+            hasher.update(@errorName(err));
+            continue;
+        };
+        defer allocator.free(content);
+        hasher.update(content);
 
         if (workspaceFileDeviceId(&guarded.file)) |device_id| {
             hasher.update(std.mem.asBytes(&device_id));
         } else {
             hasher.update("nodev");
         }
-
-        // TODO: Zig 0.16.0 - stat not available
-        // Just hash the canonical path instead
-        hasher.update(guarded.canonical_path);
     }
 
     return hasher.final();
