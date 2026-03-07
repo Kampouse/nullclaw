@@ -166,7 +166,9 @@ pub const MarkdownMemory = struct {
             if (seen_root_paths.contains(canonical)) {
                 continue;
             }
-            try seen_root_paths.put(allocator, canonical, {});
+            // Duplicate the key since root_path will be freed
+            const key_copy = try allocator.dupe(u8, canonical);
+            try seen_root_paths.put(allocator, key_copy, {});
 
             const entries = try parseEntries(content, candidate.label, .core, allocator);
             defer allocator.free(entries);
