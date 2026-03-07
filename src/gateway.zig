@@ -65,6 +65,13 @@ fn appendJsonEscaped(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator,
             '\t' => try buf.appendSlice(alloc, "\\t"),
             0x08 => try buf.appendSlice(alloc, "\\b"),
             0x0C => try buf.appendSlice(alloc, "\\f"),
+            0x00...0x07, 0x0B, 0x0E...0x1F => |control| {
+                // Escape control characters as \uXXXX
+                try buf.appendSlice(alloc, "\\u");
+                var hex_buf: [4]u8 = undefined;
+                const hex = try std.fmt.bufPrint(&hex_buf, "{x:0>4}", .{control});
+                try buf.appendSlice(alloc, hex);
+            },
             else => try buf.append(alloc, c),
         }
     }
