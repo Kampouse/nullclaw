@@ -11,6 +11,9 @@ const resolvePathAlloc = path_security.resolvePathAlloc;
 
 const io = std.Options.debug_io;
 
+// C API for hard link creation (POSIX link function)
+extern fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) c_int;
+
 /// Write file contents with workspace path scoping.
 pub const FileWriteTool = struct {
     workspace_dir: []const u8,
@@ -420,9 +423,6 @@ test "file_write blocks symlink target escape outside workspace" {
 }
 
 test "file_write does not mutate outside inode through hard link" {
-    // Skip test - std.posix.link not available in Zig 0.16
-    // TODO: Find alternative API for hardlink creation
-    if (true) return error.SkipZigTest;
     if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
 
     var ws_tmp = std.testing.tmpDir(.{});
@@ -441,7 +441,13 @@ test "file_write does not mutate outside inode through hard link" {
     const hardlink_path = try std.fs.path.join(std.testing.allocator, &.{ ws_path, "hl.txt" });
     defer std.testing.allocator.free(hardlink_path);
 
-    try std.posix.link(outside_file, hardlink_path);
+    // Use C API for hard link creation since std.posix.link is not available in Zig 0.16
+    const oldpath_z = try std.testing.allocator.dupeZ(u8, outside_file);
+    defer std.testing.allocator.free(oldpath_z);
+    const newpath_z = try std.testing.allocator.dupeZ(u8, hardlink_path);
+    defer std.testing.allocator.free(newpath_z);
+    const rc = link(oldpath_z, newpath_z);
+    if (rc != 0) return error.Unexpected;
 
     var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
