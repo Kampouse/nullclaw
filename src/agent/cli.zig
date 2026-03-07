@@ -31,12 +31,8 @@ const CliStreamCtx = struct {
 
 fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
     if (event.stage != .chunk or event.text.len == 0) return;
-    const stdout_io = std.Options.debug_io;
-    var buf: [4096]u8 = undefined;
-    var bw = std.Io.File.stdout().writer(stdout_io, &buf);
-    const wr = &bw.interface;
-    wr.print("{s}", .{event.text}) catch {};
-    wr.flush() catch {};
+    // Write directly to stdout file descriptor
+    _ = std.c.write(1, event.text.ptr, event.text.len);
 }
 
 /// Streaming callback that forwards provider chunks into unified stream sink events.
@@ -246,6 +242,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
     const provider_i: Provider = runtime_provider.provider();
 
     const supports_streaming = provider_i.supportsStreaming();
+    std.debug.print("CLI: Provider supports streaming: {}\n", .{supports_streaming});
 
     // Single message mode: nullclaw agent -m "hello"
     if (message_arg) |message| {

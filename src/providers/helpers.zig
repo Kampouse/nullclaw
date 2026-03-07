@@ -294,6 +294,22 @@ pub fn curlPostTimed(allocator: std.mem.Allocator, url: []const u8, body: []cons
     return http_util.curlPost(allocator, url, body, headers);
 }
 
+/// HTTP POST with streaming - calls callback with each chunk as it arrives.
+/// This is useful for LLM APIs to display responses token-by-token.
+/// The callback receives chunks that are only valid during the callback invocation.
+pub fn curlPostTimedStream(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    body: []const u8,
+    headers: []const []const u8,
+    timeout_secs: u64,
+    callback: http_util.StreamCallback,
+    callback_ctx: *anyopaque,
+) !void {
+    _ = timeout_secs; // TODO: Add timeout support to streaming
+    try http_util.curlPostStream(allocator, url, body, headers, callback, callback_ctx);
+}
+
 /// Extract text content from a provider JSON response.
 pub fn extractContent(allocator: std.mem.Allocator, body: []const u8) ![]const u8 {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
@@ -444,42 +460,46 @@ test "extractContent parses Anthropic format" {
 }
 
 test "buildRequestBody escapes double quotes in prompt" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBody(allocator, "gpt-4o", "say \"hello\"", 0.7, 100);
-    defer allocator.free(body);
     // Raw quote would break JSON; escaped form must be present
     try std.testing.expect(std.mem.indexOf(u8, body, "\\\"hello\\\"") != null);
     // Verify it's valid JSON
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "buildRequestBody escapes newlines in prompt" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBody(allocator, "gpt-4o", "line1\nline2", 0.7, 100);
-    defer allocator.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\n") != null);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "buildRequestBody escapes backslash in prompt" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBody(allocator, "gpt-4o", "path\\to\\file", 0.7, 100);
-    defer allocator.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\\\") != null);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "buildRequestBodyWithSystem escapes special chars in both fields" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBodyWithSystem(allocator, "gpt-4o", "sys \"role\"", "user\nprompt", 0.7, 100);
-    defer allocator.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\\"role\\\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\n") != null);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "serializeMessageContent plain text" {

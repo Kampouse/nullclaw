@@ -10,6 +10,34 @@
 const std = @import("std");
 const log = std.log.scoped(.sse_client);
 
+// Thread-local storage for the Threaded Io instance
+// std.Options.debug_io doesn't support async network operations
+threadlocal var sse_threaded_io: ?std.Io.Threaded = null;
+threadlocal var sse_cached_io: ?std.Io = null;
+
+// Get or create a proper Threaded Io instance for SSE requests
+fn getSseIo() std.Io {
+    if (sse_cached_io) |io| return io;
+
+    sse_threaded_io = std.Io.Threaded{
+        .allocator = std.heap.page_allocator,
+        .stack_size = std.Thread.SpawnConfig.default_stack_size,
+        .async_limit = .nothing,
+        .cpu_count_error = null,
+        .concurrent_limit = .nothing,
+        .old_sig_io = undefined,
+        .old_sig_pipe = undefined,
+        .have_signal_handler = false,
+        .argv0 = .empty,
+        .environ_initialized = true,
+        .environ = .empty,
+        .worker_threads = .init(null),
+        .disable_memory_mapping = false,
+    };
+    sse_cached_io = sse_threaded_io.?.io();
+    return sse_cached_io.?;
+}
+
 /// Maximum SSE event size (256KB)
 /// Events larger than this are truncated to prevent memory exhaustion
 const MAX_EVENT_SIZE = 256 * 1024;
@@ -45,9 +73,10 @@ pub const SseConnection = struct {
 
     /// Initialize a new SSE connection (not yet connected)
     pub fn init(allocator: std.mem.Allocator, url: []const u8) SseConnection {
+        const io = getSseIo();
         return .{
             .allocator = allocator,
-            .client = std.http.Client{ .allocator = allocator, .io = std.Options.debug_io },
+            .client = std.http.Client{ .allocator = allocator, .io = io },
             .request = null,
             .body_reader = null,
             .url = url,
@@ -118,15 +147,94 @@ pub const SseConnection = struct {
         const response = try req.receiveHead(&redirect_buf);
 
         const status_code = @intFromEnum(response.head.status);
-        if (status_code < 200 or status_code >= 300) {
+        if (status_code != 200) {
+            log.err("SSE connection failed with status {d}", .{status_code});
             return error.ConnectionFailed;
         }
 
         // Read via HTTP body reader so chunked framing is decoded correctly.
         self.body_reader = req.reader.bodyReader(&self.transfer_buf, response.head.transfer_encoding, response.head.content_length);
 
-        log.info("SSE connected to {s} (status: {d})", .{ self.url, status_code });
         return status_code;
+    }
+
+    /// Initialize and connect to SSE endpoint with POST request and custom headers
+    /// This is used for LLM streaming APIs that require POST with JSON body
+    pub fn initAndConnect(
+        allocator: std.mem.Allocator,
+        url: []const u8,
+        headers: []const std.http.Header,
+        body: []const u8,
+    ) !SseConnection {
+        var conn = init(allocator, url);
+        errdefer conn.deinit();
+
+        const uri = try std.Uri.parse(url);
+        conn.body_reader = null;
+
+        const options: std.http.Client.RequestOptions = .{ .extra_headers = headers };
+
+        conn.request = try conn.client.request(.POST, uri, options);
+        const req = &conn.request.?;
+        errdefer {
+            req.deinit();
+            conn.request = null;
+            conn.body_reader = null;
+        }
+
+        // Send request body
+        const body_dup = try allocator.dupe(u8, body);
+        defer allocator.free(body_dup);
+        try req.sendBodyComplete(body_dup);
+
+        // Receive response headers
+        var redirect_buf: [4096]u8 = undefined;
+        const response = try req.receiveHead(&redirect_buf);
+
+        const status_code = @intFromEnum(response.head.status);
+        if (status_code != 200) {
+            log.err("SSE connection failed with status {d}", .{status_code});
+            return error.ConnectionFailed;
+        }
+
+        // Read via HTTP body reader so chunked framing is decoded correctly.
+        conn.body_reader = req.reader.bodyReader(&conn.transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+        return conn;
+    }
+
+    /// Read a single line from the SSE stream
+    /// Returns the number of bytes read (excluding newline), or error if connection closed
+    pub fn readLine(self: *SseConnection, buf: []u8) !usize {
+        var line_len: usize = 0;
+        var read_buf: [1]u8 = undefined;
+
+        while (line_len < buf.len) {
+            // Try to read one byte
+            const n = self.read(&read_buf) catch |err| {
+                // If read fails, check if we have any data
+                if (line_len > 0) return line_len;
+                return err;
+            };
+
+            if (n == 0) {
+                // No data available right now
+                // If we have some content, return it
+                // Otherwise, connection might be closed or waiting for more
+                if (line_len > 0) return line_len;
+                // Busy wait a bit and try again
+                var i: usize = 0;
+                while (i < 10000) : (i += 1) {}
+                continue;
+            }
+
+            const byte = read_buf[0];
+            if (byte == '\r') continue; // Skip CR
+            if (byte == '\n') break; // Line ends at LF
+            buf[line_len] = byte;
+            line_len += 1;
+        }
+        return line_len;
     }
 
     /// Read data from the SSE stream into the provided buffer

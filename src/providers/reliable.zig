@@ -306,6 +306,8 @@ pub const ReliableProvider = struct {
         .supportsNativeTools = supportsNativeToolsImpl,
         .supports_vision = supportsVisionImpl,
         .supports_vision_for_model = supportsVisionForModelImpl,
+        .supports_streaming = supportsStreamingImpl,
+        .stream_chat = streamChatImpl,
         .getName = getNameImpl,
         .deinit = deinitImpl,
         .warmup = warmupImpl,
@@ -496,6 +498,28 @@ pub const ReliableProvider = struct {
             if (entry.provider.supportsVisionForModel(model)) return true;
         }
         return false;
+    }
+
+    fn supportsStreamingImpl(ptr: *anyopaque) bool {
+        const self: *ReliableProvider = @ptrCast(@alignCast(ptr));
+        if (self.inner.supportsStreaming()) return true;
+        for (self.extras) |entry| {
+            if (entry.provider.supportsStreaming()) return true;
+        }
+        return false;
+    }
+
+    fn streamChatImpl(
+        ptr: *anyopaque,
+        allocator: std.mem.Allocator,
+        request: root.ChatRequest,
+        model: []const u8,
+        temperature: f64,
+        callback: root.StreamCallback,
+        callback_ctx: *anyopaque,
+    ) anyerror!root.StreamChatResult {
+        const self: *ReliableProvider = @ptrCast(@alignCast(ptr));
+        return self.inner.streamChat(allocator, request, model, temperature, callback, callback_ctx);
     }
 
     fn getNameImpl(ptr: *anyopaque) []const u8 {

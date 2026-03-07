@@ -41,6 +41,11 @@ pub const HttpResponse = struct {
     body: []const u8,
 };
 
+/// Callback type for streaming HTTP responses.
+/// Called with each chunk of data as it arrives.
+/// The chunk slice is only valid for the duration of the callback.
+pub const StreamCallback = *const fn (chunk: []const u8, ctx: *anyopaque) anyerror!void;
+
 /// HTTP POST with optional proxy and timeout (in seconds as string like "30").
 pub fn curlPostWithProxy(
     allocator: Allocator,
@@ -139,6 +144,95 @@ pub fn curlPostWithProxy(
 /// HTTP POST (no proxy, no timeout).
 pub fn curlPost(allocator: Allocator, url: []const u8, body: []const u8, headers: []const []const u8) ![]u8 {
     return curlPostWithProxy(allocator, url, body, headers, null, null);
+}
+
+/// HTTP POST with streaming - calls callback with each chunk as it arrives.
+/// This is useful for LLM APIs to display responses token-by-token.
+/// The callback receives chunks that are only valid during the callback invocation.
+pub fn curlPostStream(
+    allocator: Allocator,
+    url: []const u8,
+    body: []const u8,
+    headers: []const []const u8,
+    callback: StreamCallback,
+    callback_ctx: *anyopaque,
+) !void {
+    const io = getHttpIo();
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    // Build headers array
+    var header_buf: [32]std.http.Header = undefined;
+    var n_headers: usize = 0;
+    for (headers) |header| {
+        if (n_headers >= header_buf.len) break;
+        const colon_idx = std.mem.indexOfScalar(u8, header, ':') orelse continue;
+        const name = header[0..colon_idx];
+        const value = std.mem.trim(u8, header[colon_idx + 1 ..], " \t\r\n");
+        header_buf[n_headers] = .{ .name = name, .value = value };
+        n_headers += 1;
+    }
+    const extra_headers = header_buf[0..n_headers];
+
+    const uri = try std.Uri.parse(url);
+
+    var req = client.request(.POST, uri, .{ .extra_headers = extra_headers }) catch |err| {
+        log.err("curlPostStream: request failed: {}", .{err});
+        return err;
+    };
+    defer req.deinit();
+
+    const body_dup = try allocator.dupe(u8, body);
+    defer allocator.free(body_dup);
+    try req.sendBodyComplete(body_dup);
+
+    var redirect_buf: [4096]u8 = undefined;
+    var response = req.receiveHead(&redirect_buf) catch |err| {
+        log.err("curlPostStream: receiveHead failed: {}", .{err});
+        return err;
+    };
+
+    if (response.head.status != .ok) {
+        log.err("curlPostStream: HTTP status not ok: {}", .{response.head.status});
+        return error.HttpError;
+    }
+
+    // Stream response body chunks as they arrive
+    var transfer_buf: [8192]u8 = undefined;
+    const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+    const max_response = 10 * 1024 * 1024;
+    var total_read: usize = 0;
+
+    while (total_read < max_response) {
+        const fill_size = @min(4096, max_response - total_read);
+        body_reader.fill(fill_size) catch |err| {
+            if (err == error.EndOfStream) {
+                // Try to take whatever is buffered
+                const buffered = body_reader.bufferedLen();
+                if (buffered == 0) break;
+                const data = try body_reader.take(buffered);
+                if (data.len > 0) {
+                    try callback(data, callback_ctx);
+                    total_read += data.len;
+                }
+                break;
+            }
+            log.err("curlPostStream: fill failed: {}", .{err});
+            return err;
+        };
+
+        const buffered = body_reader.bufferedLen();
+        if (buffered == 0) break;
+
+        const to_read = @min(buffered, max_response - total_read);
+        const data = try body_reader.take(to_read);
+        if (data.len == 0) break;
+
+        // Call callback with each chunk immediately
+        try callback(data, callback_ctx);
+        total_read += data.len;
+    }
 }
 
 /// HTTP POST and include HTTP status code in response.

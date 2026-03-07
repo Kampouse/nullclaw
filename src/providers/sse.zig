@@ -69,7 +69,7 @@ pub fn extractDeltaContent(allocator: std.mem.Allocator, json_str: []const u8) !
 
 /// Run curl in SSE streaming mode and parse output line by line.
 ///
-/// Spawns `curl -s --no-buffer --fail-with-body` and reads stdout incrementally.
+/// Uses SSE client to connect to streaming endpoint and parse events incrementally.
 /// For each SSE delta, calls `callback(ctx, chunk)`.
 /// Returns accumulated result after stream completes.
 pub fn curlStream(
@@ -82,9 +82,102 @@ pub fn curlStream(
     callback: root.StreamCallback,
     ctx: *anyopaque,
 ) !root.StreamChatResult {
-    _ = allocator; _ = url; _ = body; _ = auth_header; _ = extra_headers;
-    _ = timeout_secs; _ = callback; _ = ctx;
-    return error.NotSupported;
+    _ = timeout_secs;
+    const sse = @import("../sse_client.zig");
+    const log = std.log.scoped(.sse);
+
+    log.debug("curlStream: starting, url={s}", .{url});
+
+    // Build headers array
+    var header_buf: [32]std.http.Header = undefined;
+    var n_headers: usize = 0;
+
+    // Add auth header if provided
+    if (auth_header) |hdr| {
+        const colon_idx = std.mem.indexOfScalar(u8, hdr, ':') orelse return error.InvalidHeader;
+        header_buf[n_headers] = .{
+            .name = hdr[0..colon_idx],
+            .value = std.mem.trim(u8, hdr[colon_idx + 1 ..], " \t\r\n"),
+        };
+        n_headers += 1;
+    }
+
+    // Add extra headers
+    for (extra_headers) |hdr| {
+        if (n_headers >= header_buf.len) break;
+        const colon_idx = std.mem.indexOfScalar(u8, hdr, ':') orelse continue;
+        header_buf[n_headers] = .{
+            .name = hdr[0..colon_idx],
+            .value = std.mem.trim(u8, hdr[colon_idx + 1 ..], " \t\r\n"),
+        };
+        n_headers += 1;
+    }
+
+    const headers_slice = header_buf[0..n_headers];
+
+    log.debug("curlStream: connecting to SSE endpoint", .{});
+    // Create SSE connection and connect
+    var conn = try sse.SseConnection.initAndConnect(allocator, url, headers_slice, body);
+    defer conn.deinit();
+    log.debug("curlStream: connected successfully", .{});
+
+    var accumulated_content = std.ArrayList(u8).initCapacity(allocator, 4096) catch return error.OutOfMemory;
+    defer accumulated_content.deinit(allocator);
+    var total_tokens: u32 = 0;
+    var line_count: usize = 0;
+
+    log.debug("curlStream: starting to read lines", .{});
+    // Read and parse SSE events
+    var line_buf: [4096]u8 = undefined;
+    while (true) {
+        log.debug("curlStream: reading line {d}", .{line_count});
+        const line_len = conn.readLine(&line_buf) catch |err| switch (err) {
+            error.ConnectionClosed => {
+                log.debug("curlStream: connection closed", .{});
+                break;
+            },
+            else => {
+                log.debug("curlStream: read error: {}", .{err});
+                return err;
+            },
+        };
+        log.debug("curlStream: read {d} bytes", .{line_len});
+        if (line_len == 0) {
+            log.debug("curlStream: empty line, breaking", .{});
+            break;
+        }
+
+        const line = line_buf[0..line_len];
+        line_count += 1;
+        if (line_count <= 5) {
+            log.debug("curlStream: line {d}: {s}", .{ line_count, line });
+        }
+
+        const result = try parseSseLine(allocator, line);
+
+        switch (result) {
+            .delta => |delta| {
+                // Send chunk to callback
+                std.log.debug("SSE delta chunk: {d} bytes", .{delta.len});
+                callback(ctx, root.StreamChunk.textDelta(delta));
+                try accumulated_content.appendSlice(allocator, delta);
+                total_tokens += @intCast((delta.len + 3) / 4);
+                allocator.free(delta);
+            },
+            .done => {
+                // Send final chunk
+                callback(ctx, root.StreamChunk.finalChunk());
+                break;
+            },
+            .skip => {},
+        }
+    }
+
+    return .{
+        .content = try accumulated_content.toOwnedSlice(allocator),
+        .usage = .{ .total_tokens = total_tokens },
+        .model = "",
+    };
 }
 pub fn parseAnthropicSseLine(allocator: std.mem.Allocator, line: []const u8, current_event: []const u8) !AnthropicSseResult {
 
