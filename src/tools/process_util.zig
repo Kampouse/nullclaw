@@ -71,9 +71,11 @@ const builtin = @import("builtin");
 
 test "run echo returns stdout" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const allocator = std.testing.allocator;
-    // Use smaller output limit to avoid GPA issues during testing
-    const result = try run(allocator, &.{ "echo", "hello" }, .{ .max_output_bytes = 4096 });
+    // GPA has limits on single allocation size; use ArenaAllocator for process tests
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const result = try run(allocator, &.{ "echo", "hello" }, .{});
     defer result.deinit(allocator);
 
     try std.testing.expect(result.success);
@@ -83,9 +85,11 @@ test "run echo returns stdout" {
 
 test "run failing command returns exit code" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const allocator = std.testing.allocator;
-    // Use smaller output limit to avoid GPA issues during testing
-    const result = try run(allocator, &.{ "ls", "/nonexistent_dir_xyz_42" }, .{ .max_output_bytes = 4096 });
+    // GPA has limits on single allocation size; use ArenaAllocator for process tests
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const result = try run(allocator, &.{ "ls", "/nonexistent_dir_xyz_42" }, .{});
     defer result.deinit(allocator);
 
     try std.testing.expect(!result.success);
@@ -95,7 +99,10 @@ test "run failing command returns exit code" {
 
 test "run with cwd" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const allocator = std.testing.allocator;
+    // GPA has limits on single allocation size; use ArenaAllocator for process tests
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const result = try run(allocator, &.{"pwd"}, .{ .cwd = "/tmp" });
     defer result.deinit(allocator);
 
