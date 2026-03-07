@@ -407,7 +407,7 @@ pub const ChannelManager = struct {
                 const now_ns = std.Io.Clock.real.now(io).nanoseconds;
                 const now = @as(u64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
                 const last = pollingLastActivity(polling_state);
-                const stale = (now - last) > STALE_THRESHOLD_SECS;
+                const stale = (now - @as(u64, @intCast(@max(0, last)))) > STALE_THRESHOLD_SECS;
 
                 const probe_ok = entry.channel.healthCheck();
 
