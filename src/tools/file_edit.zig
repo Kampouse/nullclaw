@@ -74,14 +74,7 @@ pub const FileEditTool = struct {
         }
 
         // Read existing file contents
-        const file_r = std.Io.Dir.cwd().openFile(io, resolved, .{}) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
-        };
-        defer file_r.close(io);
-        var read_buf: [1024 * 1024]u8 = undefined;
-        var reader = file_r.reader(io, &read_buf);
-        const contents = reader.interface.readAlloc(allocator, self.max_file_size) catch |err| {
+        const contents = std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, .limited(self.max_file_size)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
@@ -158,6 +151,9 @@ test "file_edit basic replace" {
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     defer result.deinit(std.testing.allocator);
 
+    if (!result.success) {
+        std.debug.print("\nERROR: {s}\n", .{result.error_msg orelse "unknown"});
+    }
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Replaced") != null);
 
