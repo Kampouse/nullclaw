@@ -165,7 +165,7 @@ test "delegate executes gracefully without config" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"researcher\", \"prompt\": \"test\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
@@ -178,7 +178,7 @@ test "delegate missing agent" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"prompt\": \"test\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 
@@ -187,7 +187,7 @@ test "delegate missing prompt" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"researcher\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 
@@ -196,7 +196,7 @@ test "delegate blank agent rejected" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"  \", \"prompt\": \"test\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "must not be empty") != null);
 }
@@ -206,7 +206,7 @@ test "delegate blank prompt rejected" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"researcher\", \"prompt\": \"  \"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "must not be empty") != null);
 }
@@ -221,7 +221,7 @@ test "delegate with valid params handles missing provider gracefully" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"coder\", \"prompt\": \"Write a function\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
@@ -248,7 +248,7 @@ test "delegate empty JSON rejected" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 
@@ -262,7 +262,7 @@ test "delegate with context field handles missing provider gracefully" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"coder\", \"prompt\": \"fix bug\", \"context\": \"file.zig\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
@@ -286,7 +286,7 @@ test "delegate depth limit enforced" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"researcher\", \"prompt\": \"test\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "depth limit") != null);
@@ -307,7 +307,7 @@ test "delegate depth within limit proceeds" {
     // Will proceed past depth check but fail at provider level (no API key)
     const parsed = try root.parseTestArgs("{\"agent\": \"researcher\", \"prompt\": \"test\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     // Should fail at provider level, not depth
@@ -323,7 +323,7 @@ test "delegate default depth limit at 3" {
     const t = dt.tool();
     const parsed = try root.parseTestArgs("{\"agent\": \"unknown\", \"prompt\": \"test\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "depth limit") != null);
 }
@@ -342,7 +342,7 @@ test "delegate per-agent max_depth" {
     // "shallow" at depth=1 should be blocked (max_depth=1)
     const p1 = try root.parseTestArgs("{\"agent\": \"shallow\", \"prompt\": \"test\"}");
     defer p1.deinit();
-    const r1 = try t.execute(std.testing.allocator, p1.value.object);
+    const r1 = try t.execute(std.testing.allocator, p1.parsed.value.object);
     defer if (r1.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     try std.testing.expect(!r1.success);
     try std.testing.expect(std.mem.indexOf(u8, r1.error_msg.?, "depth limit") != null);
@@ -350,7 +350,7 @@ test "delegate per-agent max_depth" {
     // "deep" at depth=1 should proceed (max_depth=10)
     const p2 = try root.parseTestArgs("{\"agent\": \"deep\", \"prompt\": \"test\"}");
     defer p2.deinit();
-    const r2 = try t.execute(std.testing.allocator, p2.value.object);
+    const r2 = try t.execute(std.testing.allocator, p2.parsed.value.object);
     defer if (r2.output.len > 0) std.testing.allocator.free(r2.output);
     defer if (r2.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!r2.success) {

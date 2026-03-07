@@ -47,7 +47,7 @@ pub const SpiTool = struct {
     fn executeList(allocator: std.mem.Allocator) !ToolResult {
         if (comptime builtin.os.tag != .linux) {
             const output = try allocator.dupe(u8, "{\"devices\":[],\"note\":\"SPI device listing only supported on Linux\"}");
-            return ToolResult{ .success = true, .output = output, .owns_output = true };
+            return ToolResult{ .success = true, .output = output, .owns_output = true, .error_msg = null, .owns_error_msg = false };
         }
 
         // On Linux: glob /dev/spidev*.*
@@ -81,7 +81,8 @@ pub const SpiTool = struct {
     fn executeTransfer(allocator: std.mem.Allocator, args: JsonObjectMap, read_only: bool) !ToolResult {
         if (comptime builtin.os.tag != .linux) {
             const output = try allocator.dupe(u8, "{\"error\":\"SPI not supported on this platform\"}");
-            return ToolResult{ .success = false, .output = output, .error_msg = try allocator.dupe(u8, "SPI not supported on this platform") };
+            const error_msg = try allocator.dupe(u8, "SPI not supported on this platform");
+            return ToolResult{ .success = false, .output = output, .owns_output = true, .error_msg = error_msg, .owns_error_msg = true };
         }
 
         const device = root.getString(args, "device") orelse "/dev/spidev0.0";
@@ -284,7 +285,7 @@ test "spi list action on non-linux" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"list\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer std.testing.allocator.free(result.output);
     if (comptime builtin.os.tag != .linux) {
         try std.testing.expect(result.success);
@@ -298,7 +299,7 @@ test "spi transfer on non-linux returns error" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"transfer\", \"data\": \"FF 0A\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not supported") != null);
@@ -310,7 +311,7 @@ test "spi read on non-linux returns error" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not supported") != null);
@@ -321,7 +322,7 @@ test "spi missing action" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -331,7 +332,7 @@ test "spi unknown action" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"unknown\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown action") != null);
 }

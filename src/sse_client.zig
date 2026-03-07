@@ -172,7 +172,20 @@ pub const SseConnection = struct {
         const uri = try std.Uri.parse(url);
         conn.body_reader = null;
 
-        const options: std.http.Client.RequestOptions = .{ .extra_headers = headers };
+        // Add Accept header for SSE if not already present
+        var header_buf: [33]std.http.Header = undefined;
+        var n_headers: usize = 0;
+        header_buf[n_headers] = .{ .name = "Accept", .value = "text/event-stream" };
+        n_headers += 1;
+
+        // Add custom headers
+        for (headers) |hdr| {
+            if (n_headers >= header_buf.len) break;
+            header_buf[n_headers] = hdr;
+            n_headers += 1;
+        }
+
+        const options: std.http.Client.RequestOptions = .{ .extra_headers = header_buf[0..n_headers] };
 
         conn.request = try conn.client.request(.POST, uri, options);
         const req = &conn.request.?;
@@ -205,27 +218,27 @@ pub const SseConnection = struct {
 
     /// Read a single line from the SSE stream
     /// Returns the number of bytes read (excluding newline), or error if connection closed
+    /// Blocks until a complete line is available or connection closes
     pub fn readLine(self: *SseConnection, buf: []u8) !usize {
+        _ = self.body_reader orelse return error.NotConnected;
+
         var line_len: usize = 0;
         var read_buf: [1]u8 = undefined;
 
         while (line_len < buf.len) {
-            // Try to read one byte
+            // Try to read one byte - this blocks until data is available
             const n = self.read(&read_buf) catch |err| {
-                // If read fails, check if we have any data
+                // If read fails and we have some content, return it
                 if (line_len > 0) return line_len;
                 return err;
             };
 
             if (n == 0) {
-                // No data available right now
-                // If we have some content, return it
-                // Otherwise, connection might be closed or waiting for more
+                // Read returned 0 - this means connection closed or no data
+                // If we have content, return it
                 if (line_len > 0) return line_len;
-                // Busy wait a bit and try again
-                var i: usize = 0;
-                while (i < 10000) : (i += 1) {}
-                continue;
+                // Otherwise, connection is closed
+                return error.ConnectionClosed;
             }
 
             const byte = read_buf[0];

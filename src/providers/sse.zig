@@ -84,9 +84,6 @@ pub fn curlStream(
 ) !root.StreamChatResult {
     _ = timeout_secs;
     const sse = @import("../sse_client.zig");
-    const log = std.log.scoped(.sse);
-
-    log.debug("curlStream: starting, url={s}", .{url});
 
     // Build headers array
     var header_buf: [32]std.http.Header = undefined;
@@ -115,42 +112,35 @@ pub fn curlStream(
 
     const headers_slice = header_buf[0..n_headers];
 
-    log.debug("curlStream: connecting to SSE endpoint", .{});
     // Create SSE connection and connect
     var conn = try sse.SseConnection.initAndConnect(allocator, url, headers_slice, body);
     defer conn.deinit();
-    log.debug("curlStream: connected successfully", .{});
 
     var accumulated_content = std.ArrayList(u8).initCapacity(allocator, 4096) catch return error.OutOfMemory;
     defer accumulated_content.deinit(allocator);
     var total_tokens: u32 = 0;
     var line_count: usize = 0;
 
-    log.debug("curlStream: starting to read lines", .{});
     // Read and parse SSE events
     var line_buf: [4096]u8 = undefined;
     while (true) {
-        log.debug("curlStream: reading line {d}", .{line_count});
         const line_len = conn.readLine(&line_buf) catch |err| switch (err) {
             error.ConnectionClosed => {
-                log.debug("curlStream: connection closed", .{});
                 break;
             },
             else => {
-                log.debug("curlStream: read error: {}", .{err});
                 return err;
             },
         };
-        log.debug("curlStream: read {d} bytes", .{line_len});
         if (line_len == 0) {
-            log.debug("curlStream: empty line, breaking", .{});
-            break;
+            // Empty line between SSE events - continue reading
+            line_count += 1;
+            continue;
         }
 
         const line = line_buf[0..line_len];
         line_count += 1;
-        if (line_count <= 5) {
-            log.debug("curlStream: line {d}: {s}", .{ line_count, line });
+        if (line_count <= 10) {
         }
 
         const result = try parseSseLine(allocator, line);
@@ -158,7 +148,6 @@ pub fn curlStream(
         switch (result) {
             .delta => |delta| {
                 // Send chunk to callback
-                std.log.debug("SSE delta chunk: {d} bytes", .{delta.len});
                 callback(ctx, root.StreamChunk.textDelta(delta));
                 try accumulated_content.appendSlice(allocator, delta);
                 total_tokens += @intCast((delta.len + 3) / 4);
@@ -172,6 +161,7 @@ pub fn curlStream(
             .skip => {},
         }
     }
+
 
     return .{
         .content = try accumulated_content.toOwnedSlice(allocator),

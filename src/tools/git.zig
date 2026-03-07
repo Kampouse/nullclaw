@@ -402,7 +402,7 @@ test "git rejects missing operation" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -412,7 +412,7 @@ test "git rejects unknown operation" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"foobar\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
@@ -423,7 +423,7 @@ test "git push operation exists" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"push\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     // Push will fail without a real git repo, but it should be recognized as a valid operation
     // (error should not be "Unknown operation")
@@ -445,7 +445,7 @@ test "git cwd inside workspace works without allowed_paths" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
@@ -472,7 +472,7 @@ test "git cwd outside workspace without allowed_paths is rejected" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "outside allowed areas") != null);
 }
@@ -482,7 +482,7 @@ test "git checkout blocks injection" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"checkout\", \"branch\": \"main; rm -rf /\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
     // Caught by sanitizeGitArgs in execute() before reaching gitCheckout
@@ -494,7 +494,7 @@ test "git commit missing message" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"commit\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
@@ -504,7 +504,7 @@ test "git commit empty message" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"commit\", \"message\": \"\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
@@ -514,7 +514,7 @@ test "git add missing paths" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"add\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
@@ -643,7 +643,7 @@ test "git execute blocks unsafe args in message" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"commit\", \"message\": \"$(evil)\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
 }
@@ -653,7 +653,7 @@ test "git execute blocks unsafe args in paths" {
     const t = gt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"add\", \"paths\": \"file.txt; rm -rf /\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
 }
@@ -664,7 +664,7 @@ test "git push blocks injection in remote" {
     // "remote" is now in fields_to_check, so sanitizeGitArgs catches it
     const parsed = try root.parseTestArgs("{\"operation\": \"push\", \"remote\": \"origin; rm -rf /\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
 }
@@ -675,7 +675,7 @@ test "git push blocks injection in branch" {
     // "branch" IS in fields_to_check, so sanitizeGitArgs catches it first
     const parsed = try root.parseTestArgs("{\"operation\": \"push\", \"branch\": \"main|cat /etc/passwd\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
 }

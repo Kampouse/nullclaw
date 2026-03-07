@@ -420,7 +420,7 @@ test "execute rejects missing url parameter" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "url") != null);
 }
@@ -430,7 +430,7 @@ test "execute rejects non-http scheme" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"ftp://example.com\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "http") != null);
 }
@@ -440,7 +440,7 @@ test "execute rejects localhost SSRF" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://127.0.0.1:8080/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -450,7 +450,7 @@ test "execute rejects localhost SSRF with URL userinfo" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://user:pass@127.0.0.1:8080/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -460,7 +460,7 @@ test "execute rejects localhost SSRF with unbracketed ipv6 authority" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://::1:8080/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -470,7 +470,7 @@ test "execute rejects private IP SSRF" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://192.168.1.1/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 
@@ -479,7 +479,7 @@ test "execute rejects 10.x private range" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://10.0.0.1/secret\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 
@@ -488,7 +488,7 @@ test "execute rejects loopback decimal alias SSRF" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://2130706433/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -498,7 +498,7 @@ test "execute rejects unsupported method" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://example.com\", \"method\": \"INVALID\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer {
         // Clean up allocated error message from line 70-71
         if (result.error_msg) |err| {
@@ -517,7 +517,7 @@ test "execute rejects invalid URL format" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 
@@ -527,7 +527,7 @@ test "execute rejects non-allowlisted domain" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://evil.com/path\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "allowed_domains") != null);
 }

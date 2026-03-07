@@ -313,7 +313,7 @@ test "i2c detect on non-linux returns platform error" {
     const t = it.tool();
     const parsed = try root.parseTestArgs("{\"action\":\"detect\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
@@ -325,7 +325,7 @@ test "i2c scan on non-linux returns platform error" {
     const t = it.tool();
     const parsed = try root.parseTestArgs("{\"action\":\"scan\",\"bus\":1}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
@@ -337,7 +337,7 @@ test "i2c read on non-linux returns platform error" {
     const t = it.tool();
     const parsed = try root.parseTestArgs("{\"action\":\"read\",\"bus\":1,\"address\":\"0x48\",\"register\":0}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
@@ -349,7 +349,7 @@ test "i2c write on non-linux returns platform error" {
     const t = it.tool();
     const parsed = try root.parseTestArgs("{\"action\":\"write\",\"bus\":1,\"address\":\"0x48\",\"register\":0,\"value\":42}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
@@ -360,7 +360,7 @@ test "i2c missing action parameter" {
     const t = it.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "action") != null);
 }
@@ -370,7 +370,7 @@ test "i2c unknown action" {
     const t = it.tool();
     const parsed = try root.parseTestArgs("{\"action\":\"reset\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown action") != null);
 }
@@ -378,49 +378,49 @@ test "i2c unknown action" {
 test "parseAddress valid hex" {
     const p1 = try root.parseTestArgs("{\"address\":\"0x48\"}");
     defer p1.deinit();
-    try std.testing.expectEqual(@as(?u7, 0x48), parseAddress(p1.value.object));
+    try std.testing.expectEqual(@as(?u7, 0x48), parseAddress(p1.parsed.value.object));
     const p2 = try root.parseTestArgs("{\"address\":\"0x03\"}");
     defer p2.deinit();
-    try std.testing.expectEqual(@as(?u7, 0x03), parseAddress(p2.value.object));
+    try std.testing.expectEqual(@as(?u7, 0x03), parseAddress(p2.parsed.value.object));
     const p3 = try root.parseTestArgs("{\"address\":\"0x77\"}");
     defer p3.deinit();
-    try std.testing.expectEqual(@as(?u7, 0x77), parseAddress(p3.value.object));
+    try std.testing.expectEqual(@as(?u7, 0x77), parseAddress(p3.parsed.value.object));
     const p4 = try root.parseTestArgs("{\"address\":\"0X50\"}");
     defer p4.deinit();
-    try std.testing.expectEqual(@as(?u7, 0x50), parseAddress(p4.value.object));
+    try std.testing.expectEqual(@as(?u7, 0x50), parseAddress(p4.parsed.value.object));
     const p5 = try root.parseTestArgs("{\"address\":\"20\"}");
     defer p5.deinit();
-    try std.testing.expectEqual(@as(?u7, 0x20), parseAddress(p5.value.object)); // no prefix
+    try std.testing.expectEqual(@as(?u7, 0x20), parseAddress(p5.parsed.value.object)); // no prefix
 }
 
 test "parseAddress rejects out of range" {
     const p1 = try root.parseTestArgs("{\"address\":\"0x00\"}");
     defer p1.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p1.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p1.parsed.value.object));
     const p2 = try root.parseTestArgs("{\"address\":\"0x01\"}");
     defer p2.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p2.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p2.parsed.value.object));
     const p3 = try root.parseTestArgs("{\"address\":\"0x02\"}");
     defer p3.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p3.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p3.parsed.value.object));
     const p4 = try root.parseTestArgs("{\"address\":\"0x78\"}");
     defer p4.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p4.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p4.parsed.value.object));
     const p5 = try root.parseTestArgs("{\"address\":\"0xFF\"}");
     defer p5.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p5.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p5.parsed.value.object));
 }
 
 test "parseAddress rejects invalid" {
     const p1 = try root.parseTestArgs("{\"address\":\"\"}");
     defer p1.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p1.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p1.parsed.value.object));
     const p2 = try root.parseTestArgs("{\"address\":\"zz\"}");
     defer p2.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p2.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p2.parsed.value.object));
     const p3 = try root.parseTestArgs("{}");
     defer p3.deinit();
-    try std.testing.expectEqual(@as(?u7, null), parseAddress(p3.value.object));
+    try std.testing.expectEqual(@as(?u7, null), parseAddress(p3.parsed.value.object));
 }
 
 test "i2c scan missing bus parameter" {
@@ -431,7 +431,7 @@ test "i2c scan missing bus parameter" {
     // Test that it doesn't crash.
     const parsed = try root.parseTestArgs("{\"action\":\"scan\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
 }

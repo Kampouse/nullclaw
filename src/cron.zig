@@ -1155,10 +1155,14 @@ fn loadJobsWithPolicy(scheduler: *CronScheduler, policy: LoadPolicy) !void {
     };
     defer scheduler.allocator.free(content);
 
+    // Use arena allocator for JSON parsing to avoid leaks in Zig 0.16
+    var arena = std.heap.ArenaAllocator.init(scheduler.allocator);
+    defer arena.deinit();
+    const arena_alloc = arena.allocator();
+
     const parsed = try std.json.parseFromSlice(struct {
         jobs: []CronJob,
-    }, scheduler.allocator, content, .{ .ignore_unknown_fields = true });
-    defer parsed.deinit();
+    }, arena_alloc, content, .{ .ignore_unknown_fields = true });
 
     for (parsed.value.jobs) |job| {
         // Create CronJob with deep copied strings (stored by value in ArrayList)

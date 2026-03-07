@@ -5,6 +5,7 @@ const platform = @import("../platform.zig");
 const tools_mod = @import("../tools/root.zig");
 const Tool = tools_mod.Tool;
 const skills_mod = @import("../skills.zig");
+const build_options = @import("build_options");
 
 const io = std.Options.debug_io;
 
@@ -188,6 +189,10 @@ pub fn buildSystemPrompt(
 ) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
+
+    // Version info - agent always knows its build
+    try buf.appendSlice(allocator, "## Version\n\n");
+    try buf.print(allocator, "You are running nullclaw {s} (git commit {s}).\n\n", .{ build_options.version, build_options.git_commit });
 
     try buf.appendSlice(allocator, "System prompt builder (stubbed)\n");
     try buf.appendSlice(allocator, "Workspace: ");

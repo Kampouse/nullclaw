@@ -208,6 +208,14 @@ pub const Config = struct {
     }
 
     pub fn load(backing_allocator: std.mem.Allocator) !Config {
+        const home = platform.getHomeDir(backing_allocator) catch return error.NoHomeDir;
+        const config_dir = try std.fs.path.join(backing_allocator, &.{ home, ".nullclaw" });
+        const config_path = try std.fs.path.join(backing_allocator, &.{ config_dir, "config.json" });
+        return loadPath(backing_allocator, config_path);
+    }
+
+    /// Load config from a specific file path.
+    pub fn loadPath(backing_allocator: std.mem.Allocator, config_path: []const u8) !Config {
         // Use an arena so deinit() can free everything in one shot.
         const arena_ptr = try backing_allocator.create(std.heap.ArenaAllocator);
         arena_ptr.* = std.heap.ArenaAllocator.init(backing_allocator);
@@ -217,26 +225,30 @@ pub const Config = struct {
         }
         const allocator = arena_ptr.allocator();
 
-        const home = platform.getHomeDir(allocator) catch return error.NoHomeDir;
+        // Duplicate config_path since we need it to outlive the caller
+        const config_path_owned = try allocator.dupe(u8, config_path);
 
-        const config_dir = try std.fs.path.join(allocator, &.{ home, ".nullclaw" });
-        const config_path = try std.fs.path.join(allocator, &.{ config_dir, "config.json" });
+        // Derive default workspace from config path
+        const config_dir = std.fs.path.dirname(config_path_owned) orelse ".";
         const default_workspace_dir = try std.fs.path.join(allocator, &.{ config_dir, "workspace" });
 
         var cfg = Config{
             .workspace_dir = default_workspace_dir, // temporarily set to default
-            .config_path = config_path,
+            .config_path = config_path_owned,
             .allocator = allocator,
             .arena = arena_ptr,
         };
 
         // Try to read existing config file
-        if (std.Io.Dir.cwd().openFile(io, config_path, .{})) |file| {
-            defer file.close(io);
-            var buffer: [1024 * 64]u8 = undefined;
-            var reader = file.reader(io, &buffer);
-            const content = try reader.interface.readAlloc(allocator, 1024 * 64);
-            cfg.parseJson(content) catch |err| switch (err) {
+        const content: ?[]const u8 = blk: {
+            const result = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, config_path, allocator, .limited(1024 * 64)) catch {
+                // Config file doesn't exist or can't be read — use defaults
+                break :blk null;
+            };
+            break :blk result;
+        };
+        if (content) |c| {
+            cfg.parseJson(c) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     // Log parse errors so users can diagnose corrupted or
@@ -246,8 +258,6 @@ pub const Config = struct {
                     std.debug.print("Warning: failed to parse config.json: {s}\n", .{@errorName(err)});
                 },
             };
-        } else |_| {
-            // Config file doesn't exist yet — use defaults
         }
 
         // Use workspace_dir_override if set, otherwise use default
@@ -257,7 +267,7 @@ pub const Config = struct {
 
         // Backfill runtime-derived fields not present in JSON
         if (cfg.channels.nostr) |ns| {
-            ns.config_dir = std.fs.path.dirname(config_path) orelse ".";
+            ns.config_dir = std.fs.path.dirname(config_path_owned) orelse ".";
         }
 
         // Environment variable overrides

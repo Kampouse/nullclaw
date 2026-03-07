@@ -264,7 +264,7 @@ test "cargo rejects missing operation" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -274,7 +274,7 @@ test "cargo rejects unknown operation" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"publish\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
@@ -285,7 +285,7 @@ test "cargo blocks injection in args" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"build\", \"args\": \"--release; rm -rf /\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
 }
@@ -295,7 +295,7 @@ test "cargo new missing package_name" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"new\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 

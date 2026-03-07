@@ -40,9 +40,12 @@ pub fn execute(
 }
 
 pub fn formatResults(allocator: std.mem.Allocator, json_body: []const u8, query: []const u8) !common.ToolResult {
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_body, .{}) catch
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const arena_alloc = arena.allocator();
+
+    const parsed = std.json.parseFromSlice(std.json.Value, arena_alloc, json_body, .{}) catch
         return common.ToolResult.fail("Failed to parse search response JSON");
-    defer parsed.deinit();
 
     const root_val = switch (parsed.value) {
         .object => |o| o,

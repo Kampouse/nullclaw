@@ -45,8 +45,30 @@ pub fn getValue(args: JsonObjectMap, key: []const u8) ?JsonValue {
 
 /// Test helper: parse a JSON string into a Parsed(Value) for use in tool tests.
 /// The caller must `defer parsed.deinit()` and extract `.value.object` for the ObjectMap.
-pub fn parseTestArgs(json_str: []const u8) !std.json.Parsed(JsonValue) {
-    return std.json.parseFromSlice(JsonValue, std.testing.allocator, json_str, .{});
+/// Uses an arena allocator internally to avoid Zig 0.16 JSON parsing leaks.
+pub const TestArgs = struct {
+    arena: std.heap.ArenaAllocator,
+    parsed: std.json.Parsed(JsonValue),
+
+    pub fn deinit(self: *const TestArgs) void {
+        self.arena.deinit();
+    }
+};
+
+pub fn parseTestArgs(json_str: []const u8) !TestArgs {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    const parsed = try std.json.parseFromSlice(JsonValue, arena.allocator(), json_str, .{});
+    return .{
+        .arena = arena,
+        .parsed = parsed,
+    };
+}
+
+/// Test helper: parse a JSON string into an ObjectMap for use in tool tests.
+/// Uses an arena allocator internally - just use the returned object, no cleanup needed.
+pub fn parseTestArgsArena(arena_allocator: std.mem.Allocator, json_str: []const u8) !JsonObjectMap {
+    const parsed = try std.json.parseFromSlice(JsonValue, arena_allocator, json_str, .{});
+    return parsed.value.object;
 }
 
 // Sub-modules
@@ -591,14 +613,14 @@ pub fn subagentTools(
 test "getString returns unescaped newlines and tabs" {
     const parsed = try parseTestArgs("{\"content\":\"line1\\nline2\\ttab\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "content").?;
+    const val = getString(parsed.parsed.value.object, "content").?;
     try std.testing.expectEqualStrings("line1\nline2\ttab", val);
 }
 
 test "getString returns unescaped quotes and backslashes" {
     const parsed = try parseTestArgs("{\"s\":\"say \\\"hello\\\" path\\\\dir\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "s").?;
+    const val = getString(parsed.parsed.value.object, "s").?;
     try std.testing.expectEqualStrings("say \"hello\" path\\dir", val);
 }
 
@@ -606,43 +628,43 @@ test "getString returns unescaped unicode" {
     // \u0041 = A, \u00c9 = É
     const parsed = try parseTestArgs("{\"s\":\"\\u0041BC \\u00c9\\u00f6\\u00fc\\u00e4\\u00e8\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "s").?;
+    const val = getString(parsed.parsed.value.object, "s").?;
     try std.testing.expectEqualStrings("ABC Éöüäè", val);
 }
 
 test "getString returns unescaped shell script content" {
     const parsed = try parseTestArgs("{\"content\":\"#!/bin/bash\\necho \\\"hello\\\"\\nexit 0\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "content").?;
+    const val = getString(parsed.parsed.value.object, "content").?;
     try std.testing.expectEqualStrings("#!/bin/bash\necho \"hello\"\nexit 0", val);
 }
 
 test "getString returns null for missing key" {
     const parsed = try parseTestArgs("{\"other\":\"val\"}");
     defer parsed.deinit();
-    try std.testing.expect(getString(parsed.value.object, "content") == null);
+    try std.testing.expect(getString(parsed.parsed.value.object, "content") == null);
 }
 
 test "getString returns null for non-string value" {
     const parsed = try parseTestArgs("{\"count\":42}");
     defer parsed.deinit();
-    try std.testing.expect(getString(parsed.value.object, "count") == null);
+    try std.testing.expect(getString(parsed.parsed.value.object, "count") == null);
 }
 
 test "getBool extracts boolean values" {
     const parsed = try parseTestArgs("{\"a\":true,\"b\":false}");
     defer parsed.deinit();
-    try std.testing.expectEqual(@as(?bool, true), getBool(parsed.value.object, "a"));
-    try std.testing.expectEqual(@as(?bool, false), getBool(parsed.value.object, "b"));
-    try std.testing.expect(getBool(parsed.value.object, "missing") == null);
+    try std.testing.expectEqual(@as(?bool, true), getBool(parsed.parsed.value.object, "a"));
+    try std.testing.expectEqual(@as(?bool, false), getBool(parsed.parsed.value.object, "b"));
+    try std.testing.expect(getBool(parsed.parsed.value.object, "missing") == null);
 }
 
 test "getInt extracts integer values" {
     const parsed = try parseTestArgs("{\"n\":42,\"neg\":-5}");
     defer parsed.deinit();
-    try std.testing.expectEqual(@as(?i64, 42), getInt(parsed.value.object, "n"));
-    try std.testing.expectEqual(@as(?i64, -5), getInt(parsed.value.object, "neg"));
-    try std.testing.expect(getInt(parsed.value.object, "missing") == null);
+    try std.testing.expectEqual(@as(?i64, 42), getInt(parsed.parsed.value.object, "n"));
+    try std.testing.expectEqual(@as(?i64, -5), getInt(parsed.parsed.value.object, "neg"));
+    try std.testing.expect(getInt(parsed.parsed.value.object, "missing") == null);
 }
 
 test "tool result ok" {

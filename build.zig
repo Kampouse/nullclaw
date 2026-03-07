@@ -341,6 +341,13 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const is_wasi = target.result.os.tag == .wasi;
     const app_version = b.option([]const u8, "version", "Version string embedded in the binary") orelse "2026.3.1";
+
+    // Get git commit hash at build time
+    const git_commit = b: {
+        var out_code: u8 = 0;
+        const result = b.runAllowFail(&[_][]const u8{ "git", "rev-parse", "HEAD" }, &out_code, .ignore) catch "unknown";
+        break :b if (result.len > 0) result[0..@min(8, result.len)] else "unknown"; // Short hash
+    };
     const channels_raw = b.option(
         []const u8,
         "channels",
@@ -418,6 +425,7 @@ pub fn build(b: *std.Build) void {
 
     var build_options = b.addOptions();
     build_options.addOption([]const u8, "version", app_version);
+    build_options.addOption([]const u8, "git_commit", git_commit);
     build_options.addOption(bool, "enable_memory_none", enable_memory_none);
     build_options.addOption(bool, "enable_memory_markdown", enable_memory_markdown);
     build_options.addOption(bool, "enable_memory_memory", enable_memory_memory);
@@ -473,6 +481,13 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("zquic", zquic_dep.module("zquic"));
+
+        // Add tls for HTTPS support
+        const tls_dep = b.dependency("tls", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        module.addImport("tls", tls_dep.module("tls"));
         break :blk module;
     };
 

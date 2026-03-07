@@ -805,9 +805,6 @@ pub const Agent = struct {
 
             const timer_start = 0; // TODO: Zig 0.16.0 - util.timestampUnix() API changed
             const is_streaming = self.stream_callback != null and self.provider.supportsStreaming();
-            if (is_streaming) {
-                log.debug("agent: using streaming path", .{});
-            }
             const native_tools_enabled = !is_streaming and self.provider.supportsNativeTools();
 
             // Call provider: streaming (no retries, no native tools) or blocking with retry

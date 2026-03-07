@@ -116,7 +116,7 @@ test "cron_run_requires_job_id" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }
@@ -126,7 +126,7 @@ test "cron_run_not_found" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-xyz\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -152,7 +152,7 @@ test "cron_run_executes_command" {
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
 
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);

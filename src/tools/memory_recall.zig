@@ -40,7 +40,7 @@ pub const MemoryRecallTool = struct {
 
         const m = self.memory orelse {
             const msg = try std.fmt.allocPrint(allocator, "Memory backend not configured. Cannot search for: {s}", .{query});
-            return ToolResult{ .success = false, .output = msg };
+            return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };
 
         // Use retrieval engine (hybrid pipeline) when MemoryRuntime is available,
@@ -48,7 +48,7 @@ pub const MemoryRecallTool = struct {
         if (self.mem_rt) |rt| {
             const candidates = rt.search(allocator, query, limit, null) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to search memories for '{s}': {s}", .{ query, @errorName(err) });
-                return ToolResult{ .success = false, .output = msg };
+                return ToolResult{ .success = false, .output = msg, .owns_output = true };
             };
             defer mem_root.retrieval.freeCandidates(allocator, candidates);
 
@@ -63,7 +63,7 @@ pub const MemoryRecallTool = struct {
 
         const entries = m.recall(allocator, query, limit, null) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to recall memories for '{s}': {s}", .{ query, @errorName(err) });
-            return ToolResult{ .success = false, .output = msg };
+            return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };
         defer mem_root.freeEntries(allocator, entries);
 
@@ -182,7 +182,7 @@ test "memory_recall executes without backend" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"query\": \"Zig\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not configured") != null);
@@ -193,7 +193,7 @@ test "memory_recall missing query" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 
@@ -206,7 +206,7 @@ test "memory_recall with real backend empty result" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"query\": \"Zig\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "No memories found") != null);
@@ -221,7 +221,7 @@ test "memory_recall with custom limit" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"query\": \"test\", \"limit\": 10}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
 }
@@ -239,7 +239,7 @@ test "memory_recall filters internal bootstrap keys" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"query\": \"zig\"}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);

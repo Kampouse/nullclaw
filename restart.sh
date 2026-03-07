@@ -5,6 +5,56 @@
 
 set -e
 
+# Parse flags
+RELEASE_BUILD=true
+NO_START=false
+SHOW_HELP=false
+
+for arg in "$@"; do
+    case $arg in
+        --help|-h)
+            SHOW_HELP=true
+            ;;
+        --debug|-d)
+            RELEASE_BUILD=false
+            ;;
+        --no-start|-n)
+            NO_START=true
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            echo "Use '$0 --help' for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Show help and exit
+if [ "$SHOW_HELP" = true ]; then
+    cat << EOF
+NullClaw Rebuild & Restart Script
+
+Usage:
+  $0 [OPTIONS]
+
+Options:
+  -h, --help       Show this help message
+  -d, --debug      Build in debug mode (larger binary, faster compile)
+  -n, --no-start   Build but don't start the agent
+
+Examples:
+  $0                    Build release and start agent (default)
+  $0 --debug            Build debug and start agent
+  $0 -n                 Build release, don't start
+  $0 --debug -n         Build debug, don't start
+
+Binary sizes:
+  Release:  ~3.2M (optimized)
+  Debug:    ~26M   (faster compile)
+EOF
+    exit 0
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,49 +65,54 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}=== NullClaw Rebuild & Restart Script ===${NC}"
 echo ""
 
-# Step 1: Kill all nullclaw processes
-echo -e "${YELLOW}→ Step 1: Stopping all nullclaw processes...${NC}"
-pkill -9 nullclaw 2>/dev/null || true
-sleep 2
-
-# Verify they're all stopped
-if pgrep -x nullclaw > /dev/null; then
-    echo -e "${RED}✗ Failed to stop some processes${NC}"
-    pgrep -x nullclaw
-    exit 1
-fi
-echo -e "${GREEN}✓ All nullclaw processes stopped${NC}"
-echo ""
-
-# Step 2: Rebuild
-echo -e "${YELLOW}→ Step 2: Rebuilding nullclaw...${NC}"
-if [ "$1" = "--release" ] || [ "$1" = "-r" ]; then
-    echo "Building with ReleaseSmall optimization..."
+# Step 1: Build first (safer - keeps old process running if build fails)
+echo -e "${YELLOW}→ Step 1: Building nullclaw...${NC}"
+if [ "$RELEASE_BUILD" = true ]; then
+    echo -e "${BLUE}Building with ReleaseSmall optimization...${NC}"
     zig build -Doptimize=ReleaseSmall
 else
-    echo "Building with debug settings..."
+    echo -e "${BLUE}Building with debug settings...${NC}"
     zig build
 fi
 
 if [ $? -ne 0 ]; then
-    echo -e "${RED}✗ Build failed${NC}"
+    echo -e "${RED}✗ Build failed - keeping existing process running${NC}"
     exit 1
 fi
 echo -e "${GREEN}✓ Build successful${NC}"
 echo ""
 
-# Show binary info
+# Show binary info with version
 BINARY_SIZE=$(ls -lh ./zig-out/bin/nullclaw | awk '{print $5}')
-echo -e "${BLUE}Binary: ./zig-out/bin/nullclaw (${BINARY_SIZE})${NC}"
+VERSION_INFO=$(./zig-out/bin/nullclaw --version 2>&1)
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}Version:${NC}   ${VERSION_INFO}"
+echo -e "${BLUE}Binary:${NC}    ./zig-out/bin/nullclaw (${BINARY_SIZE})"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-# Step 3: Show capabilities
-echo -e "${YELLOW}→ Step 3: Verifying new tools...${NC}"
+# Step 2: Verify capabilities
+echo -e "${YELLOW}→ Step 2: Verifying new tools...${NC}"
 ./zig-out/bin/nullclaw capabilities 2>&1 | grep "tools.*:"
 echo ""
 
-# Step 4: Restart agent (optional)
-if [ "$1" = "--no-start" ] || [ "$1" = "-n" ]; then
+# Step 3: Stop old processes (only after successful build)
+echo -e "${YELLOW}→ Step 3: Stopping all nullclaw processes...${NC}"
+pkill -9 -f "zig-out/bin/nullclaw" 2>/dev/null || true
+pkill -9 -f "nullclaw" 2>/dev/null || true
+sleep 2
+
+# Verify they're all stopped
+if pgrep -f "nullclaw" > /dev/null; then
+    echo -e "${RED}✗ Failed to stop some processes${NC}"
+    pgrep -f -l "nullclaw"
+    exit 1
+fi
+echo -e "${GREEN}✓ All nullclaw processes stopped${NC}"
+echo ""
+
+# Step 4: Start new agent (optional)
+if [ "$NO_START" = true ]; then
     echo -e "${BLUE}== Skipping agent start (as requested) ==${NC}"
     echo ""
     echo "To start manually:"

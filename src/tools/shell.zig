@@ -199,7 +199,7 @@ test "shell executes echo" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"command\": \"echo hello\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "hello") != null);
@@ -210,7 +210,7 @@ test "shell captures failing command" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"command\": \"ls /nonexistent_dir_xyz_42\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
 }
@@ -220,7 +220,7 @@ test "shell missing command param" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -272,7 +272,7 @@ test "shell cwd inside workspace works without allowed_paths" {
     var st = ShellTool{ .workspace_dir = tmp_path };
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try st.execute(std.testing.allocator, parsed.value.object);
+    const result = try st.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, tmp_path) != null);
@@ -300,7 +300,7 @@ test "shell cwd outside workspace without allowed_paths is rejected" {
     var st = ShellTool{ .workspace_dir = ws_path };
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try st.execute(std.testing.allocator, parsed.value.object);
+    const result = try st.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "outside allowed areas") != null);
@@ -310,7 +310,7 @@ test "shell cwd relative path is rejected" {
     var st = ShellTool{ .workspace_dir = "/tmp", .allowed_paths = &.{"/tmp"} };
     const parsed = try root.parseTestArgs("{\"command\": \"pwd\", \"cwd\": \"relative\"}");
     defer parsed.deinit();
-    const result = try st.execute(std.testing.allocator, parsed.value.object);
+    const result = try st.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "absolute") != null);
@@ -332,7 +332,7 @@ test "shell cwd with allowed_paths runs in cwd" {
     defer parsed.deinit();
 
     var st = ShellTool{ .workspace_dir = ".", .allowed_paths = &.{tmp_path} };
-    const result = try st.execute(std.testing.allocator, parsed.value.object);
+    const result = try st.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
@@ -356,7 +356,7 @@ test "shell ApprovalRequired error includes command name" {
     var st = ShellTool{ .workspace_dir = "/tmp", .policy = &policy };
     const parsed = try root.parseTestArgs("{\"command\": \"touch test.txt\"}");
     defer parsed.deinit();
-    const result = try st.execute(std.testing.allocator, parsed.value.object);
+    const result = try st.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(!result.success);
@@ -388,6 +388,6 @@ test "shell ApprovalRequired propagates oom for error message allocation" {
     failing.fail_index = failing.alloc_index;
     try std.testing.expectError(
         error.OutOfMemory,
-        st.execute(failing.allocator(), parsed.value.object),
+        st.execute(failing.allocator(), parsed.parsed.value.object),
     );
 }

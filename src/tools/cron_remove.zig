@@ -54,7 +54,7 @@ test "cron_remove_requires_job_id" {
     const tool_iface = t.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }
@@ -64,7 +64,7 @@ test "cron_remove_not_found" {
     const tool_iface = t.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-999\"}");
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -86,7 +86,7 @@ test "cron_remove_success" {
     defer std.testing.allocator.free(args);
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Removed") != null);
@@ -110,7 +110,7 @@ test "cron_remove empty job_id" {
     const tool_iface = t.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"\"}");
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }

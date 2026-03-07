@@ -143,7 +143,7 @@ test "FileAppendTool missing path" {
     var fat = FileAppendTool{ .workspace_dir = "/tmp" };
     const parsed = try root.parseTestArgs("{\"content\":\"hello\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing 'path' parameter", result.error_msg.?);
 }
@@ -152,7 +152,7 @@ test "FileAppendTool missing content" {
     var fat = FileAppendTool{ .workspace_dir = "/tmp" };
     const parsed = try root.parseTestArgs("{\"path\":\"test.txt\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing 'content' parameter", result.error_msg.?);
 }
@@ -161,7 +161,7 @@ test "FileAppendTool blocks path traversal" {
     var fat = FileAppendTool{ .workspace_dir = "/tmp/workspace" };
     const parsed = try root.parseTestArgs("{\"path\":\"../../etc/evil\",\"content\":\"x\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object);
     try testing.expect(!result.success);
     try testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not allowed") != null);
 }
@@ -178,7 +178,7 @@ test "FileAppendTool appends to existing file" {
     var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"log.txt\",\"content\":\"line2\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object);
     defer if (result.output.len > 0) testing.allocator.free(result.output);
     defer if (result.error_msg) |e| testing.allocator.free(e);
 
@@ -201,7 +201,7 @@ test "FileAppendTool creates new file" {
     var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"new.txt\",\"content\":\"hello\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object);
     defer if (result.output.len > 0) testing.allocator.free(result.output);
     defer if (result.error_msg) |e| testing.allocator.free(e);
 
@@ -224,7 +224,7 @@ test "FileAppendTool appends to empty file" {
     var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"empty.txt\",\"content\":\"data\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object);
     defer if (result.output.len > 0) testing.allocator.free(result.output);
     defer if (result.error_msg) |e| testing.allocator.free(e);
 
@@ -248,14 +248,14 @@ test "FileAppendTool multiple appends" {
 
     const p1 = try root.parseTestArgs("{\"path\":\"multi.txt\",\"content\":\"B\"}");
     defer p1.deinit();
-    const r1 = try fat.execute(testing.allocator, p1.value.object);
+    const r1 = try fat.execute(testing.allocator, p1.parsed.value.object);
     defer if (r1.output.len > 0) testing.allocator.free(r1.output);
     defer if (r1.error_msg) |e| testing.allocator.free(e);
     try testing.expect(r1.success);
 
     const p2 = try root.parseTestArgs("{\"path\":\"multi.txt\",\"content\":\"C\"}");
     defer p2.deinit();
-    const r2 = try fat.execute(testing.allocator, p2.value.object);
+    const r2 = try fat.execute(testing.allocator, p2.parsed.value.object);
     defer if (r2.output.len > 0) testing.allocator.free(r2.output);
     defer if (r2.error_msg) |e| testing.allocator.free(e);
     try testing.expect(r2.success);

@@ -966,8 +966,7 @@ test "Engine.search applies top_k truncation" {
         const key = try std.fmt.allocPrint(allocator, "k{d}", .{i});
         defer allocator.free(key);
         const content = try std.fmt.allocPrint(allocator, "content searchable item number {d}", .{i});
-        // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
+        defer allocator.free(content);
         try mem.store(key, content, .core, null);
     }
 

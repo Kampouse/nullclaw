@@ -144,7 +144,7 @@ test "browser_open missing url returns error" {
     const t = bo.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -155,7 +155,7 @@ test "browser_open rejects http" {
     const t = bo.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://example.com\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "https") != null);
 }
@@ -165,7 +165,7 @@ test "browser_open rejects empty allowlist" {
     const t = bo.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://example.com\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "allowed_domains") != null);
 }
@@ -176,7 +176,7 @@ test "browser_open rejects non-allowlisted domain" {
     const t = bo.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://evil.com/path\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "allowed_domains") != null);
 }
@@ -187,7 +187,7 @@ test "browser_open rejects localhost" {
     const t = bo.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://localhost:8080/api\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null or std.mem.indexOf(u8, result.error_msg.?, "private") != null);
 }
@@ -198,7 +198,7 @@ test "browser_open rejects private ip" {
     const t = bo.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://192.168.1.1\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
     try std.testing.expect(!result.success);
 }
 

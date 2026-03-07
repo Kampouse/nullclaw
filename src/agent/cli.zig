@@ -242,7 +242,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
     const provider_i: Provider = runtime_provider.provider();
 
     const supports_streaming = provider_i.supportsStreaming();
-    std.debug.print("CLI: Provider supports streaming: {}\n", .{supports_streaming});
 
     // Single message mode: nullclaw agent -m "hello"
     if (message_arg) |message| {
