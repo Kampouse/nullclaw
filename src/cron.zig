@@ -126,6 +126,7 @@ pub const CronJob = struct {
     created_at_s: i64 = 0,
     last_output: ?[]const u8 = null,
     delivery: DeliveryConfig = .{},
+    owns_last_status: bool = false, // true if last_status was allocated (from JSON)
 };
 
 /// Duration unit for "once" delay parsing.
@@ -428,9 +429,9 @@ pub const CronScheduler = struct {
         if (job.name) |name| self.allocator.free(name);
         if (job.model) |model| self.allocator.free(model);
         if (job.last_output) |output| self.allocator.free(output);
-        // Note: last_status may be string literal or allocated.
-        // Accepting small leak for last_status from JSON load (few bytes per job).
-        // TODO: Add owns_* flags to CronJob for proper ownership tracking.
+        if (job.owns_last_status) {
+            if (job.last_status) |status| self.allocator.free(status);
+        }
     }
 
     pub fn deinit(self: *CronScheduler) void {
@@ -1176,6 +1177,7 @@ fn loadJobsWithPolicy(scheduler: *CronScheduler, policy: LoadPolicy) !void {
             .next_run_secs = job.next_run_secs,
             .last_run_secs = job.last_run_secs,
             .last_status = if (job.last_status) |v| try scheduler.allocator.dupe(u8, v) else null,
+            .owns_last_status = job.last_status != null,
             .paused = job.paused,
             .one_shot = job.one_shot,
             .job_type = job.job_type,
