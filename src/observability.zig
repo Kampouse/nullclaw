@@ -841,9 +841,9 @@ test "FileObserver tool_call detail is persisted as JSON string" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(base);
-    const path = try std.fmt.allocPrint(allocator, "{s}/obs_tool_detail.jsonl", .{base});
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const path = try std.fmt.allocPrint(allocator, "{s}/obs_tool_detail.jsonl", .{base.ptr[0..base.len]});
     defer allocator.free(path);
 
     var file_obs = FileObserver{ .path = path };
