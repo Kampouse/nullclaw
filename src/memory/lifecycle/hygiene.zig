@@ -7,6 +7,7 @@
 //!   - Prunes old conversation rows from SQLite
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const build_options = @import("build_options");
 const root = @import("../root.zig");
 const Memory = root.Memory;
@@ -66,7 +67,8 @@ pub fn runIfDue(allocator: std.mem.Allocator, config: HygieneConfig, mem: ?Memor
 
     // Mark hygiene as completed
     if (mem) |m| {
-        const now = 0;
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
         var buf: [20]u8 = undefined;
         const ts = std.fmt.bufPrint(&buf, "{d}", .{now}) catch return report;
         m.store(LAST_HYGIENE_KEY, ts, .core, null) catch {};
@@ -88,7 +90,8 @@ fn shouldRunNow(allocator: std.mem.Allocator, config: HygieneConfig, mem: ?Memor
         // Parse raw timestamps (sqlite-like) and markdown-encoded entries
         // (markdown backend stores as "**key**: value").
         const last_ts = parseLastHygieneTimestamp(e.content) orelse return true;
-        const now = 0;
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
         return (now - last_ts) >= HYGIENE_INTERVAL_SECS;
     }
 
@@ -110,7 +113,6 @@ fn archiveOldFiles(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
     const memory_dir_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory" });
     defer allocator.free(memory_dir_path);
 
-    const io = std.Options.debug_io;
     var memory_dir = std.Io.Dir.cwd().openDir(io, memory_dir_path, .{ .iterate = true }) catch return 0;
     defer memory_dir.close(io);
 
@@ -144,7 +146,6 @@ fn archiveOldFiles(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
 
 /// Purge archived files older than the retention period.
 fn purgeOldArchives(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
-    const io = std.Options.debug_io;
     const archive_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory", "archive" });
     defer allocator.free(archive_path);
 
