@@ -186,17 +186,28 @@ pub const FileWriteTool = struct {
         defer allocator.free(tmp_path);
 
         // Rename temp file to final path (atomic operation)
-        try std.Io.Dir.rename(std.Io.Dir.cwd(), tmp_path, std.Io.Dir.cwd(), write_path, io);
+        std.Io.Dir.renameAbsolute(tmp_path, write_path, io) catch |err| {
+            // Clean up temp file on failure
+            std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
+            const msg = try std.fmt.allocPrint(allocator, "Failed to rename file: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+        };
 
         return ToolResult{ .success = true, .output = "", .owns_output = true, .error_msg = null };
     }
 };
 
 fn resolveNearestExistingAncestor(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    // Simplified version - just return the parent path for Zig 0.16.0
-    // The realpathAlloc function has been removed/changed
-    const parent = std.fs.path.dirname(path) orelse return error.NotFound;
-    return allocator.dupe(u8, parent);
+    // Try to resolve the path using realPathFileAlloc
+    const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator) catch {
+        // If resolution fails, return the parent path
+        const parent = std.fs.path.dirname(path) orelse return error.NotFound;
+        return allocator.dupe(u8, parent);
+    };
+    defer allocator.free(resolved.ptr[0 .. resolved.len + 1]);
+
+    // Return the resolved path without the null terminator
+    return allocator.dupe(u8, resolved[0..resolved.len]);
 }
 
 fn isSymlinkPath(path: []const u8) !bool {
@@ -239,7 +250,7 @@ test "file_write creates file" {
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"out.txt\", \"content\": \"written!\"}");
     defer parsed.deinit();
@@ -261,7 +272,7 @@ test "file_write creates parent dirs" {
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"a/b/c/deep.txt\", \"content\": \"deep\"}");
     defer parsed.deinit();
@@ -282,7 +293,7 @@ test "file_write overwrites existing" {
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"exist.txt\", \"content\": \"new\"}");
     defer parsed.deinit();
@@ -343,7 +354,7 @@ test "file_write empty content" {
     const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\", \"content\": \"\"}");
     defer parsed.deinit();
@@ -373,7 +384,7 @@ test "file_write blocks symlink target escape outside workspace" {
 
     try ws_tmp.dir.symLink(std.Options.debug_io, outside_file, "escape.txt", .{});
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"escape.txt\", \"content\": \"pwned\"}");
     defer parsed.deinit();
@@ -410,7 +421,7 @@ test "file_write does not mutate outside inode through hard link" {
 
     try std.posix.link(outside_file, hardlink_path);
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"hl.txt\", \"content\": \"PWNED\"}");
     defer parsed.deinit();
@@ -439,7 +450,7 @@ test "file_write keeps symlink and updates target" {
     try ws_tmp.dir.writeFile(std.Options.debug_io, .{ .sub_path = "target.txt", .data = "old" });
     try ws_tmp.dir.symLink(std.Options.debug_io, "target.txt", "link.txt", .{});
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"link.txt\", \"content\": \"new\"}");
     defer parsed.deinit();
@@ -470,12 +481,15 @@ test "file_write preserves executable mode on overwrite" {
     defer file.close(std.Options.debug_io);
     try file.setPermissions(std.Options.debug_io, @enumFromInt(0o755));
 
-    var ft = FileWriteTool{ .workspace_dir = ws_path };
+    var ft = FileWriteTool{ .workspace_dir = ws_path.ptr[0..ws_path.len] };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"script.sh\", \"content\": \"#!/bin/sh\\necho new\\n\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
     defer result.deinit(std.testing.allocator);
+    if (!result.success) {
+        std.debug.print("\nERROR: {s}\n", .{result.error_msg orelse "unknown"});
+    }
     try std.testing.expect(result.success);
 
     const st = try ws_tmp.dir.statFile(std.Options.debug_io, "script.sh", .{});

@@ -13,7 +13,6 @@ const io = std.Options.debug_io;
 pub fn resolvePathAlloc(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
     // In Zig 0.16, realpathAlloc is not available on Dir
     // Just return a duplicate of the path for now
-    // A proper implementation would use std.os.realpath if available
     return allocator.dupe(u8, path);
 }
 
