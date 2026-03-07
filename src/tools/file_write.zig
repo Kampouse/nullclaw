@@ -177,12 +177,21 @@ pub const FileWriteTool = struct {
         var write_buf: [4096]u8 = undefined;
         var writer = file.writer(io, &write_buf);
         try writer.interface.writeAll(content);
+        try writer.interface.flush();
 
         // Sync to ensure data is written to disk
         try file.sync(io);
 
-        // Get the full path to the temp file
-        const tmp_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, tmp_name_buf[0..tmp_name_len] });
+        // Construct the full temp file path by resolving parent_dir
+        // For Zig 0.16, we need to construct the path properly
+        const tmp_path_cwd = std.Io.Dir.cwd().realPathFileAlloc(io, parent, allocator) catch |err| {
+            // If we can't resolve the path, try using the parent directly
+            const msg = try std.fmt.allocPrint(allocator, "Failed to resolve parent path: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+        };
+        defer allocator.free(tmp_path_cwd.ptr[0 .. tmp_path_cwd.len + 1]);
+
+        const tmp_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmp_path_cwd.ptr[0..tmp_path_cwd.len], tmp_name_buf[0..tmp_name_len] });
         defer allocator.free(tmp_path);
 
         // Rename temp file to final path (atomic operation)
@@ -193,7 +202,8 @@ pub const FileWriteTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
-        return ToolResult{ .success = true, .output = "", .owns_output = true, .error_msg = null };
+        const msg = try std.fmt.allocPrint(allocator, "Wrote {d} bytes to {s}", .{ content.len, path });
+        return ToolResult{ .success = true, .output = msg, .owns_output = true, .error_msg = null };
     }
 };
 
@@ -258,11 +268,17 @@ test "file_write creates file" {
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
+    if (std.mem.indexOf(u8, result.output, "8 bytes") == null) {
+        std.debug.print("\nExpected '8 bytes' in output, got: {s}\n", .{result.output});
+    }
     try std.testing.expect(std.mem.indexOf(u8, result.output, "8 bytes") != null);
 
     // Verify file contents
     const actual = try tmp_dir.dir.readFileAlloc(std.Options.debug_io, "out.txt", std.testing.allocator, .limited(1024));
     defer std.testing.allocator.free(actual);
+    if (!std.mem.eql(u8, actual, "written!")) {
+        std.debug.print("\nExpected 'written!', got: '{s}'\n", .{actual});
+    }
     try std.testing.expectEqualStrings("written!", actual);
 }
 
