@@ -445,7 +445,8 @@ const SeenMessageCache = struct {
     /// Check if message ID has been seen before
     fn isSeen(self: *SeenMessageCache, message_id: []const u8) bool {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        const now = 0;
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(i64, @intCast(now_ns / 1_000_000_000));
 
         // Clean up old entries first
         self.cleanup(now);
@@ -460,7 +461,8 @@ const SeenMessageCache = struct {
     /// Mark message as seen
     fn markSeen(self: *SeenMessageCache, message_id: []const u8) !void {
         // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
-        const now = 0;
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(i64, @intCast(now_ns / 1_000_000_000));
 
         // Clean up old entries first
         self.cleanup(now);
@@ -570,7 +572,7 @@ pub const CircuitBreaker = struct {
 
     /// Check if operation should be allowed
     pub fn allow(self: *CircuitBreaker) bool {
-        const now = 0;
+        const now = std.Io.Clock.real.now(io).nanoseconds;
 
         switch (self.state) {
             .closed => return true,
@@ -660,19 +662,20 @@ pub const RateLimiter = struct {
 
     /// Check if request should be allowed
     pub fn allow(self: *RateLimiter, agent_id: []const u8) bool {
-        const now = 0;
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now_sec = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
 
         // Get or create entry
         const entry = self.map.get(agent_id) orelse {
             // Clean up if map is too large
             if (self.map.count() > self.cleanup_threshold) {
-                self.cleanup(@intCast(now));
+                self.cleanup(now_sec);
             }
 
             // Add new entry
             const key = self.allocator.dupe(u8, agent_id) catch return false;
             self.map.put(key, .{
-                .last_request = @intCast(now),
+                .last_request = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000))),
                 .request_count = 1,
             }) catch {
                 self.allocator.free(key);
@@ -682,10 +685,11 @@ pub const RateLimiter = struct {
         };
 
         // Check if window has expired
-        if (now - @as(i128, entry.last_request) > self.window_ns) {
+        const entry_last_ns = @as(i128, entry.last_request) * 1_000_000_000;
+        if (now_ns - entry_last_ns > self.window_ns) {
             // Reset counter
             self.map.put(agent_id, .{
-                .last_request = @intCast(now),
+                .last_request = now_sec,
                 .request_count = 1,
             }) catch return false;
             return true;
@@ -705,7 +709,7 @@ pub const RateLimiter = struct {
     }
 
     /// Cleanup expired entries
-    fn cleanup(self: *RateLimiter, now: i64) void {
+    fn cleanup(self: *RateLimiter, now_sec: i64) void {
         // Collect keys to remove first (don't modify map during iteration)
         var keys_to_remove = std.ArrayList([]const u8).initCapacity(self.allocator, 10) catch return;
         defer {
@@ -717,7 +721,9 @@ pub const RateLimiter = struct {
 
         var it = self.map.iterator();
         while (it.next()) |entry| {
-            if (now - entry.value_ptr.last_request > self.window_ns * 2) {
+            // Convert seconds difference to nanoseconds for comparison
+            const age_ns = @as(i128, now_sec - entry.value_ptr.last_request) * 1_000_000_000;
+            if (age_ns > self.window_ns * 2) {
                 keys_to_remove.append(self.allocator, entry.key_ptr.*) catch return;
             }
         }
@@ -1160,7 +1166,8 @@ fn generateMessageId(allocator: Allocator, from: []const u8, to: []const u8, con
 fn validateMessageTimestamp(config: Config, message_timestamp: u64, allocator: Allocator) !void {
     if (!config.enable_replay_protection) return;
 
-    const now = 0;
+    const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+    const now = @as(u64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
     const max_age = config.max_message_age_secs;
 
     if (now > message_timestamp) {
