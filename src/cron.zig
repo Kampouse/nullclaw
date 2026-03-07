@@ -2193,12 +2193,53 @@ test "one-shot job deleted after tick execution" {
 
 test "shell job uses configured cwd for relative output paths" {
     // This test verifies that shell jobs run in the configured working directory.
-    // The functionality is implemented and works in production (see CronScheduler.tick()
-    // and cliRunJob() which both pass shell_cwd to std.process.run).
-    // Testing this properly in Zig 0.16 requires complex absolute path resolution
-    // due to the new Io.Dir API and TmpDir structure changes.
-    // TODO: Add automated test coverage for shell_cwd functionality.
-    return error.SkipZigTest;
+    // We create a temporary subdirectory in /tmp, set it as shell_cwd, and verify that
+    // a shell job can write files to that location.
+    const allocator = std.testing.allocator;
+
+    // Create a temporary directory in /tmp (always an absolute path on Unix)
+    // Use the test name plus a counter suffix for uniqueness
+    const test_dir_name = "cron_cwd_test_zig";
+
+    const cwd_path = try std.fs.path.join(allocator, &.{ "/tmp", test_dir_name });
+    defer allocator.free(cwd_path);
+
+    // Create the test directory
+    const cwd = std.Io.Dir.cwd();
+    _ = cwd.createDir(io, cwd_path, .default_dir) catch |err| {
+        std.log.err("failed to create test directory: {}", .{err});
+        return error.SkipZigTest;
+    };
+    defer {
+        // Clean up the test directory
+        cwd.deleteTree(io, cwd_path) catch {};
+    }
+
+    // Create scheduler with the test directory as shell_cwd
+    var scheduler = CronScheduler.init(allocator, 10, true);
+    defer scheduler.deinit();
+    scheduler.setShellCwd(cwd_path);
+
+    // Add a one-shot job that writes a file to the current directory
+    // (which will be the test directory due to shell_cwd)
+    const proof_file = "cwd_proof.txt";
+    const job = try scheduler.addOnce("1s", "echo cwd_test > " ++ proof_file);
+    job.next_run_secs = 0;
+
+    // Run the job
+    _ = scheduler.tick(0, null);
+
+    // Verify the file exists in the test directory
+    const proof_path = try std.fs.path.join(allocator, &.{ cwd_path, proof_file });
+    defer allocator.free(proof_path);
+
+    // Check if file exists by trying to stat it
+    const stat = std.Io.Dir.cwd().statFile(io, proof_path, .{}) catch {
+        std.log.err("proof file not found at: {s}", .{proof_path});
+        return error.TestUnexpectedResult;
+    };
+
+    try std.testing.expectEqual(std.Io.File.Kind.file, stat.kind);
 }
 
 test "shell job delivers stdout via bus" {
