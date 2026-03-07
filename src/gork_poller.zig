@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const util = @import("util.zig");
 
 const io = std.Options.debug_io;
 
@@ -124,7 +125,7 @@ pub fn pollOnce(self: *Poller) !Result {
     try argv.append(self.allocator, "inbox");
     try argv.append(self.allocator, "--verbose");
 
-    const result = try std.process.run(self.allocator, std.Options.debug_io, .{
+    const result = try std.process.run(self.allocator, util.createProcessIo(), .{
         .argv = argv.items,
         .stdout_limit = .limited(10 * 1024 * 1024),
     });

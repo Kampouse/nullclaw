@@ -6,6 +6,7 @@
 //! Thread Safety: Thread-safe with proper synchronization.
 
 const std = @import("std");
+const util = @import("util.zig");
 
 fn getEnvVarOwned(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
     const key_z = try allocator.dupeZ(u8, key);
@@ -1235,7 +1236,7 @@ pub fn discover(self: *Hybrid, capability: []const u8, limit: u32) ![]AgentInfo 
     try argv.append(self.allocator, limit_str);
 
     // Use std.process.run() instead of Child.init() (Zig 0.16.0)
-    const result = std.process.run(self.allocator, io, .{
+    const result = std.process.run(self.allocator, util.createProcessIo(), .{
         .argv = argv.items,
         .stdout_limit = .limited(1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),
@@ -1273,7 +1274,7 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
     try argv.append(self.allocator, "100");
 
     // Use std.process.run() instead of Child.init() (Zig 0.16.0)
-    const result = std.process.run(self.allocator, io, .{
+    const result = std.process.run(self.allocator, util.createProcessIo(), .{
         .argv = argv.items,
         .stdout_limit = .limited(1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),

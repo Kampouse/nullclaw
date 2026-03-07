@@ -3,6 +3,7 @@ const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
+const util = @import("../util.zig");
 
 const PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json";
 
@@ -81,7 +82,7 @@ pub const PushoverTool = struct {
         }
 
         // Send via curl
-        const result = std.process.run(allocator, std.Options.debug_io, .{
+        const result = std.process.run(allocator, util.createProcessIo(), .{
             .argv = &.{
                 "curl", "-s",           "-X",             "POST",
                 "-d",   body_buf.items, PUSHOVER_API_URL,

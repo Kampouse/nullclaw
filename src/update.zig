@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const util = @import("util.zig");
 
 const log = std.log.scoped(.update);
 
@@ -197,7 +198,7 @@ pub fn getLatestRelease(allocator: std.mem.Allocator) !ReleaseInfo {
     const url = "https://api.github.com/repos/nullclaw/nullclaw/releases/latest";
 
     // Use curl subprocess approach (from http_util pattern)
-    const result = std.process.run(allocator, std.Options.debug_io, .{
+    const result = std.process.run(allocator, util.createProcessIo(), .{
         .argv = &.{ "curl", "-sf", "--max-time", "30", url },
         .stdout_limit = .limited(10 * 1024 * 1024),
     }) catch |err| {

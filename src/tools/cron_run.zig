@@ -48,7 +48,7 @@ pub const CronRunTool = struct {
         };
 
         // Execute the command
-        const result = std.process.run(allocator, std.Options.debug_io, .{
+        const result = std.process.run(allocator, util.createProcessIo(), .{
             .argv = &.{ platform.getShell(), platform.getShellFlag(), command },
         }) catch |err| {
             // Update last_status to error

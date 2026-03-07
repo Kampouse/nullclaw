@@ -1,5 +1,28 @@
 const std = @import("std");
 
+/// CRITICAL: std.Options.debug_io uses a .failing allocator (see Io/Threaded.zig:1622)
+/// This causes OutOfMemory when std.process.run() creates internal ArenaAllocator.
+/// Helper function to create a Threaded Io instance with page_allocator for process spawning.
+/// Use this for any code that needs to spawn child processes.
+pub fn createProcessIo() std.Io {
+    var threaded_io = std.Io.Threaded{
+        .allocator = std.heap.page_allocator,
+        .stack_size = std.Thread.SpawnConfig.default_stack_size,
+        .async_limit = .nothing,
+        .cpu_count_error = null,
+        .concurrent_limit = .nothing,
+        .old_sig_io = undefined,
+        .old_sig_pipe = undefined,
+        .have_signal_handler = false,
+        .argv0 = .empty,
+        .environ_initialized = true,
+        .environ = .empty,
+        .worker_threads = .init(null),
+        .disable_memory_mapping = false,
+    };
+    return threaded_io.ioBasic();
+}
+
 /// Format bytes as human-readable string (e.g. "3.4 MB")
 pub fn formatBytes(bytes: u64) struct { value: f64, unit: []const u8 } {
     const units = [_][]const u8{ "B", "KB", "MB", "GB", "TB" };

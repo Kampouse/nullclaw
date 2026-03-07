@@ -39,12 +39,18 @@ pub fn run(
     argv: []const []const u8,
     opts: RunOptions,
 ) !RunResult {
-    // Zig 0.16.0 uses std.process.run() instead of Child.init()
-    // Note: cwd option not directly supported in std.process.run() API
-    // For now, we ignore opts.cwd - TODO: implement cwd support if needed
-    _ = opts.cwd;
-    const result = try std.process.run(allocator, io, .{
+    // CRITICAL: std.Options.debug_io uses a .failing allocator (see Io/Threaded.zig:1622)
+    // This causes OutOfMemory when std.process.run creates internal ArenaAllocator.
+    // Use util.createProcessIo() to get a proper Io instance with page_allocator.
+    const util = @import("../util.zig");
+    const spawn_io = util.createProcessIo();
+
+    // Use std.process.run with our custom Io and allocator
+    // Convert our ?[]const u8 cwd to std.process.Child.Cwd format
+    const cwd_option: std.process.Child.Cwd = if (opts.cwd) |path| .{ .path = path } else .inherit;
+    const result = try std.process.run(allocator, spawn_io, .{
         .argv = argv,
+        .cwd = cwd_option,
         .stdout_limit = .limited(opts.max_output_bytes),
         .stderr_limit = .limited(opts.max_output_bytes),
     });
@@ -55,12 +61,14 @@ pub fn run(
             .stderr = result.stderr,
             .success = code == 0,
             .exit_code = code,
+            .owns_buffers = true,
         },
         else => .{
             .stdout = result.stdout,
             .stderr = result.stderr,
             .success = false,
             .exit_code = null,
+            .owns_buffers = true,
         },
     };
 }
@@ -71,10 +79,8 @@ const builtin = @import("builtin");
 
 test "run echo returns stdout" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    // GPA has limits on single allocation size; use ArenaAllocator for process tests
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    // Use page_allocator for these tests since the run() function creates its own Io instance
+    const allocator = std.heap.page_allocator;
     const result = try run(allocator, &.{ "echo", "hello" }, .{});
     defer result.deinit(allocator);
 
@@ -85,10 +91,8 @@ test "run echo returns stdout" {
 
 test "run failing command returns exit code" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    // GPA has limits on single allocation size; use ArenaAllocator for process tests
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    // Use page_allocator for these tests since the run() function creates its own Io instance
+    const allocator = std.heap.page_allocator;
     const result = try run(allocator, &.{ "ls", "/nonexistent_dir_xyz_42" }, .{});
     defer result.deinit(allocator);
 
@@ -99,16 +103,14 @@ test "run failing command returns exit code" {
 
 test "run with cwd" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    // GPA has limits on single allocation size; use ArenaAllocator for process tests
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    // Test that cwd option works - run pwd in /tmp directory
+    const allocator = std.heap.page_allocator;
     const result = try run(allocator, &.{"pwd"}, .{ .cwd = "/tmp" });
     defer result.deinit(allocator);
 
     try std.testing.expect(result.success);
-    // /tmp may resolve to /private/tmp on macOS
     try std.testing.expect(result.stdout.len > 0);
+    // /tmp may resolve to /private/tmp on macOS
     try std.testing.expect(std.mem.indexOf(u8, result.stdout, "tmp") != null);
 }
 

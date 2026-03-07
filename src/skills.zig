@@ -1,6 +1,7 @@
 const std = @import("std");
 const zig_builtin = @import("builtin");
 const platform = @import("platform.zig");
+const util = @import("util.zig");
 
 const io = std.Options.debug_io;
 
@@ -464,7 +465,7 @@ pub fn checkRequirements(allocator: std.mem.Allocator, skill: *Skill) void {
 
 /// Check if a binary exists on PATH using `which`.
 fn checkBinaryExists(allocator: std.mem.Allocator, bin_name: []const u8) bool {
-    const result = std.process.run(allocator, io, .{
+    const result = std.process.run(allocator, util.createProcessIo(), .{
         .argv = &.{ "which", bin_name },
         .stdout_limit = .limited(0),
         .stderr_limit = .limited(0),
@@ -1910,7 +1911,7 @@ pub fn freeSyncResult(allocator: std.mem.Allocator, result: *const SyncResult) v
 // ── Tests ───────────────────────────────────────────────────────
 
 fn runCommand(allocator: std.mem.Allocator, argv: []const []const u8) !void {
-    const result = std.process.run(allocator, io, .{
+    const result = std.process.run(allocator, util.createProcessIo(), .{
         .argv = argv,
         .stdout_limit = .limited(0),
         .stderr_limit = .limited(0),
