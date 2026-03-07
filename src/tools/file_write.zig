@@ -58,11 +58,20 @@ pub const FileWriteTool = struct {
 
         // Resolve and validate before any filesystem writes so symlink targets
         // and disallowed absolute destinations are rejected without side effects.
-        const resolved_target: ?[]const u8 = resolvePathAlloc(allocator, full_path) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+        // Use realPathFileAlloc to actually follow symlinks to their target.
+        // For new files, realPathFileAlloc will fail with FileNotFound - that's OK.
+        const resolved_target: ?[]const u8 = blk: {
+            const result = std.Io.Dir.cwd().realPathFileAlloc(io, full_path, allocator) catch |err| {
+                if (err == error.FileNotFound) {
+                    // File doesn't exist yet, will create new
+                    break :blk @as(?[]const u8, null);
+                }
+                const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+            };
+            break :blk result;
         };
-        defer if (resolved_target) |rt| allocator.free(rt);
+        defer if (resolved_target) |rt| allocator.free(rt.ptr[0 .. rt.len + 1]);
 
         // Always validate against the nearest existing ancestor.
         // For hard links this is the security boundary we care about, because we
@@ -87,24 +96,20 @@ pub const FileWriteTool = struct {
         } else false;
 
         if (resolved_target) |resolved| {
-            // On Windows, avoid readLink-based probing (can return non-mapped NTSTATUS
-            // on regular files). Validate existing target via resolved path directly.
-            if (comptime builtin.os.tag == .windows) {
-                if (!isResolvedPathAllowed(allocator, resolved, ws_path, self.allowed_paths)) {
-                    return ToolResult.fail("Path is outside allowed areas");
-                }
-            } else if (existing_is_symlink) {
-                // For symlinks, we need to check if the target is within allowed areas
-                // If it is, we'll write to the target; otherwise, reject the operation
-                // For now, use a simplified approach: reject all symlink writes for security
-                // TODO: Implement proper symlink target resolution
+            // For both regular files and symlinks, validate the resolved target path
+            // For symlinks, resolved is the actual target file path
+            // For regular files, resolved is the same as the input path
+            if (!isResolvedPathAllowed(allocator, resolved, ws_path, self.allowed_paths)) {
                 return ToolResult.fail("Path is outside allowed areas");
             }
         }
 
         // For symlinks, write to canonical target path to preserve link.
         // For regular files/hard links, write via requested path.
+        // For new files (resolved_target == null), use full_path.
         const write_path = if (existing_is_symlink)
+            try allocator.dupe(u8, resolved_target.?)
+        else if (resolved_target != null)
             try allocator.dupe(u8, resolved_target.?)
         else
             try allocator.dupe(u8, full_path);
@@ -189,6 +194,8 @@ pub const FileWriteTool = struct {
         defer allocator.free(tmp_path);
 
         // Rename temp file to final path (atomic operation)
+        // For symlinks, write_path is the resolved target, so rename to write_path updates the target
+        // For regular files, write_path is the file itself
         std.Io.Dir.renameAbsolute(tmp_path, write_path, io) catch |err| {
             // Clean up temp file on failure
             std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};

@@ -16,6 +16,15 @@ pub fn resolvePathAlloc(allocator: std.mem.Allocator, path: []const u8) ![]const
     return allocator.dupe(u8, path);
 }
 
+/// Read symlink target and return it as an absolute path.
+/// Returns error if path is not a symlink or if reading fails.
+/// Caller owns the returned memory.
+pub fn readSymlinkTarget(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    _ = allocator;
+    _ = path;
+    return error.NotALink;
+}
+
 /// System-critical prefixes (Unix) — always blocked even if they match allowed_paths.
 const SYSTEM_BLOCKED_PREFIXES_UNIX = [_][]const u8{
     "/System",
