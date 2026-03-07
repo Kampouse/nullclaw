@@ -113,7 +113,7 @@ pub const WebSearchTool = struct {
         }
 
         const msg = try std.fmt.allocPrint(allocator, "All web_search providers failed: {s}", .{failures.items});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 };
 

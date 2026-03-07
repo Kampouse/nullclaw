@@ -177,12 +177,12 @@ fn uninstall(allocator: std.mem.Allocator) !void {
         try stopService(allocator);
         const plist = try macosServiceFile(allocator);
         defer allocator.free(plist);
-        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, plist) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, plist) catch {};
     } else if (comptime builtin.os.tag == .linux) {
         try stopService(allocator);
         const unit = try linuxServiceFile(allocator);
         defer allocator.free(unit);
-        std.fs.deleteFileAbsolute(unit) catch |err| switch (err) {
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, unit) catch |err| switch (err) {
             error.FileNotFound => {},
             else => return err,
         };
@@ -201,7 +201,7 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
 
     // Ensure parent directory exists
     if (std.mem.lastIndexOfScalar(u8, plist, '/')) |idx| {
-        std.Io.Dir.createDirAbsolute(std.Options.debug_io, plist[0..idx], .default_dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, plist[0..idx]) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -215,7 +215,7 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
     defer allocator.free(home);
     const logs_dir = try std.fmt.allocPrint(allocator, "{s}/.nullclaw/logs", .{home});
     defer allocator.free(logs_dir);
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, logs_dir, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, logs_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -250,7 +250,7 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
     , .{ SERVICE_LABEL, xmlEscape(exe_path), xmlEscape(stdout_log), xmlEscape(stderr_log) });
     defer allocator.free(content);
 
-    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, plist, .{});
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, plist, .{});
     defer file.close(std.Options.debug_io);
     try file.writeStreamingAll(std.Options.debug_io, content);
 }
@@ -290,7 +290,7 @@ fn installLinux(allocator: std.mem.Allocator) !void {
     , .{ exe_path, config_dir });
     defer allocator.free(content);
 
-    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, unit, .{});
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, unit, .{});
     defer file.close(std.Options.debug_io);
     try file.writeStreamingAll(std.Options.debug_io, content);
 

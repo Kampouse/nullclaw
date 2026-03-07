@@ -879,7 +879,7 @@ pub const DiscordChannel = struct {
                                     var path_buf: [1024]u8 = undefined;
                                     const local_path = std.fmt.bufPrint(&path_buf, "/tmp/discord_{x}.dat", .{rand_id}) catch continue;
 
-                                    if (std.Io.Dir.createFileAbsolute(io, local_path, .{ .read = false })) |file| {
+                                    if (std.Io.Dir.cwd().createFile(io, local_path, .{.read = false })) |file| {
                                         file.writeStreamingAll(io, img_data) catch {
                                             file.close(io);
                                             continue;

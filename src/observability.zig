@@ -856,7 +856,7 @@ test "FileObserver tool_call detail is persisted as JSON string" {
     } };
     obs.recordEvent(&event);
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{});
     defer file.close(std.Options.debug_io);
     var file_buf: [4096]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &file_buf);

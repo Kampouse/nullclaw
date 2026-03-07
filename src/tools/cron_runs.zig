@@ -35,20 +35,20 @@ pub const CronRunsTool = struct {
 
         var scheduler = loadScheduler(allocator) catch {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer scheduler.deinit();
 
         const job = scheduler.getJob(job_id) orelse {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         const runs = scheduler.listRuns(job_id, limit);
 
         if (runs.len == 0) {
             const msg = try std.fmt.allocPrint(allocator, "No run history for job {s}. Use 'cron run {s}' to execute manually.", .{ job_id, job_id });
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         // Format output
@@ -81,7 +81,7 @@ pub const CronRunsTool = struct {
         }
 
         const output = try allocator.dupe(u8, w.buffered());
-        return ToolResult{ .success = true, .output = output };
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 };
 
@@ -103,7 +103,7 @@ test "cron_runs_not_found" {
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-xyz\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }

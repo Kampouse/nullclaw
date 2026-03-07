@@ -91,12 +91,12 @@ pub const HardwareBoardInfoTool = struct {
                     try output.appendSlice(allocator, mem);
                 }
 
-                return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator) };
+                return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator), .owns_output = true };
             }
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Board '{s}' configured. No static info available.", .{board});
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 };
 
@@ -145,7 +145,7 @@ test "hardware_board_info known board returns info" {
     const parsed = try root.parseTestArgs("{\"board\": \"nucleo-f401re\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "STM32F401") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Memory map") != null);
@@ -158,7 +158,7 @@ test "hardware_board_info default board from config" {
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "STM32F411") != null);
 }
@@ -170,7 +170,7 @@ test "hardware_board_info unknown board returns message" {
     const parsed = try root.parseTestArgs("{\"board\": \"custom-board\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "custom-board") != null);
 }
@@ -182,7 +182,7 @@ test "hardware_board_info esp32" {
     const parsed = try root.parseTestArgs("{\"board\": \"esp32\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "ESP32") != null);
 }

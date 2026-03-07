@@ -747,7 +747,7 @@ test "pollMessagesFromDb parses direct message" {
     const allocator = std.testing.allocator;
     const db_path = try createTestDb(allocator);
     defer allocator.free(db_path);
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, db_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, db_path) catch {};
 
     try insertTestMessage(allocator, db_path, 1, "+1234567890", "hello", false, null);
 
@@ -770,7 +770,7 @@ test "pollMessagesFromDb parses group chat and uses chat reply target" {
     const allocator = std.testing.allocator;
     const db_path = try createTestDb(allocator);
     defer allocator.free(db_path);
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, db_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, db_path) catch {};
 
     try insertTestMessage(allocator, db_path, 2, "+1234567890", "group hello", false, "chat12345");
 
@@ -792,7 +792,7 @@ test "pollMessages initializes cursor and skips backlog on first call" {
     const allocator = std.testing.allocator;
     const db_path = try createTestDb(allocator);
     defer allocator.free(db_path);
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, db_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, db_path) catch {};
 
     try insertTestMessage(allocator, db_path, 10, "+1234567890", "old", false, null);
 

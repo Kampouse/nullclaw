@@ -234,7 +234,7 @@ pub const WhatsAppChannel = struct {
         var path_buf: [1024]u8 = undefined;
         const local_path = std.fmt.bufPrint(&path_buf, "/tmp/whatsapp_{x}.dat", .{rand_id}) catch return null;
 
-        if (std.Io.Dir.createFileAbsolute(std.Options.debug_io, local_path, .{ .read = false })) |file| {
+        if (std.Io.Dir.cwd().createFile(std.Options.debug_io, local_path, .{.read = false })) |file| {
             file.writeStreamingAll(std.Options.debug_io, media_resp) catch {
                 file.close(std.Options.debug_io);
                 return null;

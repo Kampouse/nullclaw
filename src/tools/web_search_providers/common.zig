@@ -139,7 +139,7 @@ pub fn formatJinaPlainText(allocator: std.mem.Allocator, text: []const u8, query
     if (trimmed.len == 0) return ToolResult.ok("No web results found.");
 
     const output = try std.fmt.allocPrint(allocator, "Results for: {s}\n\n{s}", .{ query, trimmed });
-    return ToolResult{ .success = true, .output = output };
+    return ToolResult{ .success = true, .output = output, .owns_output = true };
 }
 
 pub fn formatResultEntries(allocator: std.mem.Allocator, query: []const u8, entries: []const ResultEntry) !ToolResult {

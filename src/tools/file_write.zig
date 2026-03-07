@@ -60,7 +60,7 @@ pub const FileWriteTool = struct {
         // and disallowed absolute destinations are rejected without side effects.
         const resolved_target: ?[]const u8 = resolvePathAlloc(allocator, full_path) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer if (resolved_target) |rt| allocator.free(rt);
 
@@ -70,7 +70,7 @@ pub const FileWriteTool = struct {
         const parent_to_check = std.fs.path.dirname(full_path) orelse full_path;
         const resolved_ancestor = resolveNearestExistingAncestor(allocator, parent_to_check) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(resolved_ancestor);
 
@@ -82,7 +82,7 @@ pub const FileWriteTool = struct {
             if (comptime builtin.os.tag == .windows) break :blk false;
             break :blk isSymlinkPath(full_path) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to inspect path: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
         } else false;
 
@@ -113,7 +113,7 @@ pub const FileWriteTool = struct {
             error.FileNotFound => {},
             else => {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to stat file: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             },
         };
 
@@ -135,14 +135,14 @@ pub const FileWriteTool = struct {
         // Write via temp file + rename so existing hard links are not modified in place.
         const parent = std.fs.path.dirname(write_path) orelse write_path;
         var parent_dir = if (std.fs.path.isAbsolute(parent))
-            std.Io.Dir.openDirAbsolute(io, parent, .{}) catch |err| {
+            std.Io.Dir.cwd().openDir(io, parent, .{}) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to open directory: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             }
         else
             std.Io.Dir.cwd().openDir(io, parent, .{}) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to open directory: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
         defer parent_dir.close(io);
 
@@ -160,7 +160,7 @@ pub const FileWriteTool = struct {
                 error.PathAlreadyExists => continue,
                 else => {
                     const msg = try std.fmt.allocPrint(allocator, "Failed to create file: {}", .{err});
-                    return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                    return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
                 },
             };
             tmp_name_len = tmp_name.len;
@@ -188,7 +188,7 @@ pub const FileWriteTool = struct {
         // Rename temp file to final path (atomic operation)
         try std.Io.Dir.rename(std.Io.Dir.cwd(), tmp_path, std.Io.Dir.cwd(), write_path, io);
 
-        return ToolResult{ .success = true, .output = "", .error_msg = null };
+        return ToolResult{ .success = true, .output = "", .owns_output = true, .error_msg = null };
     }
 };
 
@@ -203,7 +203,7 @@ fn isSymlinkPath(path: []const u8) !bool {
     const dir_path = std.fs.path.dirname(path) orelse ".";
     const entry_name = std.fs.path.basename(path);
     var dir = if (std.fs.path.isAbsolute(dir_path))
-        try std.Io.Dir.openDirAbsolute(io, dir_path, .{})
+        try std.Io.Dir.cwd().openDir(io, dir_path, .{})
     else
         try std.Io.Dir.cwd().openDir(io, dir_path, .{});
     defer dir.close(io);
@@ -244,8 +244,7 @@ test "file_write creates file" {
     const parsed = try root.parseTestArgs("{\"path\": \"out.txt\", \"content\": \"written!\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "8 bytes") != null);
@@ -267,8 +266,7 @@ test "file_write creates parent dirs" {
     const parsed = try root.parseTestArgs("{\"path\": \"a/b/c/deep.txt\", \"content\": \"deep\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
 
@@ -289,8 +287,7 @@ test "file_write overwrites existing" {
     const parsed = try root.parseTestArgs("{\"path\": \"exist.txt\", \"content\": \"new\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
 
@@ -351,8 +348,7 @@ test "file_write empty content" {
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\", \"content\": \"\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "0 bytes") != null);
@@ -419,7 +415,7 @@ test "file_write does not mutate outside inode through hard link" {
     const parsed = try root.parseTestArgs("{\"path\": \"hl.txt\", \"content\": \"PWNED\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(result.error_msg == null);
 
@@ -448,8 +444,7 @@ test "file_write keeps symlink and updates target" {
     const parsed = try root.parseTestArgs("{\"path\": \"link.txt\", \"content\": \"new\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
 
     var link_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -480,8 +475,7 @@ test "file_write preserves executable mode on overwrite" {
     const parsed = try root.parseTestArgs("{\"path\": \"script.sh\", \"content\": \"#!/bin/sh\\necho new\\n\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
 
     const st = try ws_tmp.dir.statFile(std.Options.debug_io, "script.sh", .{});

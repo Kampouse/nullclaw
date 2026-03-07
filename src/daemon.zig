@@ -116,7 +116,7 @@ pub fn writeStateFile(allocator: std.mem.Allocator, path: []const u8, state: *co
     }
     try buf.appendSlice(allocator, "\n  ]\n}\n");
 
-    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{});
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
     defer file.close(std.Options.debug_io);
     var write_buf: [4096]u8 = undefined;
     var file_bw = file.writer(std.Options.debug_io, &write_buf);
@@ -1857,7 +1857,7 @@ test "writeStateFile produces valid content" {
     try writeStateFile(std.testing.allocator, path, &state);
 
     // Read back and verify
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{});
     defer file.close(std.Options.debug_io);
     var file_buf: [4096]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &file_buf);

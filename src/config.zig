@@ -231,7 +231,7 @@ pub const Config = struct {
         };
 
         // Try to read existing config file
-        if (std.Io.Dir.openFileAbsolute(io, config_path, .{})) |file| {
+        if (std.Io.Dir.cwd().openFile(io, config_path, .{})) |file| {
             defer file.close(io);
             var buffer: [1024 * 64]u8 = undefined;
             var reader = file.reader(io, &buffer);
@@ -544,12 +544,12 @@ pub const Config = struct {
         const dir = std.fs.path.dirname(self.config_path) orelse return error.InvalidConfigPath;
 
         // Ensure parent directory exists
-        std.Io.Dir.createDirAbsolute(std.Options.debug_io, dir, .default_dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
 
-        const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, self.config_path, .{});
+        const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, self.config_path, .{});
         defer file.close(std.Options.debug_io);
 
         var buf: [8192]u8 = undefined;
@@ -1230,7 +1230,7 @@ test "save includes channels section by default" {
     };
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [128 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -1273,7 +1273,7 @@ test "save writes configured telegram channel account" {
     };
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [128 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -1323,7 +1323,7 @@ test "save roundtrip preserves telegram interactive settings" {
     };
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [128 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -1369,7 +1369,7 @@ test "save roundtrip preserves diagnostics logging flags" {
     cfg.diagnostics.log_llm_io = true;
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [128 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -1431,7 +1431,7 @@ test "save roundtrip preserves reliability settings" {
     cfg.reliability.model_fallbacks = &model_fallbacks;
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [128 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -1649,7 +1649,7 @@ test "save roundtrip preserves extended config sections" {
 
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [256 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -1746,7 +1746,7 @@ test "save escapes mcp_servers strings safely" {
 
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [128 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -2702,7 +2702,7 @@ test "save and load roundtrip" {
     try cfg.save();
 
     // load back by reading and parsing the saved file
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [1024 * 64]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -2985,7 +2985,7 @@ test "save writes provider native_tools when false" {
 
     try cfg.save();
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, config_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [64 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -3990,9 +3990,9 @@ test "save includes nostr channel when configured" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [64 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -4035,9 +4035,9 @@ test "save includes dm_relays in nostr section" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [64 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -4066,9 +4066,9 @@ test "dm_relays round-trips through save and load" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
-    const file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
     defer file.close(std.Options.debug_io);
     var read_buffer: [64 * 1024]u8 = undefined;
     var file_reader = file.reader(std.Options.debug_io, &read_buffer);
@@ -4109,9 +4109,9 @@ test "nostr display_name with special chars round-trips correctly" {
     cfg.channels.nostr = &ns_cfg;
 
     try cfg.save();
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
-    const file_content = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    const file_content = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
     defer file_content.close(std.Options.debug_io);
     var read_buffer: [64 * 1024]u8 = undefined;
     var file_reader = file_content.reader(std.Options.debug_io, &read_buffer);

@@ -198,7 +198,7 @@ fn stringifyValue(allocator: std.mem.Allocator, value: ?*std.json.Value) ![]u8 {
 }
 
 fn readConfigOrDefault(allocator: std.mem.Allocator, config_path: []const u8) !struct { content: []u8, existed: bool } {
-    const file = std.Io.Dir.openFileAbsolute(io, config_path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().openFile(io, config_path, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             return .{ .content = try allocator.dupe(u8, "{}\n"), .existed = false };
         },
@@ -221,9 +221,9 @@ fn writeAtomic(allocator: std.mem.Allocator, path: []const u8, content: []const 
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
 
-    const tmp_file = std.Io.Dir.createFileAbsolute(io, tmp_path, .{}) catch {
+    const tmp_file = std.Io.Dir.cwd().createFile(io, tmp_path, .{}) catch {
         // Fallback: try direct write
-        const file = std.Io.Dir.createFileAbsolute(io, path, .{}) catch |e| return e;
+        const file = std.Io.Dir.cwd().createFile(io, path, .{}) catch |e| return e;
         defer file.close(io);
         var write_buf: [1024 * 1024]u8 = undefined;
         var writer = file.writer(io, &write_buf);
@@ -357,7 +357,7 @@ pub fn mutateDefaultConfig(
             const backup_path = try std.fmt.allocPrint(allocator, "{s}.bak", .{config_path});
             errdefer allocator.free(backup_path);
 
-            if (std.Io.Dir.createFileAbsolute(io, backup_path, .{})) |backup_file| {
+            if (std.Io.Dir.cwd().createFile(io, backup_path, .{})) |backup_file| {
                 defer backup_file.close(io);
                 var write_buf: [1024 * 1024]u8 = undefined;
                 var writer = backup_file.writer(io, &write_buf);

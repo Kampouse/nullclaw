@@ -68,7 +68,7 @@ pub const HttpRequestTool = struct {
         // Validate method
         const method = validateMethod(method_str) orelse {
             const msg = try std.fmt.allocPrint(allocator, "Unsupported HTTP method: {s}", .{method_str});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         // Parse custom headers from ObjectMap
@@ -125,7 +125,7 @@ pub const HttpRequestTool = struct {
         // Create request with custom headers
         var req = client.request(method, uri, .{ .extra_headers = extra_headers }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "HTTP request failed: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer req.deinit();
 
@@ -135,12 +135,12 @@ pub const HttpRequestTool = struct {
             defer allocator.free(body_dup);
             req.sendBodyComplete(body_dup) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to send body: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
         } else {
             req.sendBodiless() catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to send request: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
         }
 
@@ -148,7 +148,7 @@ pub const HttpRequestTool = struct {
         var redirect_buf: [4096]u8 = undefined;
         var response = req.receiveHead(&redirect_buf) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to receive response: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         const status_code = @intFromEnum(response.head.status);
@@ -159,7 +159,7 @@ pub const HttpRequestTool = struct {
         const reader = response.reader(&transfer_buf);
         const response_body = reader.readAlloc(allocator, @intCast(self.max_response_size)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read response body: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(response_body);
 
@@ -181,7 +181,7 @@ pub const HttpRequestTool = struct {
             );
 
         if (success) {
-            return ToolResult{ .success = true, .output = output };
+            return ToolResult{ .success = true, .output = output, .owns_output = true };
         } else {
             const err_msg = try std.fmt.allocPrint(allocator, "HTTP {d}", .{status_code});
             return ToolResult{ .success = false, .output = output, .error_msg = err_msg };

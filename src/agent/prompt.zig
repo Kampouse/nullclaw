@@ -80,7 +80,7 @@ fn openWorkspaceFileWithGuards(
         return null;
     }
 
-    const file = std.Io.Dir.openFileAbsolute(io, canonical_path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().openFile(io, canonical_path, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             allocator.free(canonical_path);
             return null;

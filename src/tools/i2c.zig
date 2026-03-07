@@ -131,7 +131,7 @@ pub const I2cTool = struct {
         try output.appendSlice(allocator, count_str);
         try output.appendSlice(allocator, "}");
 
-        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator) };
+        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator), .owns_output = true };
     }
 
     fn scanLinux(allocator: std.mem.Allocator, bus: u32) !ToolResult {
@@ -177,7 +177,7 @@ pub const I2cTool = struct {
         try output.appendSlice(allocator, count_str);
         try output.appendSlice(allocator, "}");
 
-        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator) };
+        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator), .owns_output = true };
     }
 
     fn readLinux(allocator: std.mem.Allocator, bus: u32, addr: u7, register: u8, length: u8) !ToolResult {
@@ -232,7 +232,7 @@ pub const I2cTool = struct {
         }
         try output.appendSlice(allocator, "\"}");
 
-        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator) };
+        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator), .owns_output = true };
     }
 
     fn writeLinux(allocator: std.mem.Allocator, bus: u32, addr: u7, register: u8, value: u8) !ToolResult {
@@ -259,14 +259,14 @@ pub const I2cTool = struct {
             \\{{"bus":{d},"address":"0x{x:0>2}","register":{d},"value":{d},"status":"ok"}}
         , .{ bus, addr, register, value });
 
-        return ToolResult{ .success = true, .output = output };
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
 
     fn platformError(allocator: std.mem.Allocator) !ToolResult {
         const msg = try allocator.dupe(u8, "{\"error\":\"I2C not supported on this platform\"}");
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 };
 
@@ -314,7 +314,7 @@ test "i2c detect on non-linux returns platform error" {
     const parsed = try root.parseTestArgs("{\"action\":\"detect\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
 }
@@ -326,7 +326,7 @@ test "i2c scan on non-linux returns platform error" {
     const parsed = try root.parseTestArgs("{\"action\":\"scan\",\"bus\":1}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
 }
@@ -338,7 +338,7 @@ test "i2c read on non-linux returns platform error" {
     const parsed = try root.parseTestArgs("{\"action\":\"read\",\"bus\":1,\"address\":\"0x48\",\"register\":0}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
 }
@@ -350,7 +350,7 @@ test "i2c write on non-linux returns platform error" {
     const parsed = try root.parseTestArgs("{\"action\":\"write\",\"bus\":1,\"address\":\"0x48\",\"register\":0,\"value\":42}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not supported") != null);
 }
@@ -432,6 +432,6 @@ test "i2c scan missing bus parameter" {
     const parsed = try root.parseTestArgs("{\"action\":\"scan\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
 }

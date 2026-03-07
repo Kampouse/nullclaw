@@ -754,7 +754,7 @@ pub const MattermostChannel = struct {
         ) catch return null;
         errdefer self.allocator.free(path);
 
-        const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{ .read = false }) catch return null;
+        const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{.read = false }) catch return null;
         defer file.close(std.Options.debug_io);
         file.writeStreamingAll(std.Options.debug_io, data) catch return null;
         return path;

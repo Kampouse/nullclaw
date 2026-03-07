@@ -48,7 +48,7 @@ pub const CronListTool = struct {
             });
         }
         const output = try allocator.dupe(u8, w.buffered());
-        return ToolResult{ .success = true, .output = output };
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 };
 
@@ -130,7 +130,7 @@ test "cron_list execute returns success" {
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     // Either "No scheduled cron jobs." or a formatted job list
     try std.testing.expect(result.output.len > 0);

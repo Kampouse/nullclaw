@@ -118,7 +118,7 @@ pub const StateManager = struct {
         const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}.tmp", .{self.state_path});
         defer self.allocator.free(tmp_path);
 
-        const tmp_file = try std.Io.Dir.createFileAbsolute(io, tmp_path, .{});
+        const tmp_file = try std.Io.Dir.cwd().createFile(io, tmp_path, .{});
         defer tmp_file.close(io);
 
         // Use a writer for better compatibility
@@ -130,7 +130,7 @@ pub const StateManager = struct {
         std.Io.Dir.renameAbsolute(tmp_path, self.state_path, io) catch {
             // If rename fails (cross-device), fall back to direct write
             std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
-            const file = try std.Io.Dir.createFileAbsolute(io, self.state_path, .{});
+            const file = try std.Io.Dir.cwd().createFile(io, self.state_path, .{});
             defer file.close(io);
             var write_buf2: [4096]u8 = undefined;
             var bw2 = file.writer(io, &write_buf2);
@@ -142,7 +142,7 @@ pub const StateManager = struct {
     /// Load state from disk. Overwrites current in-memory state.
     pub fn load(self: *StateManager) !void {
         const io = std.Options.debug_io;
-        const file = std.Io.Dir.openFileAbsolute(io, self.state_path, .{}) catch |err| switch (err) {
+        const file = std.Io.Dir.cwd().openFile(io, self.state_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return, // No state file — fresh start
             else => return err,
         };

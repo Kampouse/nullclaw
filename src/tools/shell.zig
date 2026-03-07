@@ -69,7 +69,7 @@ pub const ShellTool = struct {
             // Resolve and validate
             const resolved_cwd = resolvePathAlloc(allocator, cwd) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to resolve cwd: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
             defer allocator.free(resolved_cwd);
 
@@ -97,16 +97,16 @@ pub const ShellTool = struct {
         defer allocator.free(result.stderr);
 
         if (result.success) {
-            if (result.stdout.len > 0) return ToolResult{ .success = true, .output = result.stdout };
+            if (result.stdout.len > 0) return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
             allocator.free(result.stdout);
             return ToolResult{ .success = true, .output = try allocator.dupe(u8, "(no output)") };
         }
         defer allocator.free(result.stdout);
         if (result.exit_code != null) {
             const err_out = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Command failed with non-zero exit code");
-            return ToolResult{ .success = false, .output = "", .error_msg = err_out };
+            return ToolResult{ .success = false, .output = "", .error_msg = err_out, .owns_error_msg = true };
         }
-        return ToolResult{ .success = false, .output = "", .error_msg = "Command terminated by signal" };
+        return ToolResult{ .success = false, .output = "", .error_msg = "Command terminated by signal", .owns_error_msg = true };
     }
 };
 
@@ -196,8 +196,7 @@ test "shell executes echo" {
     const parsed = try root.parseTestArgs("{\"command\": \"echo hello\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "hello") != null);
 }
@@ -208,8 +207,7 @@ test "shell captures failing command" {
     const parsed = try root.parseTestArgs("{\"command\": \"ls /nonexistent_dir_xyz_42\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
 }
 
@@ -271,8 +269,7 @@ test "shell cwd inside workspace works without allowed_paths" {
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
     const result = try st.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, tmp_path) != null);
 }
@@ -300,7 +297,7 @@ test "shell cwd outside workspace without allowed_paths is rejected" {
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
     const result = try st.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "outside allowed areas") != null);
 }
@@ -310,7 +307,7 @@ test "shell cwd relative path is rejected" {
     const parsed = try root.parseTestArgs("{\"command\": \"pwd\", \"cwd\": \"relative\"}");
     defer parsed.deinit();
     const result = try st.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "absolute") != null);
 }
@@ -332,8 +329,7 @@ test "shell cwd with allowed_paths runs in cwd" {
 
     var st = ShellTool{ .workspace_dir = ".", .allowed_paths = &.{tmp_path} };
     const result = try st.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, tmp_path) != null);
@@ -357,7 +353,7 @@ test "shell ApprovalRequired error includes command name" {
     const parsed = try root.parseTestArgs("{\"command\": \"touch test.txt\"}");
     defer parsed.deinit();
     const result = try st.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);

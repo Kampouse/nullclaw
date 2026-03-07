@@ -31,13 +31,15 @@ pub const ScheduleTool = struct {
 
         if (std.mem.eql(u8, action, "list")) {
             var scheduler = loadScheduler(allocator) catch {
-                return ToolResult.ok("No scheduled jobs.");
+                const msg = try allocator.dupe(u8, "No scheduled jobs.");
+                return ToolResult{ .success = true, .output = msg, .owns_output = true };
             };
             defer scheduler.deinit();
 
             const jobs = scheduler.listJobs();
             if (jobs.len == 0) {
-                return ToolResult.ok("No scheduled jobs.");
+                const msg = try allocator.dupe(u8, "No scheduled jobs.");
+                return ToolResult{ .success = true, .output = msg, .owns_output = true };
             }
 
             // Format job list
@@ -67,7 +69,7 @@ pub const ScheduleTool = struct {
                 try buf.appendSlice(allocator, job.command);
                 try buf.appendSlice(allocator, "\n");
             }
-            return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
+            return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator), .owns_output = true };
         }
 
         if (std.mem.eql(u8, action, "get")) {
@@ -76,7 +78,7 @@ pub const ScheduleTool = struct {
 
             var scheduler = loadScheduler(allocator) catch {
                 const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{id});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
             defer scheduler.deinit();
 
@@ -96,10 +98,10 @@ pub const ScheduleTool = struct {
                     flags,
                     job.command,
                 });
-                return ToolResult{ .success = true, .output = msg };
+                return ToolResult{ .success = true, .output = msg, .owns_output = true };
             }
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
         if (std.mem.eql(u8, action, "create") or std.mem.eql(u8, action, "add")) {
@@ -115,7 +117,7 @@ pub const ScheduleTool = struct {
 
             const job = scheduler.addJob(expression, command) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to create job: {s}", .{@errorName(err)});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
             cron.saveJobs(&scheduler) catch {};
@@ -125,7 +127,7 @@ pub const ScheduleTool = struct {
                 job.expression,
                 job.command,
             });
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         if (std.mem.eql(u8, action, "once")) {
@@ -141,7 +143,7 @@ pub const ScheduleTool = struct {
 
             const job = scheduler.addOnce(delay, command) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to create one-shot task: {s}", .{@errorName(err)});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
             cron.saveJobs(&scheduler) catch {};
@@ -151,7 +153,7 @@ pub const ScheduleTool = struct {
                 job.next_run_secs,
                 job.command,
             });
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         if (std.mem.eql(u8, action, "cancel") or std.mem.eql(u8, action, "remove")) {
@@ -166,10 +168,10 @@ pub const ScheduleTool = struct {
             if (scheduler.removeJob(id)) {
                 cron.saveJobs(&scheduler) catch {};
                 const msg = try std.fmt.allocPrint(allocator, "Cancelled job {s}", .{id});
-                return ToolResult{ .success = true, .output = msg };
+                return ToolResult{ .success = true, .output = msg, .owns_output = true };
             }
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
         if (std.mem.eql(u8, action, "pause") or std.mem.eql(u8, action, "resume")) {
@@ -188,14 +190,14 @@ pub const ScheduleTool = struct {
                 cron.saveJobs(&scheduler) catch {};
                 const verb: []const u8 = if (is_pause) "Paused" else "Resumed";
                 const msg = try std.fmt.allocPrint(allocator, "{s} job {s}", .{ verb, id });
-                return ToolResult{ .success = true, .output = msg };
+                return ToolResult{ .success = true, .output = msg, .owns_output = true };
             }
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Unknown action '{s}'", .{action});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 };
 
@@ -220,7 +222,7 @@ test "schedule list returns success" {
     const parsed = try root.parseTestArgs("{\"action\": \"list\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     // Either "No scheduled jobs." or a formatted job list
     try std.testing.expect(result.output.len > 0);
@@ -232,7 +234,7 @@ test "schedule unknown action" {
     const parsed = try root.parseTestArgs("{\"action\": \"explode\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown action") != null);
 }
@@ -243,7 +245,7 @@ test "schedule create with expression" {
     const parsed = try root.parseTestArgs("{\"action\": \"create\", \"expression\": \"*/5 * * * *\", \"command\": \"echo hello\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     // Succeeds if HOME/.nullclaw is writable, otherwise may fail gracefully
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Created job") != null);
@@ -278,7 +280,7 @@ test "schedule get nonexistent job" {
     const parsed = try root.parseTestArgs("{\"action\": \"get\", \"id\": \"nonexistent-123\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }
@@ -298,8 +300,7 @@ test "schedule cancel nonexistent job returns not found" {
     const parsed = try root.parseTestArgs("{\"action\": \"cancel\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     // Job doesn't exist in the real scheduler, so cancel returns not-found or success if previously created
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -312,8 +313,7 @@ test "schedule remove nonexistent job returns not found" {
     const parsed = try root.parseTestArgs("{\"action\": \"remove\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
     }
@@ -325,8 +325,7 @@ test "schedule pause nonexistent job returns not found" {
     const parsed = try root.parseTestArgs("{\"action\": \"pause\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
     }
@@ -338,8 +337,7 @@ test "schedule resume nonexistent job returns not found" {
     const parsed = try root.parseTestArgs("{\"action\": \"resume\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
     }
@@ -351,7 +349,7 @@ test "schedule once creates one-shot task" {
     const parsed = try root.parseTestArgs("{\"action\": \"once\", \"delay\": \"30m\", \"command\": \"echo later\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "one-shot") != null);
     }
@@ -363,7 +361,7 @@ test "schedule add creates recurring job" {
     const parsed = try root.parseTestArgs("{\"action\": \"add\", \"expression\": \"0 * * * *\", \"command\": \"echo hourly\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Created job") != null);
     }

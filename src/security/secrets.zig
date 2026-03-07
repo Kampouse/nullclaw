@@ -204,7 +204,7 @@ pub const SecretStore = struct {
         const path = self.keyPath();
 
         // Try to read existing key
-        const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch |err| {
+        const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| {
             // If file doesn't exist, create a new key
             if (err == error.FileNotFound) {
                 return self.createNewKey(path);
@@ -247,7 +247,7 @@ pub const SecretStore = struct {
             };
         }
 
-        const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{}) catch return error.KeyWriteFailed;
+        const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{}) catch return error.KeyWriteFailed;
         defer file.close(std.Options.debug_io);
         file.writeStreamingAll(std.Options.debug_io, &hex_buf) catch return error.KeyWriteFailed;
 

@@ -304,7 +304,7 @@ fn nextPendingMediaDeadline(group_ids: []const ?[]const u8, received_at: []const
 }
 
 fn sweepTempMediaFilesInDir(dir_path: []const u8, now_secs: i64, ttl_secs: i64) void {
-    var dir = std.Io.Dir.openDirAbsolute(io, dir_path, .{ .iterate = true }) catch return;
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{.iterate = true }) catch return;
     defer dir.close(io);
 
     var iter = dir.iterate();
@@ -2654,7 +2654,7 @@ fn downloadTelegramPhoto(allocator: std.mem.Allocator, bot_token: []const u8, fi
     const local_path = path_fbs.getWritten();
 
     // Write file
-    const file = std.Io.Dir.createFileAbsolute(io, local_path, .{}) catch |err| {
+    const file = std.Io.Dir.cwd().createFile(io, local_path, .{}) catch |err| {
         log.warn("downloadTelegramPhoto: file create failed: {}", .{err});
         return null;
     };
@@ -2743,7 +2743,7 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, fil
     const local_path = path_fbs.getWritten();
 
     // Write file
-    const file = std.Io.Dir.createFileAbsolute(io, local_path, .{}) catch |err| {
+    const file = std.Io.Dir.cwd().createFile(io, local_path, .{}) catch |err| {
         log.warn("downloadTelegramFile: file create failed: {}", .{err});
         return null;
     };

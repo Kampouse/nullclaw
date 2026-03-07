@@ -398,7 +398,7 @@ test "validateBinaryPath: accepts valid absolute paths" {
     // Skip test on Windows or if /usr/bin doesn't exist
     if (@import("builtin").os.tag == .windows) return;
 
-    if (std.fs.openFileAbsolute("/usr/bin/ls", .{})) |file| {
+    if (std.Io.Dir.cwd().openFile(std.Options.debug_io, "/usr/bin/ls", .{})) |file| {
         file.close();
         try gork.validateBinaryPath("/usr/bin/ls");
     } else |_| {}

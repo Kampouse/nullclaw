@@ -99,20 +99,52 @@ pub const gork = @import("gork.zig");
 /// use `ToolResult.ok("")` or `ToolResult.fail("literal")` for those.
 pub const ToolResult = struct {
     success: bool,
-    /// Heap-allocated output string owned by caller. Free with allocator.free().
-    /// May be an empty literal "" for void results — do NOT free in that case.
+    /// Output string. May be heap-allocated or static literal.
+    /// Use deinit() to safely free if heap-allocated.
     output: []const u8,
-    /// Heap-allocated error message owned by caller if non-null. Free with allocator.free().
+    /// Error message if non-null. May be heap-allocated or static literal.
+    /// Use deinit() to safely free if heap-allocated.
     error_msg: ?[]const u8 = null,
+    /// Track whether strings are heap-allocated (need freeing)
+    owns_output: bool = false,
+    owns_error_msg: bool = false,
+
+    /// Free heap-allocated strings. Safe to call even with static strings.
+    pub fn deinit(self: ToolResult, allocator: std.mem.Allocator) void {
+        if (self.owns_output and self.output.len > 0) {
+            allocator.free(self.output);
+        }
+        if (self.owns_error_msg) {
+            if (self.error_msg) |e| {
+                allocator.free(e);
+            }
+        }
+    }
+
+    /// Create a success result with heap-allocated output.
+    /// Caller must call deinit() to free.
+    pub fn okAlloc(allocator: std.mem.Allocator, output: []const u8) !ToolResult {
+        const heap_output = try allocator.dupe(u8, output);
+        return .{ .success = true, .output = heap_output, .owns_output = true };
+    }
+
+    /// Create a failure result with heap-allocated error message.
+    /// Caller must call deinit() to free.
+    pub fn failAlloc(allocator: std.mem.Allocator, err: []const u8) !ToolResult {
+        const heap_err = try allocator.dupe(u8, err);
+        return .{ .success = false, .output = "", .error_msg = heap_err, .owns_error_msg = true };
+    }
 
     /// Create a success result with a static/literal output (do NOT free).
+    /// DEPRECATED: Use okAlloc() for consistency
     pub fn ok(output: []const u8) ToolResult {
-        return .{ .success = true, .output = output };
+        return .{ .success = true, .output = output, .owns_output = false };
     }
 
     /// Create a failure result with a static/literal error message (do NOT free).
+    /// DEPRECATED: Use failAlloc() for consistency
     pub fn fail(err: []const u8) ToolResult {
-        return .{ .success = false, .output = "", .error_msg = err };
+        return .{ .success = false, .output = "", .error_msg = err, .owns_error_msg = false };
     }
 };
 

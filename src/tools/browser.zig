@@ -48,10 +48,10 @@ pub const BrowserTool = struct {
                 "Browser action '{s}' requires CDP (Chrome DevTools Protocol) which is not available. Use 'open' to launch in system browser or 'read' to fetch page content.",
                 .{action},
             );
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         } else {
             const msg = try std.fmt.allocPrint(allocator, "Unknown browser action '{s}'", .{action});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
     }
 
@@ -81,7 +81,7 @@ pub const BrowserTool = struct {
         // In test mode, skip actual browser spawn to avoid opening windows during CI/tests.
         if (builtin.is_test) {
             const msg = try std.fmt.allocPrint(allocator, "Opened {s} in system browser", .{url});
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         const proc = @import("process_util.zig");
@@ -98,13 +98,13 @@ pub const BrowserTool = struct {
         if (!result.success) {
             if (result.exit_code) |code| {
                 const msg = try std.fmt.allocPrint(allocator, "Browser open command exited with code {d}", .{code});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             }
-            return ToolResult{ .success = false, .output = "", .error_msg = "Browser open command terminated by signal" };
+            return ToolResult{ .success = false, .output = "", .error_msg = "Browser open command terminated by signal", .owns_error_msg = true };
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Opened {s} in system browser", .{url});
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 
     /// "read" — fetch URL content via curl and return body text (truncated to 8 KB).
@@ -129,14 +129,14 @@ pub const BrowserTool = struct {
             if (result.exit_code) |code| {
                 const detail = if (result.stderr.len > 0) result.stderr else "curl request failed";
                 const msg = try std.fmt.allocPrint(allocator, "curl exited with code {d}: {s}", .{ code, detail });
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             }
-            return ToolResult{ .success = false, .output = "", .error_msg = "curl terminated by signal" };
+            return ToolResult{ .success = false, .output = "", .error_msg = "curl terminated by signal", .owns_error_msg = true };
         }
 
         if (result.stdout.len == 0) {
             const msg = try allocator.dupe(u8, "Page returned empty response");
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         // Truncate to MAX_READ_BYTES
@@ -145,7 +145,7 @@ pub const BrowserTool = struct {
         const suffix: []const u8 = if (truncated) "\n\n[Content truncated to 8 KB]" else "";
 
         const output = try std.fmt.allocPrint(allocator, "{s}{s}", .{ result.stdout[0..body_len], suffix });
-        return ToolResult{ .success = true, .output = output };
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 };
 
@@ -164,7 +164,7 @@ test "browser open launches system browser" {
     const parsed = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://example.com\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "example.com") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "stub") == null);
@@ -218,7 +218,7 @@ test "browser click action requires CDP" {
     const parsed = try root.parseTestArgs("{\"action\": \"click\", \"selector\": \"#btn\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "CDP") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "click") != null);
@@ -241,7 +241,7 @@ test "browser open returns output with URL" {
     const parsed = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://docs.example.com/api\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "docs.example.com") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Opened") != null);
@@ -318,7 +318,7 @@ test "browser open allows URL with query params on Unix" {
     const parsed = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://example.com/search?a=1&b=2\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "example.com") != null);
 }

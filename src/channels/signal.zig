@@ -465,7 +465,7 @@ pub const SignalChannel = struct {
         var path_buf: [1024]u8 = undefined;
         const local_path = try std.fmt.bufPrint(&path_buf, "/tmp/signal_{x}.dat", .{rand_id});
 
-        var file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, local_path, .{ .read = false }) catch return null;
+        var file = std.Io.Dir.cwd().createFile(std.Options.debug_io, local_path, .{.read = false }) catch return null;
         defer file.close(std.Options.debug_io);
         try file.writeStreamingAll(std.Options.debug_io, decoded);
 

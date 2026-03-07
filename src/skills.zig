@@ -759,7 +759,7 @@ fn isTomlFile(path: []const u8) bool {
 
 fn hasShellShebang(path: []const u8) bool {
     var file = if (std.fs.path.isAbsolute(path))
-        std.Io.Dir.openFileAbsolute(io, path, .{}) catch return false
+        std.Io.Dir.cwd().openFile(io, path, .{}) catch return false
     else
         std.Io.Dir.cwd().openFile(io, path, .{}) catch return false;
     defer file.close(io);
@@ -871,7 +871,7 @@ fn pathWithinRoot(path: []const u8, root: []const u8) bool {
 
 fn isRegularFile(path: []const u8) bool {
     var file = if (std.fs.path.isAbsolute(path))
-        std.Io.Dir.openFileAbsolute(io, path, .{}) catch return false
+        std.Io.Dir.cwd().openFile(io, path, .{}) catch return false
     else
         std.Io.Dir.cwd().openFile(io, path, .{}) catch return false;
     file.close(io);
@@ -1088,7 +1088,7 @@ fn pathIsSymlink(path: []const u8) !bool {
     const entry_name = std.fs.path.basename(path);
 
     var dir = if (std.fs.path.isAbsolute(dir_path))
-        try std.Io.Dir.openDirAbsolute(io, dir_path, .{})
+        try std.Io.Dir.cwd().openDir(io, dir_path, .{})
     else
         try std.Io.Dir.cwd().openDir(io, dir_path, .{});
     defer dir.close(io);
@@ -1121,7 +1121,7 @@ fn auditSkillDirectory(allocator: std.mem.Allocator, root_dir_path: []const u8) 
         defer allocator.free(current);
 
         var dir = if (std.fs.path.isAbsolute(current))
-            std.Io.Dir.openDirAbsolute(io, current, .{ .iterate = true }) catch
+            std.Io.Dir.cwd().openDir(io, current, .{.iterate = true }) catch
                 return error.SkillSecurityAuditFailed
         else
             std.Io.Dir.cwd().openDir(io, current, .{ .iterate = true }) catch
@@ -1160,7 +1160,7 @@ fn snapshotSkillChildren(allocator: std.mem.Allocator, skills_dir_path: []const 
         paths.deinit();
     }
 
-    var dir = try std.Io.Dir.openDirAbsolute(io, skills_dir_path, .{ .iterate = true });
+    var dir = try std.Io.Dir.cwd().openDir(io, skills_dir_path, .{.iterate = true });
     defer dir.close(io);
 
     var it = dir.iterate();
@@ -1187,7 +1187,7 @@ fn detectNewlyInstalledDirectory(
     var created: ?[]u8 = null;
     errdefer if (created) |p| allocator.free(p);
 
-    var dir = try std.Io.Dir.openDirAbsolute(io, skills_dir_path, .{ .iterate = true });
+    var dir = try std.Io.Dir.cwd().openDir(io, skills_dir_path, .{.iterate = true });
     defer dir.close(io);
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
@@ -1219,7 +1219,7 @@ fn removeGitMetadata(skill_path: []const u8) !void {
 
 fn pathExists(path: []const u8) bool {
     if (std.fs.path.isAbsolute(path)) {
-        std.Io.Dir.accessAbsolute(io, path, .{}) catch return false;
+        std.Io.Dir.cwd().access(io, path, .{}) catch return false;
         return true;
     }
     std.Io.Dir.cwd().access(io, path, .{}) catch return false;
@@ -1271,7 +1271,7 @@ fn copyDirRecursiveSecure(allocator: std.mem.Allocator, src_root: []const u8, ds
         }
 
         var src_dir = if (std.fs.path.isAbsolute(pair.src))
-            std.Io.Dir.openDirAbsolute(io, pair.src, .{ .iterate = true }) catch
+            std.Io.Dir.cwd().openDir(io, pair.src, .{.iterate = true }) catch
                 return error.ReadError
         else
             std.Io.Dir.cwd().openDir(io, pair.src, .{ .iterate = true }) catch
@@ -1286,7 +1286,7 @@ fn copyDirRecursiveSecure(allocator: std.mem.Allocator, src_root: []const u8, ds
             errdefer allocator.free(dst_child);
 
             if (entry.kind == .directory) {
-                std.Io.Dir.createDirAbsolute(std.Options.debug_io, dst_child, .default_dir) catch |err| switch (err) {
+                std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dst_child) catch |err| switch (err) {
                     error.PathAlreadyExists => {},
                     else => return err,
                 };
@@ -1318,7 +1318,7 @@ fn installSkillDirectoryToWorkspace(
 
     const skills_dir_path = try std.fmt.allocPrint(allocator, "{s}/skills", .{workspace_dir});
     defer allocator.free(skills_dir_path);
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, skills_dir_path, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, skills_dir_path) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -1327,7 +1327,7 @@ fn installSkillDirectoryToWorkspace(
     defer allocator.free(target_path);
     const target_existed = pathExists(target_path);
     if (target_existed) return error.SkillAlreadyExists;
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, target_path, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, target_path) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -1367,7 +1367,7 @@ fn installSkillsFromRepositoryCollection(
     defer allocator.free(collection_path);
 
     var collection_dir = if (std.fs.path.isAbsolute(collection_path))
-        std.Io.Dir.openDirAbsolute(io, collection_path, .{ .iterate = true }) catch
+        std.Io.Dir.cwd().openDir(io, collection_path, .{.iterate = true }) catch
             return error.ManifestNotFound
     else
         std.Io.Dir.cwd().openDir(io, collection_path, .{ .iterate = true }) catch
@@ -1409,7 +1409,7 @@ fn installSkillFromGit(
 ) !void {
     const skills_dir_path = try std.fmt.allocPrint(allocator, "{s}/skills", .{workspace_dir});
     defer allocator.free(skills_dir_path);
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, skills_dir_path, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, skills_dir_path) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -1537,13 +1537,13 @@ pub fn installSkillFromPath(allocator: std.mem.Allocator, source_path: []const u
 /// Copy a file from src to dst. Supports both absolute and relative paths.
 fn copyFilePath(src: []const u8, dst: []const u8) !void {
     const src_file = if (std.fs.path.isAbsolute(src))
-        try std.Io.Dir.openFileAbsolute(io, src, .{})
+        try std.Io.Dir.cwd().openFile(io, src, .{})
     else
         try std.Io.Dir.cwd().openFile(io, src, .{});
     defer src_file.close(io);
 
     const dst_file = if (std.fs.path.isAbsolute(dst))
-        try std.Io.Dir.createFileAbsolute(io, dst, .{})
+        try std.Io.Dir.cwd().createFile(io, dst, .{})
     else
         try std.Io.Dir.cwd().createFile(io, dst, .{});
     defer dst_file.close(io);
@@ -1571,10 +1571,10 @@ pub fn removeSkill(allocator: std.mem.Allocator, name: []const u8, workspace_dir
     defer allocator.free(skill_path);
 
     // Verify the skill directory actually exists before deleting
-    std.Io.Dir.accessAbsolute(io, skill_path, .{}) catch return error.SkillNotFound;
+    std.Io.Dir.cwd().access(io, skill_path, .{}) catch return error.SkillNotFound;
 
     // TODO: Zig 0.16 - deleteTreeAbsolute API changed, just check if path exists
-    _ = std.Io.Dir.accessAbsolute(io, skill_path, .{}) catch |err| {
+    _ = std.Io.Dir.cwd().access(io, skill_path, .{}) catch |err| {
         return err;
     };
 }
@@ -1626,7 +1626,7 @@ fn readSyncMarker(marker_path: []const u8, buf: []u8) ?i64 {
 /// Write a timestamp into the marker file, creating parent directories as needed.
 fn writeSyncMarkerWithTimestamp(allocator: std.mem.Allocator, marker_path: []const u8, timestamp: i64) !void {
     if (std.fs.path.dirname(marker_path)) |dir| {
-        std.Io.Dir.createDirAbsolute(std.Options.debug_io, dir, .default_dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -1635,7 +1635,7 @@ fn writeSyncMarkerWithTimestamp(allocator: std.mem.Allocator, marker_path: []con
     // TODO: Zig 0.16.0 - disabled
     // defer allocator.free(content);
 
-    const f = try std.Io.Dir.createFileAbsolute(io, marker_path, .{});
+    const f = try std.Io.Dir.cwd().createFile(io, marker_path, .{});
     defer f.close(io);
     try f.writeStreamingAll(io, content);
 }
@@ -1677,7 +1677,7 @@ pub fn syncCommunitySkills(allocator: std.mem.Allocator, workspace_dir: []const 
 
     // Determine if community_dir exists
     const dir_exists = blk: {
-        std.Io.Dir.accessAbsolute(io, community_dir, .{}) catch break :blk false;
+        std.Io.Dir.cwd().access(io, community_dir, .{}) catch break :blk false;
         break :blk true;
     };
 
@@ -1860,7 +1860,7 @@ pub fn syncCommunitySkillsResult(allocator: std.mem.Allocator, workspace_dir: []
 
     // Determine if community_dir exists
     const dir_exists = blk: {
-        std.Io.Dir.accessAbsolute(io, community_dir, .{}) catch break :blk false;
+        std.Io.Dir.cwd().access(io, community_dir, .{}) catch break :blk false;
         break :blk true;
     };
 

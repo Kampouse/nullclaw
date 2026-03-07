@@ -121,7 +121,7 @@ pub const GitTool = struct {
                 return ToolResult.fail("cwd must be an absolute path");
             const resolved_cwd = resolvePathAlloc(allocator, cwd) catch |err| {
                 const err_msg = try std.fmt.allocPrint(allocator, "Failed to resolve cwd: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = err_msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
             };
             defer allocator.free(resolved_cwd);
             const ws_resolved: ?[]const u8 = resolvePathAlloc(allocator, self.workspace_dir) catch null;
@@ -159,7 +159,7 @@ pub const GitTool = struct {
         };
 
         const msg = try std.fmt.allocPrint(allocator, "Unknown operation: {s}", .{operation});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 
     fn runGit(_: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: []const []const u8) !struct { stdout: []u8, stderr: []u8, success: bool } {
@@ -182,9 +182,9 @@ pub const GitTool = struct {
         if (!result.success) {
             defer allocator.free(result.stdout);
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Git operation failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
-        return ToolResult{ .success = true, .output = result.stdout };
+        return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
     }
 
     fn gitDiff(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -211,9 +211,9 @@ pub const GitTool = struct {
         if (!result.success) {
             defer allocator.free(result.stdout);
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Git diff failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
-        return ToolResult{ .success = true, .output = result.stdout };
+        return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
     }
 
     fn gitLog(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -233,9 +233,9 @@ pub const GitTool = struct {
         if (!result.success) {
             defer allocator.free(result.stdout);
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Git log failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
-        return ToolResult{ .success = true, .output = result.stdout };
+        return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
     }
 
     fn gitCommit(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -251,11 +251,11 @@ pub const GitTool = struct {
         if (!result.success) {
             defer allocator.free(result.stdout);
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Git commit failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
         defer allocator.free(result.stdout);
         const out = try std.fmt.allocPrint(allocator, "Committed: {s}", .{message});
-        return ToolResult{ .success = true, .output = out };
+        return ToolResult{ .success = true, .output = out, .owns_output = true };
     }
 
     fn gitAdd(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -267,10 +267,10 @@ pub const GitTool = struct {
         defer allocator.free(result.stdout);
         if (!result.success) {
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Git add failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
         const out = try std.fmt.allocPrint(allocator, "Staged: {s}", .{paths});
-        return ToolResult{ .success = true, .output = out };
+        return ToolResult{ .success = true, .output = out, .owns_output = true };
     }
 
     fn gitCheckout(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -291,10 +291,10 @@ pub const GitTool = struct {
         defer allocator.free(result.stdout);
         if (!result.success) {
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Git checkout failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
         const out = try std.fmt.allocPrint(allocator, "Switched to branch: {s}", .{branch});
-        return ToolResult{ .success = true, .output = out };
+        return ToolResult{ .success = true, .output = out, .owns_output = true };
     }
 
     fn gitStash(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -306,9 +306,9 @@ pub const GitTool = struct {
             if (!result.success) {
                 defer allocator.free(result.stdout);
                 const msg = try allocator.dupe(u8, result.stderr);
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             }
-            return ToolResult{ .success = true, .output = result.stdout };
+            return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
         }
 
         if (std.mem.eql(u8, action, "pop")) {
@@ -317,9 +317,9 @@ pub const GitTool = struct {
             if (!result.success) {
                 defer allocator.free(result.stdout);
                 const msg = try allocator.dupe(u8, result.stderr);
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             }
-            return ToolResult{ .success = true, .output = result.stdout };
+            return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
         }
 
         if (std.mem.eql(u8, action, "list")) {
@@ -328,13 +328,13 @@ pub const GitTool = struct {
             if (!result.success) {
                 defer allocator.free(result.stdout);
                 const msg = try allocator.dupe(u8, result.stderr);
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             }
-            return ToolResult{ .success = true, .output = result.stdout };
+            return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Unknown stash action: {s}", .{action});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 
     fn gitPush(self: *GitTool, allocator: std.mem.Allocator, git_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -373,12 +373,12 @@ pub const GitTool = struct {
         defer allocator.free(result.stdout);
         if (!result.success) {
             const msg = try std.fmt.allocPrint(allocator, "Push failed: {s}", .{result.stderr});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
         const branch_str = branch orelse "current branch";
         const out = try std.fmt.allocPrint(allocator, "Pushed {s} to {s}", .{ branch_str, remote });
-        return ToolResult{ .success = true, .output = out };
+        return ToolResult{ .success = true, .output = out, .owns_output = true };
     }
 };
 
@@ -413,7 +413,7 @@ test "git rejects unknown operation" {
     const parsed = try root.parseTestArgs("{\"operation\": \"foobar\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
 }
@@ -424,7 +424,7 @@ test "git push operation exists" {
     const parsed = try root.parseTestArgs("{\"operation\": \"push\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     // Push will fail without a real git repo, but it should be recognized as a valid operation
     // (error should not be "Unknown operation")
     if (!result.success) {
@@ -446,7 +446,7 @@ test "git cwd inside workspace works without allowed_paths" {
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
 }

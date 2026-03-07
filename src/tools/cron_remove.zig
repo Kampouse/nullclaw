@@ -39,11 +39,11 @@ pub const CronRemoveTool = struct {
         if (scheduler.removeJob(job_id)) {
             cron.saveJobs(&scheduler) catch {};
             const msg = try std.fmt.allocPrint(allocator, "Removed cron job {s}", .{job_id});
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 };
 
@@ -65,7 +65,7 @@ test "cron_remove_not_found" {
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-999\"}");
     defer parsed.deinit();
     const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }
@@ -87,7 +87,7 @@ test "cron_remove_success" {
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
     const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Removed") != null);
 }

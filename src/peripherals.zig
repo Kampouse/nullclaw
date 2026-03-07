@@ -619,21 +619,21 @@ pub const RpiGpioPeripheral = struct {
     fn rpiExportPin(pin: u32) void {
         var pin_buf: [8]u8 = undefined;
         const pin_str = std.fmt.bufPrint(&pin_buf, "{d}", .{pin}) catch return;
-        const export_file = std.fs.openFileAbsolute("/sys/class/gpio/export", .{ .mode = .write_only }) catch return;
+        const export_file = std.Io.Dir.cwd().openFile(std.Options.debug_io, "/sys/class/gpio/export", .{.mode = .write_only }) catch return;
         defer export_file.close();
         export_file.writeStreamingAll(std.Options.debug_io, pin_str) catch {};
     }
 
     /// Write a string to a sysfs file.
     fn rpiWriteFile(path: []const u8, value: []const u8) !void {
-        const file = std.fs.openFileAbsolute(path, .{ .mode = .write_only }) catch return error.IoError;
+        const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{.mode = .write_only }) catch return error.IoError;
         defer file.close();
         file.writeStreamingAll(std.Options.debug_io, value) catch return error.IoError;
     }
 
     /// Read a GPIO value (0 or 1) from a sysfs value file.
     fn rpiReadFile(path: []const u8) !u8 {
-        const file = std.fs.openFileAbsolute(path, .{}) catch return error.IoError;
+        const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch return error.IoError;
         defer file.close();
         var buf: [4]u8 = undefined;
         const n = file.read(&buf) catch return error.IoError;

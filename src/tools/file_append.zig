@@ -73,16 +73,16 @@ pub const FileAppendTool = struct {
                 return ToolResult.fail("Path is outside allowed areas");
             }
 
-            const file = std.Io.Dir.openFileAbsolute(io, resolved[0..resolved.len], .{}) catch |err| {
+            const file = std.Io.Dir.cwd().openFile(io, resolved[0..resolved.len], .{}) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
             var file_buf: [8192]u8 = undefined;
             var file_reader = file.reader(io, &file_buf);
             const data = file_reader.interface.readAlloc(allocator, self.max_file_size) catch |err| {
                 file.close(io);
                 const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
             file.close(io);
             break :blk @as(?[]const u8, data);
@@ -99,7 +99,7 @@ pub const FileAppendTool = struct {
         // Write back
         const file_w = std.Io.Dir.cwd().createFile(io, full_path, .{ .truncate = true }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to create/open file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer file_w.close(io);
 
@@ -110,11 +110,11 @@ pub const FileAppendTool = struct {
 
         w.writeAll(new_contents) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         w.flush() catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to flush file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         // Verify newly created files are within allowed areas
@@ -131,7 +131,7 @@ pub const FileAppendTool = struct {
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Appended {d} bytes to {s}", .{ content.len, path });
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 };
 

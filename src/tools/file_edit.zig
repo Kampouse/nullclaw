@@ -61,7 +61,7 @@ pub const FileEditTool = struct {
         // Resolve to catch symlink escapes
         const resolved = resolvePathAlloc(allocator, full_path) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve file path: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(resolved);
 
@@ -74,16 +74,16 @@ pub const FileEditTool = struct {
         }
 
         // Read existing file contents
-        const file_r = std.Io.Dir.openFileAbsolute(io, resolved, .{}) catch |err| {
+        const file_r = std.Io.Dir.cwd().openFile(io, resolved, .{}) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer file_r.close(io);
         var read_buf: [1024 * 1024]u8 = undefined;
         var reader = file_r.reader(io, &read_buf);
         const contents = reader.interface.readAlloc(allocator, self.max_file_size) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(contents);
 
@@ -104,9 +104,9 @@ pub const FileEditTool = struct {
         defer allocator.free(new_contents);
 
         // Write back
-        const file_w = std.Io.Dir.createFileAbsolute(io, resolved, .{ .truncate = true }) catch |err| {
+        const file_w = std.Io.Dir.cwd().createFile(io, resolved, .{.truncate = true }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer file_w.close(io);
 
@@ -114,15 +114,15 @@ pub const FileEditTool = struct {
         var writer = file_w.writer(io, &write_buf);
         writer.interface.writeAll(new_contents) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         writer.interface.flush() catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to flush file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         const msg = try std.fmt.allocPrint(allocator, "Replaced {d} bytes with {d} bytes in {s}", .{ old_text.len, new_text.len, path });
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 };
 
@@ -156,8 +156,7 @@ test "file_edit basic replace" {
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"world\", \"new_text\": \"zig\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Replaced") != null);
@@ -181,7 +180,7 @@ test "file_edit old_text not found" {
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"missing\", \"new_text\": \"replacement\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     // error_msg is a static string from ToolResult.fail(), don't free it
 
     try std.testing.expect(!result.success);
@@ -201,7 +200,7 @@ test "file_edit empty file returns not found" {
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\", \"old_text\": \"something\", \"new_text\": \"other\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     // error_msg is a static string from ToolResult.fail(), don't free it
 
     try std.testing.expect(!result.success);
@@ -221,8 +220,7 @@ test "file_edit replaces only first occurrence" {
     const parsed = try root.parseTestArgs("{\"path\": \"dup.txt\", \"old_text\": \"aaa\", \"new_text\": \"ccc\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
 
@@ -285,7 +283,7 @@ test "file_edit empty old_text" {
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"\", \"new_text\": \"new\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     // error_msg is a static string from ToolResult.fail(), don't free it
 
     try std.testing.expect(!result.success);
@@ -334,8 +332,7 @@ test "file_edit absolute path with allowed_paths works" {
 
     var ft = FileEditTool{ .workspace_dir = "/nonexistent", .allowed_paths = &.{ws_path[0..ws_path.len]} };
     const result = try ft.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
 

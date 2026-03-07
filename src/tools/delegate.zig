@@ -100,10 +100,10 @@ pub const DelegateTool = struct {
                     "Delegation to agent '{s}' failed: {s}",
                     .{ trimmed_agent, @errorName(err) },
                 ) catch return ToolResult.fail("Delegation failed");
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
-            return ToolResult{ .success = true, .output = response };
+            return ToolResult{ .success = true, .output = response, .owns_output = true };
         }
 
         // Fallback: no agent config found — load global config
@@ -125,10 +125,10 @@ pub const DelegateTool = struct {
                 "Delegation to agent '{s}' failed: {s}",
                 .{ trimmed_agent, @errorName(err) },
             ) catch return ToolResult.fail("Delegation failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
-        return ToolResult{ .success = true, .output = response };
+        return ToolResult{ .success = true, .output = response, .owns_output = true };
     }
 
     fn findAgent(self: *DelegateTool, name: []const u8) ?NamedAgentConfig {
@@ -166,7 +166,7 @@ test "delegate executes gracefully without config" {
     const parsed = try root.parseTestArgs("{\"agent\": \"researcher\", \"prompt\": \"test\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
         try std.testing.expect(result.error_msg != null);
@@ -222,7 +222,7 @@ test "delegate with valid params handles missing provider gracefully" {
     const parsed = try root.parseTestArgs("{\"agent\": \"coder\", \"prompt\": \"Write a function\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
         try std.testing.expect(result.error_msg != null);
@@ -263,7 +263,7 @@ test "delegate with context field handles missing provider gracefully" {
     const parsed = try root.parseTestArgs("{\"agent\": \"coder\", \"prompt\": \"fix bug\", \"context\": \"file.zig\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
         try std.testing.expect(result.error_msg != null);
@@ -308,7 +308,7 @@ test "delegate depth within limit proceeds" {
     const parsed = try root.parseTestArgs("{\"agent\": \"researcher\", \"prompt\": \"test\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     // Should fail at provider level, not depth
     if (!result.success) {

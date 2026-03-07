@@ -88,7 +88,7 @@ pub const WebFetchTool = struct {
         } catch |err| {
             log.err("web_fetch connection failed for {s}: {}", .{ url, err });
             const msg = try std.fmt.allocPrint(allocator, "Fetch failed: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(body);
 

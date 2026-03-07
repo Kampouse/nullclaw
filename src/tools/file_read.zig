@@ -55,7 +55,7 @@ pub const FileReadTool = struct {
         // Resolve to catch symlink escapes
         const resolved = resolvePathAlloc(allocator, full_path) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve file path: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(resolved);
 
@@ -68,9 +68,9 @@ pub const FileReadTool = struct {
         }
 
         // Check file size
-        const file = std.Io.Dir.openFileAbsolute(io, resolved, .{}) catch |err| {
+        const file = std.Io.Dir.cwd().openFile(io, resolved, .{}) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer file.close(io);
 
@@ -79,10 +79,10 @@ pub const FileReadTool = struct {
         var reader = file.reader(io, &buf);
         const contents = reader.interface.readAlloc(allocator, @intCast(self.max_file_size)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
-        return ToolResult{ .success = true, .output = contents };
+        return ToolResult{ .success = true, .output = contents, .owns_output = true };
     }
 };
 
@@ -117,8 +117,7 @@ test "file_read reads existing file" {
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("hello world", result.output);
@@ -135,8 +134,7 @@ test "file_read nonexistent file" {
     const parsed = try root.parseTestArgs("{\"path\": \"nope.txt\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
@@ -188,8 +186,7 @@ test "file_read nested path" {
     const parsed = try root.parseTestArgs("{\"path\": \"sub/dir/deep.txt\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("deep content", result.output);
@@ -208,8 +205,7 @@ test "file_read empty file" {
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("", result.output);
@@ -263,8 +259,7 @@ test "file_read absolute path with allowed_paths works" {
 
     var ft = FileReadTool{ .workspace_dir = "/nonexistent", .allowed_paths = &.{ws_path} };
     const result = try ft.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("allowed content", result.output);

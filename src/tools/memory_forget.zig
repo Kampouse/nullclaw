@@ -48,10 +48,10 @@ pub const MemoryForgetTool = struct {
                 rt.deleteFromVectorStore(key);
             }
             const msg = try std.fmt.allocPrint(allocator, "Forgot memory: {s}", .{key});
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         } else {
             const msg = try std.fmt.allocPrint(allocator, "No memory found with key: {s}", .{key});
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
     }
 };
@@ -77,7 +77,7 @@ test "memory_forget executes without backend" {
     const parsed = try root.parseTestArgs("{\"key\": \"temp\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not configured") != null);
 }
@@ -101,7 +101,7 @@ test "memory_forget with real backend key not found" {
     const parsed = try root.parseTestArgs("{\"key\": \"nonexistent\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "No memory found") != null);
 }
@@ -117,7 +117,7 @@ test "memory_forget with real backend returns appropriate message" {
     const parsed = try root.parseTestArgs("{\"key\": \"test_key\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "No memory found with key: test_key") != null);
 }

@@ -298,15 +298,15 @@ pub fn checkWorkspace(
     const probe_path = try std.fs.path.join(allocator, &.{ ws, probe_name });
     defer allocator.free(probe_path);
 
-    if (std.Io.Dir.createFileAbsolute(std.Options.debug_io, probe_path, .{})) |file| {
+    if (std.Io.Dir.cwd().createFile(std.Options.debug_io, probe_path, .{})) |file| {
         file.writeStreamingAll(std.Options.debug_io, "probe") catch {
             file.close(std.Options.debug_io);
-            std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, probe_path) catch {};
+            std.Io.Dir.cwd().deleteFile(std.Options.debug_io, probe_path) catch {};
             try items.append(allocator, DiagItem.err(cat, "directory write probe failed"));
             return;
         };
         file.close(std.Options.debug_io);
-        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, probe_path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, probe_path) catch {};
         try items.append(allocator, DiagItem.ok(cat, "directory is writable"));
     } else |_| {
         try items.append(allocator, DiagItem.err(cat, "directory is not writable"));
@@ -703,7 +703,7 @@ test "DiagItem.iconColored returns ANSI-colored strings" {
 
 test "shouldColorize returns false for non-TTY file" {
     // Open /dev/null — it's not a TTY, so shouldColorize should return false
-    const devnull = std.Io.Dir.openFileAbsolute(std.Options.debug_io, "/dev/null", .{}) catch return;
+    const devnull = std.Io.Dir.cwd().openFile(std.Options.debug_io, "/dev/null", .{}) catch return;
     defer devnull.close(std.Options.debug_io);
     try std.testing.expect(!shouldColorize(devnull));
 }

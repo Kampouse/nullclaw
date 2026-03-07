@@ -36,7 +36,7 @@ pub const ScreenshotTool = struct {
         // In test mode, return a mock result without spawning a real process
         if (comptime builtin.is_test) {
             const msg = try std.fmt.allocPrint(allocator, "[IMAGE:{s}]", .{output_path});
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         // Platform-specific screenshot command
@@ -56,10 +56,10 @@ pub const ScreenshotTool = struct {
 
         if (result.success) {
             const msg = try std.fmt.allocPrint(allocator, "[IMAGE:{s}/{s}]", .{ self.workspace_dir, filename });
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
         const err_msg = try std.fmt.allocPrint(allocator, "Screenshot command failed: {s}", .{if (result.stderr.len > 0) result.stderr else "unknown error"});
-        return ToolResult{ .success = false, .output = "", .error_msg = err_msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
     }
 };
 

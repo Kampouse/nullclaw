@@ -65,7 +65,7 @@ pub const MemoryListTool = struct {
                 "No memory entries found for this filter."
             else
                 "No memory entries found.";
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         const shown = @min(limit, filtered_total);
@@ -101,7 +101,7 @@ pub const MemoryListTool = struct {
             written += 1;
         }
 
-        return ToolResult{ .success = true, .output = try out.toOwnedSlice(allocator) };
+        return ToolResult{ .success = true, .output = try out.toOwnedSlice(allocator), .owns_output = true };
     }
 
     fn isInternalEntry(entry: MemoryEntry) bool {
@@ -128,7 +128,7 @@ test "memory_list executes without backend" {
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not configured") != null);
 }

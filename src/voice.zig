@@ -111,7 +111,7 @@ pub fn transcribeFile(
     // Write multipart body directly to temp file (avoids holding file_data + body in memory)
     writeMultipartToTempFile(tmp_path, file_path, &boundary, opts) catch
         return error.FileReadFailed;
-    defer std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
     // Build headers
     var content_type_buf: [128]u8 = undefined;
@@ -202,7 +202,7 @@ fn writeMultipartToTempFile(
     boundary: []const u8,
     opts: TranscribeOptions,
 ) !void {
-    const tmp_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, tmp_path, .{});
+    const tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{});
     defer tmp_file.close(std.Options.debug_io);
 
     // Write file part header
@@ -352,7 +352,7 @@ pub fn transcribeTelegramVoice(
     };
     defer {
         // Clean up temp file
-        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, local_path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, local_path) catch {};
         allocator.free(local_path);
     }
 
@@ -418,7 +418,7 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_
     const local_path_z: [:0]const u8 = z_buf[0..local_path.len :0];
 
     {
-        const f = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, local_path_z, .{});
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, local_path_z, .{});
         defer f.close(std.Options.debug_io);
         try f.writeStreamingAll(std.Options.debug_io, data);
     }

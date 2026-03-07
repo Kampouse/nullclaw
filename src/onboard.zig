@@ -313,7 +313,7 @@ pub fn fetchModels(allocator: std.mem.Allocator, provider: []const u8, api_key: 
     defer allocator.free(state_dir);
 
     // Ensure state directory exists
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, state_dir, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, state_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return dupeFallbackModels(allocator, provider),
     };
@@ -449,7 +449,7 @@ fn loadModelsWithCacheInner(allocator: std.mem.Allocator, cache_dir: []const u8,
 const CACHE_TTL_SECS: i64 = 12 * 3600; // 12 hours
 
 fn readCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provider: []const u8) ![][]const u8 {
-    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, cache_path, .{}) catch return error.CacheNotFound;
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, cache_path, .{}) catch return error.CacheNotFound;
     defer file.close(std.Options.debug_io);
 
     var read_buffer: [256 * 1024]u8 = undefined;
@@ -515,7 +515,7 @@ fn saveCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
 
     try buf.appendSlice(allocator, "]\n}\n");
 
-    const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, cache_path, .{}) catch return;
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, cache_path, .{}) catch return;
     defer file.close(std.Options.debug_io);
     var write_buffer: [4096]u8 = undefined;
     var file_writer = file.writer(std.Options.debug_io, &write_buffer);
@@ -616,9 +616,9 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
 
     // Ensure parent config directory and workspace directory exist
     if (std.fs.path.dirname(cfg.workspace_dir)) |parent| {
-        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch {};
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch {};
     }
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, cfg.workspace_dir, .default_dir) catch {};
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, cfg.workspace_dir) catch {};
 
     // Scaffold workspace files
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
@@ -1511,9 +1511,9 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     // ── Apply ──
     // Ensure parent config directory and workspace directory exist
     if (std.fs.path.dirname(cfg.workspace_dir)) |parent| {
-        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch {};
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch {};
     }
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, cfg.workspace_dir, .default_dir) catch {};
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, cfg.workspace_dir) catch {};
 
     // Scaffold workspace files
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
@@ -1582,7 +1582,7 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     defer allocator.free(cache_dir);
 
     // Ensure directory exists
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, cache_dir, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, cache_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => {
             try out.writeAll("Could not create config directory.\n");
@@ -1670,7 +1670,7 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     try results_buf.appendSlice(allocator, "\n}\n");
 
     // Write cache file
-    const file = std.Io.Dir.createFileAbsolute(std.Options.debug_io, cache_path, .{}) catch {
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, cache_path, .{}) catch {
         try out.writeAll("Could not write cache file.\n");
         try out.flush();
         return;
@@ -1830,7 +1830,7 @@ fn overwriteWorkspaceFile(
 
     if (dry_run) return true;
 
-    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{ .truncate = true });
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{.truncate = true });
     defer file.close(std.Options.debug_io);
     try file.writeStreamingAll(std.Options.debug_io, content);
     return true;
@@ -1849,7 +1849,7 @@ fn removeWorkspaceFileIfExists(
         return fileExistsAbsolute(path);
     }
 
-    std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, path) catch |err| switch (err) {
+    std.Io.Dir.cwd().deleteFile(std.Options.debug_io, path) catch |err| switch (err) {
         error.FileNotFound => return false,
         error.SystemResources => return false,
         error.FileSystem => return false,
@@ -1863,14 +1863,14 @@ fn writeIfMissing(allocator: std.mem.Allocator, dir: []const u8, filename: []con
     defer allocator.free(path);
 
     // Only write if file doesn't exist
-    if (std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{})) |f| {
+    if (std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{})) |f| {
         f.close(std.Options.debug_io);
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
     }
 
-    const file = std.fs.createFileAbsolute(path, .{ .exclusive = true }) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{.exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => return,
     };
     defer file.close();
@@ -1971,7 +1971,7 @@ fn readWorkspaceOnboardingState(
     const path = try workspaceStatePath(allocator, workspace_dir);
     defer allocator.free(path);
 
-    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return .{},
         else => |e| return e,
     };
@@ -2038,7 +2038,7 @@ fn writeWorkspaceOnboardingState(
     defer allocator.free(path);
 
     if (std.fs.path.dirname(path)) |parent| {
-        std.Io.Dir.createDirAbsolute(std.Options.debug_io, parent, .default_dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -2064,21 +2064,21 @@ fn writeWorkspaceOnboardingState(
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
 
-    const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
+    const tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{});
     errdefer tmp_file.close();
     try tmp_file.writeAll(buf.items);
     tmp_file.close();
 
     std.fs.renameAbsolute(tmp_path, path) catch {
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
-        const file = try std.fs.createFileAbsolute(path, .{});
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
+        const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
         defer file.close();
         try file.writeAll(buf.items);
     };
 }
 
 fn readFileIfPresent(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) !?[]u8 {
-    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
     };
     defer file.close(std.Options.debug_io);
@@ -2088,7 +2088,7 @@ fn readFileIfPresent(allocator: std.mem.Allocator, path: []const u8, max_bytes: 
 }
 
 fn fileExistsAbsolute(path: []const u8) bool {
-    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch return false;
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch return false;
     file.close(std.Options.debug_io);
     return true;
 }
@@ -2501,7 +2501,7 @@ test "resetWorkspacePromptFiles creates missing workspace directory" {
 
     const agents_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/AGENTS.md", .{nested});
     defer std.testing.allocator.free(agents_path);
-    const agents_file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, agents_path, .{});
+    const agents_file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, agents_path, .{});
     agents_file.close(std.Options.debug_io);
 }
 

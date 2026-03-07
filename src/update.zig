@@ -309,7 +309,7 @@ fn downloadAndInstall(
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.partial", .{exe_path});
     defer allocator.free(tmp_path);
 
-    var tmp_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, tmp_path, .{ .read = true });
+    var tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{.read = true });
     var tmp_closed = false;
     defer if (!tmp_closed) tmp_file.close(std.Options.debug_io);
     errdefer {
@@ -317,7 +317,7 @@ fn downloadAndInstall(
             tmp_file.close(std.Options.debug_io);
             tmp_closed = true;
         }
-        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, tmp_path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
     }
 
     // Download directly to file (streaming, no memory buffer limit)
@@ -412,14 +412,14 @@ fn atomicReplace(tmp_path: []const u8, exe_path: []const u8) !void {
         const old_path = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.old", .{exe_path});
         defer std.heap.page_allocator.free(old_path);
 
-        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, old_path) catch {};
-        try std.Io.Dir.renameAbsolute(exe_path, old_path, std.Options.debug_io) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, old_path) catch {};
+        try std.Io.Dir.cwd().rename(exe_path, std.Io.Dir.cwd(), old_path, std.Options.debug_io) catch {};
 
-        try std.Io.Dir.renameAbsolute(tmp_path, exe_path, std.Options.debug_io);
-        std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, old_path) catch {};
+        try std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), exe_path, std.Options.debug_io);
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, old_path) catch {};
     } else {
         // Unix: atomic rename on same filesystem
-        try std.Io.Dir.renameAbsolute(tmp_path, exe_path, std.Options.debug_io);
+        try std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), exe_path, std.Options.debug_io);
     }
 }
 

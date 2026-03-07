@@ -228,7 +228,7 @@ pub fn validateBinaryPath(path: []const u8) SecurityError!void {
 
     // For absolute paths, verify the file exists
     if (std.fs.path.isAbsolute(path)) {
-        const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch {
+        const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch {
             return error.BinaryNotFound;
         };
         // Check it's a regular file
@@ -286,7 +286,7 @@ pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) Sign
     const sig_path = std.fmt.allocPrint(allocator, "{s}.sig", .{binary_path}) catch return .verification_error;
     defer allocator.free(sig_path);
 
-    _ = std.Io.Dir.openFileAbsolute(io, sig_path, .{}) catch |err| {
+    _ = std.Io.Dir.cwd().openFile(io, sig_path, .{}) catch |err| {
         // Signature file not found - this is OK, signature is optional
         if (err == error.FileNotFound) return .not_found;
         std.log.warn("Failed to open signature file '{s}': {}", .{ sig_path, err });
@@ -311,12 +311,12 @@ pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) Sign
 
 /// Compute SHA-256 hash of a file
 fn computeSha256(allocator: Allocator, path: []const u8) ![]u8 {
-    const file = try std.Io.Dir.openFileAbsolute(path, .{});
+    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{});
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     var buf: [8192]u8 = undefined;
 
     while (true) {
-        const bytes_read = try file.read(&buf);
+        const bytes_read = try file.read(std.Options.debug_io, &buf);
         if (bytes_read == 0) break;
         hash.update(buf[0..bytes_read]);
     }
@@ -851,7 +851,7 @@ pub const Config = struct {
 
         // Binary existence (skip in test environments)
         if (getEnvVarOwned(std.heap.page_allocator, "SKIP_BINARY_CHECK") catch null == null) {
-            std.Io.Dir.accessAbsolute(io, self.binary_path, .{}) catch return error.BinaryNotFound;
+            std.Io.Dir.cwd().access(io, self.binary_path, .{}) catch return error.BinaryNotFound;
         }
 
         // Interval checks

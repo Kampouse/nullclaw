@@ -147,7 +147,7 @@ pub const GorkTool = struct {
 
         const agents = self.hybrid.?.discover(capability, @intCast(limit)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Discover failed: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer {
             for (agents) |*a| a.deinit(allocator);
@@ -189,7 +189,7 @@ pub const GorkTool = struct {
 
         self.hybrid.?.sendMessage(to, message) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Send failed: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         const output = try std.fmt.allocPrint(allocator, "Message sent to {s}", .{to});
@@ -249,7 +249,7 @@ pub const GorkTool = struct {
         if (self.hybrid) |h| {
             const output = h.getMetrics() catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to get metrics: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
             return ToolResult.ok(output);
         } else {

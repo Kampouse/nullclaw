@@ -32,15 +32,15 @@ pub const ImageInfoTool = struct {
 
         // Open file — try absolute path first, fall back to cwd-relative
         const file = if (std.fs.path.isAbsolute(path))
-            std.Io.Dir.openFileAbsolute(io, path, .{}) catch |err| {
+            std.Io.Dir.cwd().openFile(io, path, .{}) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "File not found: {s} ({s})", .{ path, @errorName(err) });
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             }
         else {
             // For relative paths, we need to resolve from workspace
             // For now, just try as absolute - TODO: implement relative path support
             const msg = try std.fmt.allocPrint(allocator, "Relative paths not yet supported in Zig 0.16.0: {s}", .{path});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         return executeWithFile(file, allocator, path);
     }
@@ -53,7 +53,7 @@ pub const ImageInfoTool = struct {
         var reader = file.reader(io, &header_buf);
         const bytes = reader.interface.readAlloc(allocator, 128) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(bytes);
 
@@ -71,7 +71,7 @@ pub const ImageInfoTool = struct {
         }
 
         const output = try allocator.dupe(u8, buf[0..len]);
-        return ToolResult{ .success = true, .output = output };
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 };
 

@@ -38,7 +38,7 @@ pub const CronRunTool = struct {
         // Check that the job exists
         if (scheduler.getJob(job_id) == null) {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
         // Get the command from the job
@@ -59,7 +59,7 @@ pub const CronRunTool = struct {
             cron.saveJobs(&scheduler) catch {};
 
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' execution failed: {s}", .{ job_id, @errorName(err) });
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
@@ -92,7 +92,7 @@ pub const CronRunTool = struct {
             exit_display,
             output,
         });
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 };
 
@@ -127,7 +127,7 @@ test "cron_run_not_found" {
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-xyz\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }
@@ -153,8 +153,7 @@ test "cron_run_executes_command" {
     defer parsed.deinit();
 
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "hello") != null);

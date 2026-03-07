@@ -1204,14 +1204,14 @@ fn writeFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: []const
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
 
-    const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
+    const tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{});
     errdefer tmp_file.close();
     try tmp_file.writeStreamingAll(std.Options.debug_io, data);
     tmp_file.close();
 
     std.fs.renameAbsolute(tmp_path, path) catch {
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
-        const file = try std.fs.createFileAbsolute(path, .{});
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
+        const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
         defer file.close();
         try file.writeStreamingAll(std.Options.debug_io, data);
     };
@@ -1628,7 +1628,7 @@ test "reloadJobs auto-recovers malformed store and keeps runtime jobs" {
 
     const path = try cronJsonPath(std.testing.allocator);
     defer std.testing.allocator.free(path);
-    const bad_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{});
+    const bad_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
     defer bad_file.close(std.Options.debug_io);
     try bad_file.writeStreamingAll(std.Options.debug_io, "{bad-json");
 

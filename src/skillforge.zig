@@ -420,7 +420,7 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
     const safe_name = try sanitizePathComponent(candidate.result_name);
 
     // Ensure skills directory exists
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, skills_dir, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, skills_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return IntegrationResult{
             .skill_name = safe_name,

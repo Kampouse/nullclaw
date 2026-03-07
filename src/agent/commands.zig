@@ -1050,12 +1050,12 @@ fn handleExportSessionCommand(self: anytype, arg: []const u8) ![]const u8 {
     defer self.allocator.free(path);
 
     const file = if (std.fs.path.isAbsolute(path))
-        try std.Io.Dir.createFileAbsolute(io, path, .{ .truncate = true, .read = false })
+        try std.Io.Dir.cwd().createFile(io, path, .{.truncate = true, .read = false })
     else blk: {
         // For relative paths, prepend workspace
         const full_path = try std.fs.path.join(self.allocator, &.{ self.workspace_dir, path });
         defer self.allocator.free(full_path);
-        break :blk try std.Io.Dir.createFileAbsolute(io, full_path, .{ .truncate = true, .read = false });
+        break :blk try std.Io.Dir.cwd().createFile(io, full_path, .{.truncate = true, .read = false });
     };
     defer file.close(io);
     var out_buf: [4096]u8 = undefined;

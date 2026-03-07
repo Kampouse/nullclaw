@@ -82,7 +82,7 @@ pub const BrowserOpenTool = struct {
 
         if (result.success) {
             const msg = try std.fmt.allocPrint(allocator, "Opened in browser: {s}", .{url});
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
         return ToolResult.fail("Browser command failed");
     }

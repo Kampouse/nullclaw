@@ -56,7 +56,7 @@ pub const MemoryStoreTool = struct {
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Stored memory: {s} ({s})", .{ key, category.toString() });
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 };
 
@@ -82,7 +82,7 @@ test "memory_store executes without backend" {
     const parsed = try root.parseTestArgs("{\"key\": \"lang\", \"content\": \"Prefers Zig\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not configured") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "lang") != null);
@@ -116,7 +116,7 @@ test "memory_store with real backend" {
     const parsed = try root.parseTestArgs("{\"key\": \"lang\", \"content\": \"Prefers Zig\", \"category\": \"core\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Stored memory: lang") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "core") != null);
@@ -132,7 +132,7 @@ test "memory_store default category is core" {
     const parsed = try root.parseTestArgs("{\"key\": \"test\", \"content\": \"value\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "core") != null);
 }
@@ -147,7 +147,7 @@ test "memory_store with daily category" {
     const parsed = try root.parseTestArgs("{\"key\": \"note\", \"content\": \"today's note\", \"category\": \"daily\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "daily") != null);
 }

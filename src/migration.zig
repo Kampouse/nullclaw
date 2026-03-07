@@ -198,7 +198,7 @@ fn migrateOpenclawConfig(
     defer if (source_config_path) |p| allocator.free(p);
     const source_config = source_config_path orelse return false;
 
-    const src_file = try std.Io.Dir.openFileAbsolute(io, source_config, .{});
+    const src_file = try std.Io.Dir.cwd().openFile(io, source_config, .{});
     defer src_file.close(io);
     var src_buf: [8192]u8 = undefined;
     var src_reader = src_file.reader(io, &src_buf);
@@ -211,12 +211,12 @@ fn migrateOpenclawConfig(
     if (dry_run) return true;
 
     const dst_dir = std.fs.path.dirname(target_config_path) orelse return error.InvalidConfigPath;
-    std.Io.Dir.createDirAbsolute(std.Options.debug_io, dst_dir, .default_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dst_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
-    const dst_file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, target_config_path, .{});
+    const dst_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, target_config_path, .{});
     defer dst_file.close(std.Options.debug_io);
     try dst_file.writeStreamingAll(std.Options.debug_io, normalized);
     if (normalized.len == 0 or normalized[normalized.len - 1] != '\n') {
@@ -231,7 +231,7 @@ fn migrateOpenclawConfig(
 fn resolveOpenclawConfigPath(io: std.Io, allocator: std.mem.Allocator, source_workspace: []const u8) !?[]u8 {
     if (std.fs.path.dirname(source_workspace)) |parent| {
         const candidate = try std.fs.path.join(allocator, &.{ parent, "config.json" });
-        if (std.Io.Dir.openFileAbsolute(io, candidate, .{})) |f| {
+        if (std.Io.Dir.cwd().openFile(io, candidate, .{})) |f| {
             f.close(io);
             return candidate;
         } else |_| {
@@ -240,7 +240,7 @@ fn resolveOpenclawConfigPath(io: std.Io, allocator: std.mem.Allocator, source_wo
     }
 
     const fallback = try std.fs.path.join(allocator, &.{ source_workspace, "config.json" });
-    if (std.Io.Dir.openFileAbsolute(io, fallback, .{})) |f| {
+    if (std.Io.Dir.cwd().openFile(io, fallback, .{})) |f| {
         f.close(io);
         return fallback;
     } else |_| {
@@ -381,9 +381,9 @@ pub fn restoreBackup(io: std.Io, backup_path: []const u8, target_path: []const u
 }
 
 fn copyFileAbsolute(io: std.Io, src: []const u8, dst: []const u8) !void {
-    const src_file = try std.Io.Dir.openFileAbsolute(io, src, .{});
+    const src_file = try std.Io.Dir.cwd().openFile(io, src, .{});
     defer src_file.close(io);
-    const dst_file = try std.Io.Dir.createFileAbsolute(io, dst, .{});
+    const dst_file = try std.Io.Dir.cwd().createFile(io, dst, .{});
     defer dst_file.close(io);
     var src_buf: [8192]u8 = undefined;
     var src_reader = src_file.reader(io, &src_buf);

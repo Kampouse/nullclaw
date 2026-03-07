@@ -175,7 +175,7 @@ pub fn readLocalImage(allocator: std.mem.Allocator, path: []const u8, config: Mu
     };
     if (!allowed) return error.PathNotAllowed;
 
-    const file = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{}) catch return error.PathNotFound;
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch return error.PathNotFound;
     return readFromFile(allocator, file, config.max_image_size_bytes);
 }
 

@@ -74,7 +74,7 @@ pub const CargoTool = struct {
                 return ToolResult.fail("cwd must be an absolute path");
             const resolved_cwd = path_security.resolvePathAlloc(allocator, cwd) catch |err| {
                 const err_msg = try std.fmt.allocPrint(allocator, "Failed to resolve cwd: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = err_msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
             };
             defer allocator.free(resolved_cwd);
             const ws_resolved: ?[]const u8 = path_security.resolvePathAlloc(allocator, self.workspace_dir) catch null;
@@ -116,7 +116,7 @@ pub const CargoTool = struct {
         };
 
         const msg = try std.fmt.allocPrint(allocator, "Unknown operation: {s}", .{operation});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 
     fn runCargo(_: *CargoTool, allocator: std.mem.Allocator, cargo_cwd: []const u8, args: []const []const u8) !struct { stdout: []u8, stderr: []u8, success: bool } {
@@ -152,12 +152,12 @@ pub const CargoTool = struct {
         if (!result.success) {
             defer allocator.free(result.stdout);
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Cargo operation failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
         // Duplicate stdout for the caller (transfers ownership)
         const output = try allocator.dupe(u8, result.stdout);
         allocator.free(result.stdout);
-        return ToolResult{ .success = true, .output = output };
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 
     fn cargoBuild(self: *CargoTool, allocator: std.mem.Allocator, cargo_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -214,12 +214,12 @@ pub const CargoTool = struct {
         if (!result.success) {
             defer allocator.free(result.stdout);
             const msg = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Cargo new failed");
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
         // Free stdout before creating output message
         allocator.free(result.stdout);
         const out = try std.fmt.allocPrint(allocator, "Created new Rust project: {s}", .{package_name});
-        return ToolResult{ .success = true, .output = out };
+        return ToolResult{ .success = true, .output = out, .owns_output = true };
     }
 
     fn cargoInit(self: *CargoTool, allocator: std.mem.Allocator, cargo_cwd: []const u8, args: JsonObjectMap) !ToolResult {
@@ -275,7 +275,7 @@ test "cargo rejects unknown operation" {
     const parsed = try root.parseTestArgs("{\"operation\": \"publish\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
 }

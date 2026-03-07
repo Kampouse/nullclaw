@@ -47,7 +47,7 @@ pub const SpiTool = struct {
     fn executeList(allocator: std.mem.Allocator) !ToolResult {
         if (comptime builtin.os.tag != .linux) {
             const output = try allocator.dupe(u8, "{\"devices\":[],\"note\":\"SPI device listing only supported on Linux\"}");
-            return ToolResult{ .success = true, .output = output };
+            return ToolResult{ .success = true, .output = output, .owns_output = true };
         }
 
         // On Linux: glob /dev/spidev*.*
@@ -59,7 +59,7 @@ pub const SpiTool = struct {
         var count: usize = 0;
         var dir = std.fs.openDirAbsolute("/dev", .{ .iterate = true }) catch {
             try devices.appendSlice(allocator, "]}");
-            return ToolResult{ .success = true, .output = try devices.toOwnedSlice(allocator) };
+            return ToolResult{ .success = true, .output = try devices.toOwnedSlice(allocator), .owns_output = true };
         };
         defer dir.close();
 
@@ -75,7 +75,7 @@ pub const SpiTool = struct {
         }
 
         try devices.appendSlice(allocator, "]}");
-        return ToolResult{ .success = true, .output = try devices.toOwnedSlice(allocator) };
+        return ToolResult{ .success = true, .output = try devices.toOwnedSlice(allocator), .owns_output = true };
     }
 
     fn executeTransfer(allocator: std.mem.Allocator, args: JsonObjectMap, read_only: bool) !ToolResult {
@@ -147,7 +147,7 @@ pub const SpiTool = struct {
         // Open SPI device
         const fd = std.posix.open(device, .{ .ACCMODE = .RDWR }, 0) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to open SPI device '{s}': {}", .{ device, err });
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer std.posix.close(fd);
 
@@ -227,7 +227,7 @@ pub const SpiTool = struct {
         try output.appendSlice(allocator, len_str);
         try output.appendSlice(allocator, "}");
 
-        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator) };
+        return ToolResult{ .success = true, .output = try output.toOwnedSlice(allocator), .owns_output = true };
     }
 };
 
@@ -299,8 +299,7 @@ test "spi transfer on non-linux returns error" {
     const parsed = try root.parseTestArgs("{\"action\": \"transfer\", \"data\": \"FF 0A\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not supported") != null);
 }
@@ -312,8 +311,7 @@ test "spi read on non-linux returns error" {
     const parsed = try root.parseTestArgs("{\"action\": \"read\"}");
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not supported") != null);
 }
