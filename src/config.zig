@@ -209,8 +209,11 @@ pub const Config = struct {
 
     pub fn load(backing_allocator: std.mem.Allocator) !Config {
         const home = platform.getHomeDir(backing_allocator) catch return error.NoHomeDir;
+        defer backing_allocator.free(home);
         const config_dir = try std.fs.path.join(backing_allocator, &.{ home, ".nullclaw" });
+        defer backing_allocator.free(config_dir);
         const config_path = try std.fs.path.join(backing_allocator, &.{ config_dir, "config.json" });
+        defer backing_allocator.free(config_path);
         return loadPath(backing_allocator, config_path);
     }
 
