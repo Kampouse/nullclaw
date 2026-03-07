@@ -165,8 +165,8 @@ pub fn workspacePromptFingerprint(
         hasher.update("present");
         hasher.update(guarded.canonical_path);
 
-        // Read and hash file content
-        const content = guarded.file.readAllAlloc(allocator, 1024 * 1024) catch |err| {
+        // Read and hash file content using Dir.readFileAlloc
+        const content = std.Io.Dir.cwd().readFileAlloc(io, guarded.canonical_path, allocator, .limited(1024 * 1024)) catch |err| {
             // If we can't read the file, hash the error name
             hasher.update(@errorName(err));
             continue;
