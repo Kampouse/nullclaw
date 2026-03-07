@@ -111,7 +111,7 @@ pub fn setMode(self: *Poller, mode: Mode) void {
 /// Poll inbox once (synchronous, thread-safe)
 pub fn pollOnce(self: *Poller) !Result {
     // Enforce minimum interval between polls (rate limiting)
-    const now = 0;
+    const now = std.Io.Clock.real.now(io).nanoseconds;
     const last = self.last_poll_time.load(.seq_cst);
     if (last > 0 and (now - last) < MIN_POLL_INTERVAL_NS) {
         return error.TooSoon;
