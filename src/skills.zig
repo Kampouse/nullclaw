@@ -1082,8 +1082,7 @@ fn auditSkillFileContent(
         error.FileTooBig => return error.SkillSecurityAuditFailed,
         else => return error.SkillSecurityAuditFailed,
     };
-    // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
+    defer allocator.free(content);
 
     if (std.mem.indexOfScalar(u8, content, 0) != null) return error.SkillSecurityAuditFailed;
     if (markdown and detectHighRiskSnippet(content)) return error.SkillSecurityAuditFailed;
@@ -1647,8 +1646,7 @@ fn writeSyncMarkerWithTimestamp(allocator: std.mem.Allocator, marker_path: []con
         };
     }
     const content = try std.fmt.allocPrint(allocator, "{{\"last_sync\": {d}}}", .{timestamp});
-    // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
+    defer allocator.free(content);
 
     const f = try std.Io.Dir.cwd().createFile(io, marker_path, .{});
     defer f.close(io);
@@ -2926,8 +2924,7 @@ test "installSkillFromPath supports markdown-only source directory" {
     const installed_path = try std.fs.path.join(allocator, &.{ workspace, "skills", "source-md", "SKILL.md" });
     defer allocator.free(installed_path);
     const content = try std.Io.Dir.cwd().readFileAlloc(io, installed_path, allocator, .limited(1024));
-    // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
+    defer allocator.free(content);
     try std.testing.expectEqualStrings("# Markdown only install", content);
 }
 

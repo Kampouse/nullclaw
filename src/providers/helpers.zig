@@ -108,7 +108,15 @@ pub fn buildRequestBody(allocator: std.mem.Allocator, model: []const u8, prompt:
     try json_util.appendJsonString(&buf, allocator, model);
     try buf.appendSlice(allocator, ",\"messages\":[{\"role\":\"user\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, prompt);
-    try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "}}],\"temperature\":{d:.1},\"max_tokens\":{d}}}", .{ temperature, max_tokens }));
+    try buf.appendSlice(allocator, "}}],\"temperature\":");
+    var temp_buf: [32]u8 = undefined;
+    const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.1}", .{temperature}) catch unreachable;
+    try buf.appendSlice(allocator, temp_str);
+    try buf.appendSlice(allocator, ",\"max_tokens\":");
+    var tokens_buf: [16]u8 = undefined;
+    const tokens_str = std.fmt.bufPrint(&tokens_buf, "{d}", .{max_tokens}) catch unreachable;
+    try buf.appendSlice(allocator, tokens_str);
+    try buf.appendSlice(allocator, "}}");
     return try buf.toOwnedSlice(allocator);
 }
 
@@ -122,7 +130,15 @@ pub fn buildRequestBodyWithSystem(allocator: std.mem.Allocator, model: []const u
     try json_util.appendJsonString(&buf, allocator, system);
     try buf.appendSlice(allocator, "},{\"role\":\"user\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, prompt);
-    try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "}}],\"temperature\":{d:.1},\"max_tokens\":{d}}}", .{ temperature, max_tokens }));
+    try buf.appendSlice(allocator, "}}],\"temperature\":");
+    var temp_buf: [32]u8 = undefined;
+    const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.1}", .{temperature}) catch unreachable;
+    try buf.appendSlice(allocator, temp_str);
+    try buf.appendSlice(allocator, ",\"max_tokens\":");
+    var tokens_buf: [16]u8 = undefined;
+    const tokens_str = std.fmt.bufPrint(&tokens_buf, "{d}", .{max_tokens}) catch unreachable;
+    try buf.appendSlice(allocator, tokens_str);
+    try buf.appendSlice(allocator, "}}");
     return try buf.toOwnedSlice(allocator);
 }
 

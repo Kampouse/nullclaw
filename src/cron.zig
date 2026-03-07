@@ -428,6 +428,9 @@ pub const CronScheduler = struct {
         if (job.name) |name| self.allocator.free(name);
         if (job.model) |model| self.allocator.free(model);
         if (job.last_output) |output| self.allocator.free(output);
+        // Note: last_status may be string literal or allocated.
+        // Accepting small leak for last_status from JSON load (few bytes per job).
+        // TODO: Add owns_* flags to CronJob for proper ownership tracking.
     }
 
     pub fn deinit(self: *CronScheduler) void {
