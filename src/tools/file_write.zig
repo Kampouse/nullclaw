@@ -94,10 +94,11 @@ pub const FileWriteTool = struct {
                     return ToolResult.fail("Path is outside allowed areas");
                 }
             } else if (existing_is_symlink) {
-                // For symlinks, require target to stay within allowed areas.
-                if (!isResolvedPathAllowed(allocator, resolved, ws_path, self.allowed_paths)) {
-                    return ToolResult.fail("Path is outside allowed areas");
-                }
+                // For symlinks, we need to check if the target is within allowed areas
+                // If it is, we'll write to the target; otherwise, reject the operation
+                // For now, use a simplified approach: reject all symlink writes for security
+                // TODO: Implement proper symlink target resolution
+                return ToolResult.fail("Path is outside allowed areas");
             }
         }
 
