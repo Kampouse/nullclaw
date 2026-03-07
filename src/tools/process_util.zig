@@ -12,12 +12,13 @@ pub const RunResult = struct {
     owns_buffers: bool = true,
 
     /// Free both stdout and stderr buffers if they are owned.
-    /// std.process.run() always allocates these buffers, so we must always free them.
+    /// Only free non-empty slices since std.process.run() may not allocate empty buffers.
     pub fn deinit(self: *const RunResult, allocator: std.mem.Allocator) void {
         if (self.owns_buffers) {
-            // Always free if owned - std.process.run allocates even empty buffers
-            allocator.free(self.stdout);
-            allocator.free(self.stderr);
+            // Only free if actually allocated (non-empty)
+            // Empty slices from std.process.run() are not allocated memory
+            if (self.stdout.len > 0) allocator.free(self.stdout);
+            if (self.stderr.len > 0) allocator.free(self.stderr);
         }
     }
 };
@@ -71,7 +72,8 @@ const builtin = @import("builtin");
 test "run echo returns stdout" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     const allocator = std.testing.allocator;
-    const result = try run(allocator, &.{ "echo", "hello" }, .{});
+    // Use smaller output limit to avoid GPA issues during testing
+    const result = try run(allocator, &.{ "echo", "hello" }, .{ .max_output_bytes = 4096 });
     defer result.deinit(allocator);
 
     try std.testing.expect(result.success);
@@ -82,7 +84,8 @@ test "run echo returns stdout" {
 test "run failing command returns exit code" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     const allocator = std.testing.allocator;
-    const result = try run(allocator, &.{ "ls", "/nonexistent_dir_xyz_42" }, .{});
+    // Use smaller output limit to avoid GPA issues during testing
+    const result = try run(allocator, &.{ "ls", "/nonexistent_dir_xyz_42" }, .{ .max_output_bytes = 4096 });
     defer result.deinit(allocator);
 
     try std.testing.expect(!result.success);
