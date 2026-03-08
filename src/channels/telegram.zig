@@ -2208,8 +2208,11 @@ pub const TelegramChannel = struct {
     }
 
     fn vtableStartTyping(ptr: *anyopaque, recipient: []const u8) anyerror!void {
-        const self: *TelegramChannel = @ptrCast(@alignCast(ptr));
-        try self.startTyping(recipient);
+        _ = ptr;
+        _ = recipient;
+        // Disabled - typing indicator causes crash in threaded HTTP client
+        // const self: *TelegramChannel = @ptrCast(@alignCast(ptr));
+        // try self.startTyping(recipient);
     }
 
     fn vtableStopTyping(ptr: *anyopaque, recipient: []const u8) anyerror!void {

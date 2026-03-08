@@ -1547,10 +1547,11 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
     ) catch null;
     defer if (resolved_api_key) |k| allocator.free(k);
 
-    // OAuth providers (openai-codex) don't need an API key
+    // OAuth providers (openai-codex) and local providers (ollama) don't need an API key
     const provider_kind = yc.providers.classifyProvider(config.default_provider);
     const has_fallback_credentials = hasReliabilityCredentialFallback(allocator, config);
-    if (resolved_api_key == null and provider_kind != .openai_codex_provider and !has_fallback_credentials) {
+    const needs_api_key = provider_kind != .openai_codex_provider and provider_kind != .ollama_provider and !has_fallback_credentials;
+    if (resolved_api_key == null and needs_api_key) {
         std.debug.print("No API key configured. Set env var or add to ~/.nullclaw/config.json:\n", .{});
         std.debug.print("  \"providers\": {{ \"{s}\": {{ \"api_key\": \"...\" }} }}\n", .{config.default_provider});
         std.process.exit(1);
@@ -1877,10 +1878,11 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
     ) catch null;
     defer if (resolved_api_key) |k| allocator.free(k);
 
-    // OAuth providers (openai-codex) don't need an API key
+    // OAuth providers (openai-codex) and local providers (ollama) don't need an API key
     const provider_kind = yc.providers.classifyProvider(config.default_provider);
     const has_fallback_credentials = hasReliabilityCredentialFallback(allocator, &config);
-    if (resolved_api_key == null and provider_kind != .openai_codex_provider and !has_fallback_credentials) {
+    const needs_api_key = provider_kind != .openai_codex_provider and provider_kind != .ollama_provider and !has_fallback_credentials;
+    if (resolved_api_key == null and needs_api_key) {
         std.debug.print("No API key configured. Set env var or add to ~/.nullclaw/config.json:\n", .{});
         std.debug.print("  \"providers\": {{ \"{s}\": {{ \"api_key\": \"...\" }} }}\n", .{config.default_provider});
         std.process.exit(1);
