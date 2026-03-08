@@ -1,494 +1,91 @@
 test
-+- run test 541 pass, 1 skip, 3 fail, 4 crash (549 total); 15 leaks
++- run test 541 pass, 1 skip, 3 fail, 4 crash (549 total)
 error: 'tools.delegate.test.delegate executes gracefully without config' terminated with signal ABRT with stderr:
-       Segmentation fault at address 0x1021e0000
-       ???:?:?: 0x19e3efb90 in _OSAtomicTestAndClear (/usr/lib/system/libsystem_platform.dylib)
-       /Users/j-p/dev/nullclaw/src/tools/root.zig:141:31: 0x1011cf8f3 in deinit (test)
+       Segmentation fault at address 0x10b1e0000
+       ???:?:?: 0x187b85160 in __os_alloc_slow (/usr/lib/system/libsystem_platform.dylib)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/root.zig:141:31: 0x1058f8673 in deinit (test)
                        allocator.free(e);
                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/delegate.zig:169:24: 0x1012024ab in test.delegate executes gracefully without config (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/delegate.zig:169:24: 0x10592b22b in test.delegate executes gracefully without config (test)
            defer result.deinit(std.testing.allocator);
                               ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x100cbf2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1053e72a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x100cbd1b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1053e51b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x100cbccaf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x1053e4caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
 error: 'tools.delegate.test.delegate with valid params handles missing provider gracefully' terminated with signal ABRT with stderr:
-       Segmentation fault at address 0x1036a0000
-       ???:?:?: 0x19e3efb90 in _OSAtomicTestAndClear (/usr/lib/system/libsystem_platform.dylib)
-       /Users/j-p/dev/nullclaw/src/tools/root.zig:141:31: 0x102d878f3 in deinit (test)
+       Segmentation fault at address 0x106300000
+       ???:?:?: 0x187b85160 in __os_alloc_slow (/usr/lib/system/libsystem_platform.dylib)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/root.zig:141:31: 0x101120673 in deinit (test)
                        allocator.free(e);
                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/delegate.zig:225:24: 0x102dbb8bb in test.delegate with valid params handles missing provider gracefully (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/delegate.zig:225:24: 0x10115463b in test.delegate with valid params handles missing provider gracefully (test)
            defer result.deinit(std.testing.allocator);
                               ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1028772a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x100c0f2a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1028751b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x100c0d1b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x102874caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x100c0ccaf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
 error: 'tools.delegate.test.delegate with context field handles missing provider gracefully' terminated with signal ABRT with stderr:
-       Segmentation fault at address 0x101a80000
-       ???:?:?: 0x19e3efb90 in _OSAtomicTestAndClear (/usr/lib/system/libsystem_platform.dylib)
-       /Users/j-p/dev/nullclaw/src/tools/root.zig:141:31: 0x10112f8f3 in deinit (test)
+       Segmentation fault at address 0x1017a0000
+       ???:?:?: 0x187b85160 in __os_alloc_slow (/usr/lib/system/libsystem_platform.dylib)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/root.zig:141:31: 0x100e8c673 in deinit (test)
                        allocator.free(e);
                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/delegate.zig:266:24: 0x101164387 in test.delegate with context field handles missing provider gracefully (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/delegate.zig:266:24: 0x100ec1107 in test.delegate with context field handles missing provider gracefully (test)
            defer result.deinit(std.testing.allocator);
                               ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x100c1f2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10097b2a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x100c1d1b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1009791b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x100c1ccaf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x100978caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
 error: 'tools.delegate.test.delegate depth within limit proceeds' terminated with signal ABRT with stderr:
-       Segmentation fault at address 0x101fa0000
-       ???:?:?: 0x19e3efb90 in _OSAtomicTestAndClear (/usr/lib/system/libsystem_platform.dylib)
-       /Users/j-p/dev/nullclaw/src/tools/root.zig:141:31: 0x10167b8f3 in deinit (test)
+       Segmentation fault at address 0x104000000
+       ???:?:?: 0x187b85160 in __os_alloc_slow (/usr/lib/system/libsystem_platform.dylib)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/root.zig:141:31: 0x103738673 in deinit (test)
                        allocator.free(e);
                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/delegate.zig:311:24: 0x1016b0dfb in test.delegate depth within limit proceeds (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/delegate.zig:311:24: 0x10376db7b in test.delegate depth within limit proceeds (test)
            defer result.deinit(std.testing.allocator);
                               ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10116b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1032272a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1011691b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1032251b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x101168caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103224caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
 error: 'tools.http_request.test.execute rejects non-allowlisted domain' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104e61ed7 in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102ea1ed7 in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/tools/http_request.zig:532:5: 0x105374c47 in test.execute rejects non-allowlisted domain (test)
-           try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "allowed_domains") != null);
-           ^
-error: 'tools.web_search.test.formatBraveResults parses valid JSON' leaked 5 allocations:
-       [DebugAllocator] (err): memory address 0x10d8e0000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e96f in allocPrint__anon_434032 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:198:66: 0x10526dc9f in formatResultsArray (test)
-                   try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{desc}));
-                                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/brave.zig:74:37: 0x1052718cb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "description", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:278:48: 0x10537cdef in formatBraveResults (test)
-           return search_providers.brave.formatResults(allocator, json_body, query);
-                                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:447:42: 0x10537cedb in test.formatBraveResults parses valid JSON (test)
-           const result = try formatBraveResults(testing.allocator, json, "zig programming");
-                                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10d8a0000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e2db in allocPrint__anon_434003 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:175:58: 0x10526d5c3 in formatResultsArray (test)
-           try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query}));
-                                                                ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/brave.zig:74:37: 0x1052718cb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "description", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:278:48: 0x10537cdef in formatBraveResults (test)
-           return search_providers.brave.formatResults(allocator, json_body, query);
-                                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:447:42: 0x10537cedb in test.formatBraveResults parses valid JSON (test)
-           const result = try formatBraveResults(testing.allocator, json, "zig programming");
-                                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10d8a0020 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e96f in allocPrint__anon_434032 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:198:66: 0x10526dc9f in formatResultsArray (test)
-                   try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{desc}));
-                                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/brave.zig:74:37: 0x1052718cb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "description", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:278:48: 0x10537cdef in formatBraveResults (test)
-           return search_providers.brave.formatResults(allocator, json_body, query);
-                                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:447:42: 0x10537cedb in test.formatBraveResults parses valid JSON (test)
-           const result = try formatBraveResults(testing.allocator, json, "zig programming");
-                                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10d8c0000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e6f3 in allocPrint__anon_434027 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:196:62: 0x10526da9b in formatResultsArray (test)
-               try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ out_idx, title, url }));
-                                                                    ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/brave.zig:74:37: 0x1052718cb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "description", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:278:48: 0x10537cdef in formatBraveResults (test)
-           return search_providers.brave.formatResults(allocator, json_body, query);
-                                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:447:42: 0x10537cedb in test.formatBraveResults parses valid JSON (test)
-           const result = try formatBraveResults(testing.allocator, json, "zig programming");
-                                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10d8c0040 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e6f3 in allocPrint__anon_434027 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:196:62: 0x10526da9b in formatResultsArray (test)
-               try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ out_idx, title, url }));
-                                                                    ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/brave.zig:74:37: 0x1052718cb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "description", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:278:48: 0x10537cdef in formatBraveResults (test)
-           return search_providers.brave.formatResults(allocator, json_body, query);
-                                                      ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:447:42: 0x10537cedb in test.formatBraveResults parses valid JSON (test)
-           const result = try formatBraveResults(testing.allocator, json, "zig programming");
-                                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-error: 'tools.web_search.test.formatSearxngResults parses valid JSON' leaked 5 allocations:
-       [DebugAllocator] (err): memory address 0x10dc40000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e6f3 in allocPrint__anon_434027 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:196:62: 0x10526da9b in formatResultsArray (test)
-               try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ out_idx, title, url }));
-                                                                    ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/searxng.zig:63:37: 0x10526f0fb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "content", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:282:50: 0x10537d42f in formatSearxngResults (test)
-           return search_providers.searxng.formatResults(allocator, json_body, query);
-                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:463:44: 0x10537d51b in test.formatSearxngResults parses valid JSON (test)
-           const result = try formatSearxngResults(testing.allocator, json, "zig privacy search");
-                                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dc20000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e2db in allocPrint__anon_434003 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:175:58: 0x10526d5c3 in formatResultsArray (test)
-           try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query}));
-                                                                ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/searxng.zig:63:37: 0x10526f0fb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "content", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:282:50: 0x10537d42f in formatSearxngResults (test)
-           return search_providers.searxng.formatResults(allocator, json_body, query);
-                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:463:44: 0x10537d51b in test.formatSearxngResults parses valid JSON (test)
-           const result = try formatSearxngResults(testing.allocator, json, "zig privacy search");
-                                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dc20040 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e6f3 in allocPrint__anon_434027 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:196:62: 0x10526da9b in formatResultsArray (test)
-               try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ out_idx, title, url }));
-                                                                    ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/searxng.zig:63:37: 0x10526f0fb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "content", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:282:50: 0x10537d42f in formatSearxngResults (test)
-           return search_providers.searxng.formatResults(allocator, json_body, query);
-                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:463:44: 0x10537d51b in test.formatSearxngResults parses valid JSON (test)
-           const result = try formatSearxngResults(testing.allocator, json, "zig privacy search");
-                                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dc20080 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e96f in allocPrint__anon_434032 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:198:66: 0x10526dc9f in formatResultsArray (test)
-                   try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{desc}));
-                                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/searxng.zig:63:37: 0x10526f0fb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "content", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:282:50: 0x10537d42f in formatSearxngResults (test)
-           return search_providers.searxng.formatResults(allocator, json_body, query);
-                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:463:44: 0x10537d51b in test.formatSearxngResults parses valid JSON (test)
-           const result = try formatSearxngResults(testing.allocator, json, "zig privacy search");
-                                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dc200c0 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e96f in allocPrint__anon_434032 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:198:66: 0x10526dc9f in formatResultsArray (test)
-                   try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{desc}));
-                                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/searxng.zig:63:37: 0x10526f0fb in formatResults (test)
-           return common.formatResultsArray(allocator, results_arr.items, query, "content", null);
-                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:282:50: 0x10537d42f in formatSearxngResults (test)
-           return search_providers.searxng.formatResults(allocator, json_body, query);
-                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:463:44: 0x10537d51b in test.formatSearxngResults parses valid JSON (test)
-           const result = try formatSearxngResults(testing.allocator, json, "zig privacy search");
-                                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-error: 'tools.web_search.test.formatDuckDuckGoResults parses related topics' leaked 5 allocations:
-       [DebugAllocator] (err): memory address 0x10dd00000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e2db in allocPrint__anon_434003 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:149:58: 0x10526f38f in formatResultEntries (test)
-           try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query}));
-                                                                ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/duckduckgo.zig:76:38: 0x105270587 in formatResults (test)
-           return common.formatResultEntries(allocator, query, entries[0..entry_len]);
-                                            ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:286:53: 0x10537d99b in formatDuckDuckGoResults (test)
-           return search_providers.duckduckgo.formatResults(allocator, json_body, query, count);
-                                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:485:47: 0x10537da8b in test.formatDuckDuckGoResults parses related topics (test)
-           const result = try formatDuckDuckGoResults(testing.allocator, json, "zig", 5);
-                                                     ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dd00020 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e6f3 in allocPrint__anon_434027 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:155:62: 0x10526f6cf in formatResultEntries (test)
-               try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ i + 1, title, url }));
-                                                                    ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/duckduckgo.zig:76:38: 0x105270587 in formatResults (test)
-           return common.formatResultEntries(allocator, query, entries[0..entry_len]);
-                                            ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:286:53: 0x10537d99b in formatDuckDuckGoResults (test)
-           return search_providers.duckduckgo.formatResults(allocator, json_body, query, count);
-                                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:485:47: 0x10537da8b in test.formatDuckDuckGoResults parses related topics (test)
-           const result = try formatDuckDuckGoResults(testing.allocator, json, "zig", 5);
-                                                     ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dd00040 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e96f in allocPrint__anon_434032 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:157:66: 0x10526f8d3 in formatResultEntries (test)
-                   try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{entry.description}));
-                                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/duckduckgo.zig:76:38: 0x105270587 in formatResults (test)
-           return common.formatResultEntries(allocator, query, entries[0..entry_len]);
-                                            ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:286:53: 0x10537d99b in formatDuckDuckGoResults (test)
-           return search_providers.duckduckgo.formatResults(allocator, json_body, query, count);
-                                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:485:47: 0x10537da8b in test.formatDuckDuckGoResults parses related topics (test)
-           const result = try formatDuckDuckGoResults(testing.allocator, json, "zig", 5);
-                                                     ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dd00060 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e96f in allocPrint__anon_434032 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:157:66: 0x10526f8d3 in formatResultEntries (test)
-                   try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "   {s}\n", .{entry.description}));
-                                                                        ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/duckduckgo.zig:76:38: 0x105270587 in formatResults (test)
-           return common.formatResultEntries(allocator, query, entries[0..entry_len]);
-                                            ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:286:53: 0x10537d99b in formatDuckDuckGoResults (test)
-           return search_providers.duckduckgo.formatResults(allocator, json_body, query, count);
-                                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:485:47: 0x10537da8b in test.formatDuckDuckGoResults parses related topics (test)
-           const result = try formatDuckDuckGoResults(testing.allocator, json, "zig", 5);
-                                                     ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10dd40000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/fmt.zig:636:27: 0x10526e6f3 in allocPrint__anon_434027 (test)
-           return aw.toOwnedSlice();
-                                 ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/common.zig:155:62: 0x10526f6cf in formatResultEntries (test)
-               try buf.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ i + 1, title, url }));
-                                                                    ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search_providers/duckduckgo.zig:76:38: 0x105270587 in formatResults (test)
-           return common.formatResultEntries(allocator, query, entries[0..entry_len]);
-                                            ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:286:53: 0x10537d99b in formatDuckDuckGoResults (test)
-           return search_providers.duckduckgo.formatResults(allocator, json_body, query, count);
-                                                           ^
-       /Users/j-p/dev/nullclaw/src/tools/web_search.zig:485:47: 0x10537da8b in test.formatDuckDuckGoResults parses related topics (test)
-           const result = try formatDuckDuckGoResults(testing.allocator, json, "zig", 5);
-                                                     ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x104e232a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x104e211b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104e20caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/http_request.zig:532:5: 0x1033b59c7 in test.execute rejects non-allowlisted domain (test)
+           try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "allowed_doma
 error: 'tools.web_fetch.test.WebFetchTool localhost blocked' failed:
+       ins") != null);
+           ^
+       
        ====== expected this output: =========
        Blocked local/private host␃
        
@@ -503,31 +100,31 @@ error: 'tools.web_fetch.test.WebFetchTool localhost blocked' failed:
        found:
        Unable to verify host safety
        ^ ('\x55')
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:682:9: 0x104efb2d7 in expectEqualStrings (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:682:9: 0x102f3b2d7 in expectEqualStrings (test)
                return error.TestExpectedEqual;
                ^
-       /Users/j-p/dev/nullclaw/src/tools/web_fetch.zig:460:5: 0x10537f4b7 in test.WebFetchTool localhost blocked (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/tools/web_fetch.zig:460:5: 0x1033c0237 in test.WebFetchTool localhost blocked (test)
            try testing.expectEqualStrings("Blocked local/private host", result.error_msg.?);
            ^
 error: 'agent.dispatcher.test.buildToolInstructions empty tools' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104e61ed7 in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102ea1ed7 in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:1477:5: 0x1054286e7 in test.buildToolInstructions empty tools (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:1477:5: 0x103469467 in test.buildToolInstructions empty tools (test)
            try std.testing.expect(std.mem.indexOf(u8, instructions, "tool_call") != null);
            ^
-failed command: ./.zig-cache/o/403bfe21354fe46bf3a3da91f9235601/test --cache-dir=./.zig-cache --seed=0x9a69639f --listen=-
+failed command: ./.zig-cache/o/b456f832cb8f03bf99e6b6c6a3f756c4/test --cache-dir=./.zig-cache --seed=0xaa44c2b8 --listen=-
 
 Build Summary: 6/8 steps succeeded (1 failed); 541/549 tests passed (1 skipped, 3 failed, 4 crashed)
 test transitive failure
-+- run test 541 pass, 1 skip, 3 fail, 4 crash (549 total); 15 leaks
-|  +- compile test Debug native cached 170ms MaxRSS:39M
++- run test 541 pass, 1 skip, 3 fail, 4 crash (549 total)
+|  +- compile test Debug native success 14s MaxRSS:736M
 |     +- WriteFile sqlite3.h cached
-|     +- compile lib sqlite3 Debug native cached 134ms MaxRSS:38M
+|     +- compile lib sqlite3 Debug native cached 80ms MaxRSS:30M
 |     +- compile lib sqlite3 Debug native (reused)
 |     +- options cached
-+- run test success 12ms MaxRSS:3M
-   +- compile test Debug native cached 170ms MaxRSS:39M
++- run test success 217ms MaxRSS:2M
+   +- compile test Debug native success 4s MaxRSS:250M
       +- WriteFile sqlite3.h (reused)
       +- compile lib sqlite3 Debug native (reused)
       +- compile lib sqlite3 Debug native (reused)
@@ -537,4 +134,4 @@ test transitive failure
       +- options (reused)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/97ad94d4407b5c06eb3e53426824537f/build /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/zig /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib /Users/j-p/dev/nullclaw .zig-cache /Users/j-p/.cache/zig --seed 0x9a69639f -Zdddc93d2b106a092 test -Dtest-file=tools --summary all
+.zig-cache/o/0105c9ee9be62dc964bdfac84a8967a7/build /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib /Users/asil/.openclaw/workspace/nullclaw .zig-cache /Users/asil/.cache/zig --seed 0xaa44c2b8 -Z77f216c0163258d8 test -Dtest-file=tools --summary all

@@ -1,395 +1,375 @@
 test
-+- run test 359 pass, 32 fail, 1 crash (392 total); 1 leaks
-error: 'daemon.test.mergeSchedulerTickChangesAndSave preserves runtime agent fields' leaked 1 allocations:
-       [DebugAllocator] (err): memory address 0x103dc0000 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x102bb4d5f in dupe__anon_16171 (test)
-           const new_buf = try allocator.alloc(T, m.len);
-                                              ^
-       /Users/j-p/dev/nullclaw/src/cron.zig:1175:81: 0x102d3de17 in loadJobsWithPolicy (test)
-                   .last_status = if (job.last_status) |v| try scheduler.allocator.dupe(u8, v) else null,
-                                                                                       ^
-       /Users/j-p/dev/nullclaw/src/cron.zig:1381:27: 0x102d3f2d7 in loadJobsStrict (test)
-           try loadJobsWithPolicy(scheduler, .strict);
-                                 ^
-       /Users/j-p/dev/nullclaw/src/daemon.zig:1787:28: 0x102d41617 in test.mergeSchedulerTickChangesAndSave preserves runtime agent fields (test)
-           try cron.loadJobsStrict(&merged);
-                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x102c4f2a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x102c4d1b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x102c4ccaf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
++- run test 359 pass, 32 fail, 1 crash (392 total)
 error: 'agent.root.test.Agent buildProviderMessages allows workspace image paths' failed:
-       [multimodal] (warn): failed to read image '/Users/j-p/dev/nullclaw/.zig-cache/tmp/pUFQE4b1eUl4cx8_/screen.png': error.PathNotAllowed
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       [multimodal] (warn): failed to read image '/Users/asil/.openclaw/workspace/nullclaw/.zig-cache/tmp/h6EbuVRMsEbp6h4-/screen.png': error.PathNotAllowed
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/root.zig:2276:5: 0x1030c6fef in test.Agent buildProviderMessages allows workspace image paths (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/root.zig:2276:5: 0x102e67dc3 in test.Agent buildProviderMessages allows workspace image paths (test)
            try std.testing.expect(has_image_part);
            ^
 error: 'agent.root.test.turn refreshes system prompt after workspace markdown change' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/root.zig:3315:5: 0x1031e5e27 in test.turn refreshes system prompt after workspace markdown change (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/root.zig:3315:5: 0x102f86bfb in test.turn refreshes system prompt after workspace markdown change (test)
            try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content, "SOUL-V1") != null);
            ^
 error: 'agent.root.test.turn refreshes system prompt after TOOLS.md change' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/root.zig:3402:5: 0x1031e792f in test.turn refreshes system prompt after TOOLS.md change (test)
-           try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content, "TOOLS-V1") != null);
-           ^
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/root.zig:3402:5: 0x102f88703 in test.turn refreshes system prompt after TOOLS.md change (test)
+           try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].conte
 error: 'agent.root.test.turn refreshes system prompt after USER.md change' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
-           if (!ok) return error.TestUnexpectedResult;
-                    ^
-       /Users/j-p/dev/nullclaw/src/agent/root.zig:3489:5: 0x1031e8e9b in test.turn refreshes system prompt after USER.md change (test)
-           try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content, "USER-V1") != null);
+       nt, "TOOLS-V1") != null);
            ^
-error: 'agent.prompt.test.buildSystemPrompt includes AGENTS operational guidance' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:228:5: 0x10324710b in test.buildSystemPrompt includes AGENTS operational guidance (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/root.zig:3489:5: 0x102f89c6f in test.turn refreshes system prompt after USER.md change (test)
+           try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content, "USER-
+error: 'agent.prompt.test.buildSystemPrompt includes AGENTS operational guidance' failed:
+       V1") != null);
+           ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
+           if (!ok) return error.TestUnexpectedResult;
+                    ^
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:228:5: 0x102fe7edf in test.buildSystemPrompt includes AGENTS operational guidance (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "If AGENTS.md is present, follow its operational guidance (including startup routines and red-line constraints) unless higher-priority instructions override it.") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt includes TOOLS availability guidance' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:240:5: 0x1032472ef in test.buildSystemPrompt includes TOOLS availability guidance (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:240:5: 0x102fe80c3 in test.buildSystemPrompt includes TOOLS availability guidance (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "TOOLS.md does not control tool availability; it is user guidance for how to use external tools.") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt blocks AGENTS symlink escape outside workspace' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:269:5: 0x103247b1f in test.buildSystemPrompt blocks AGENTS symlink escape outside workspace (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:269:5: 0x102fe88f3 in test.buildSystemPrompt blocks AGENTS symlink escape outside workspace (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "[File not found: AGENTS.md]") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt includes core sections' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:543:5: 0x10324817f in test.buildSystemPrompt includes core sections (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:543:5: 0x102fe8f53 in test.buildSystemPrompt includes core sections (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "## Project Context") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt includes channel attachment marker guidance' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:573:5: 0x103248a1f in test.buildSystemPrompt includes channel attachment marker guidance (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:573:5: 0x102fe97f3 in test.buildSystemPrompt includes channel attachment marker guidance (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "## Channel Attachments") != null);
-           ^
+           
 error: 'agent.prompt.test.buildSystemPrompt injects memory.md when MEMORY.md is absent' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:602:5: 0x10324931f in test.buildSystemPrompt injects memory.md when MEMORY.md is absent (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:602:5: 0x102fea0f3 in test.buildSystemPrompt injects memory.md when MEMORY.md is absent (test)
            try std.testing.expect(has_memory_header);
            ^
 error: 'agent.prompt.test.buildSystemPrompt injects BOOTSTRAP.md when present' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:626:5: 0x1032499af in test.buildSystemPrompt injects BOOTSTRAP.md when present (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:626:5: 0x102fea783 in test.buildSystemPrompt injects BOOTSTRAP.md when present (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "### BOOTSTRAP.md") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt injects HEARTBEAT.md when present' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:650:5: 0x10324a03f in test.buildSystemPrompt injects HEARTBEAT.md when present (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:650:5: 0x102feae13 in test.buildSystemPrompt injects HEARTBEAT.md when present (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "### HEARTBEAT.md") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt injects IDENTITY.md when present' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:674:5: 0x10324a6cf in test.buildSystemPrompt injects IDENTITY.md when present (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:674:5: 0x102feb4a3 in test.buildSystemPrompt injects IDENTITY.md when present (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "### IDENTITY.md") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt injects USER.md when present' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:698:5: 0x10324ad5f in test.buildSystemPrompt injects USER.md when present (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:698:5: 0x102febb33 in test.buildSystemPrompt injects USER.md when present (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "### USER.md") != null);
            ^
 error: 'agent.prompt.test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:953:5: 0x10324ef5b in test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:953:5: 0x102fefd2f in test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "### MEMORY.md") != null);
            ^
 error: 'agent.prompt.test.appendSkillsSection renders summary XML for always=false skill' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102b62abb in fail__anon_9981 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102902abb in fail__anon_9942 (test)
                return err;
                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102b61dbb in dirCreateDirPosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102901dbb in dirCreateDirPosix (test)
                    .NOENT => return syscall.fail(error.FileNotFound),
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x10325985f in createDir (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x102ffa633 in createDir (test)
            return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1064:5: 0x103258c13 in test.appendSkillsSection renders summary XML for always=false skill (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1064:5: 0x102ff99e7 in test.appendSkillsSection renders summary XML for always=false skill (test)
            try tmp.dir.createDir(io, "skills/greeter", .default_file);
            ^
 error: 'agent.prompt.test.appendSkillsSection escapes XML attributes in summary output' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102b62abb in fail__anon_9981 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102902abb in fail__anon_9942 (test)
                return err;
                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102b61dbb in dirCreateDirPosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102901dbb in dirCreateDirPosix (test)
                    .NOENT => return syscall.fail(error.FileNotFound),
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x10325985f in createDir (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x102ffa633 in createDir (test)
            return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1125:5: 0x10325cb2f in test.appendSkillsSection escapes XML attributes in summary output (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1125:5: 0x102ffd903 in test.appendSkillsSection escapes XML attributes in summary output (test)
            try tmp.dir.createDir(io, "skills/xml-escape", .default_file);
            ^
 error: 'agent.prompt.test.appendSkillsSection supports markdown-only installed skill' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102b62abb in fail__anon_9981 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102902abb in fail__anon_9942 (test)
                return err;
                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102b61dbb in dirCreateDirPosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102901dbb in dirCreateDirPosix (test)
                    .NOENT => return syscall.fail(error.FileNotFound),
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x10325985f in createDir (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x102ffa633 in createDir (test)
            return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1179:5: 0x10326066b in test.appendSkillsSection supports markdown-only installed skill (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1179:5: 0x10300143f in test.appendSkillsSection supports markdown-only installed skill (test)
            try tmp.dir.createDir(io, "skills/md-only", .default_file);
            ^
 error: 'agent.prompt.test.appendSkillsSection renders full instructions for always=true skill' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102b62abb in fail__anon_9981 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102902abb in fail__anon_9942 (test)
                return err;
                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102b61dbb in dirCreateDirPosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102901dbb in dirCreateDirPosix (test)
                    .NOENT => return syscall.fail(error.FileNotFound),
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x10325985f in createDir (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x102ffa633 in createDir (test)
            return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1233:5: 0x10326409f in test.appendSkillsSection renders full instructions for always=true skill (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1233:5: 0x103004e73 in test.appendSkillsSection renders full instructions for always=true skill (test)
            try tmp.dir.createDir(io, "skills/commit", .default_file);
            ^
 error: 'agent.prompt.test.appendSkillsSection renders mixed always=true and always=false' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102b62abb in fail__anon_9981 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102902abb in fail__anon_9942 (test)
                return err;
                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102b61dbb in dirCreateDirPosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102901dbb in dirCreateDirPosix (test)
                    .NOENT => return syscall.fail(error.FileNotFound),
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x10325985f in createDir (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x102ffa633 in createDir (test)
            return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1297:5: 0x103267db7 in test.appendSkillsSection renders mixed always=true and always=false (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1297:5: 0x103008b8b in test.appendSkillsSection renders mixed always=true and always=false (test)
            try tmp.dir.createDir(io, "skills/full-skill", .default_file);
            ^
 error: 'agent.prompt.test.appendSkillsSection renders unavailable skill with missing deps' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102b62abb in fail__anon_9981 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102902abb in fail__anon_9942 (test)
                return err;
                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102b61dbb in dirCreateDirPosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102901dbb in dirCreateDirPosix (test)
                    .NOENT => return syscall.fail(error.FileNotFound),
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x10325985f in createDir (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x102ffa633 in createDir (test)
            return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1371:5: 0x10326bf8f in test.appendSkillsSection renders unavailable skill with missing deps (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1371:5: 0x10300cd63 in test.appendSkillsSection renders unavailable skill with missing deps (test)
            try tmp.dir.createDir(io, "skills/docker-deploy", .default_file);
            ^
 error: 'agent.prompt.test.appendSkillsSection unavailable always=true skill renders in XML not full' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102b62abb in fail__anon_9981 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:1381:9: 0x102902abb in fail__anon_9942 (test)
                return err;
                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102b61dbb in dirCreateDirPosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:3261:23: 0x102901dbb in dirCreateDirPosix (test)
                    .NOENT => return syscall.fail(error.FileNotFound),
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x10325985f in createDir (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:683:5: 0x102ffa633 in createDir (test)
            return io.vtable.dirCreateDir(io.userdata, dir, sub_path, permissions);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1431:5: 0x10326fbd3 in test.appendSkillsSection unavailable always=true skill renders in XML not full (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1431:5: 0x1030109a7 in test.appendSkillsSection unavailable always=true skill renders in XML not full (test)
            try tmp.dir.createDir(io, "skills/broken-always", .default_file);
            ^
 error: 'agent.prompt.test.installSkill end-to-end appears in buildSystemPrompt' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:4272:35: 0x102b6764f in dirCreateFilePosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:4272:35: 0x10290764f in dirCreateFilePosix (test)
                                .ACCES => return error.AccessDenied,
                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:524:5: 0x102b95cab in createFile (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:524:5: 0x102935cab in createFile (test)
            return io.vtable.dirCreateFile(io.userdata, dir, sub_path, flags);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1498:19: 0x10327f4df in test.installSkill end-to-end appears in buildSystemPrompt (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1498:19: 0x103020367 in test.installSkill end-to-end appears in buildSystemPrompt (test)
                const f = try tmp.dir.createFile(io, "source/skill.json", .{});
                          ^
 error: 'agent.prompt.test.buildSystemPrompt datetime appears before runtime' failed:
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:1539:81: 0x10328353f in test.buildSystemPrompt datetime appears before runtime (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:1539:81: 0x1030243c7 in test.buildSystemPrompt datetime appears before runtime (test)
            const dt_pos = std.mem.indexOf(u8, prompt, "## Current Date & Time") orelse return error.SectionNotFound;
                                                                                        ^
 error: 'agent.compaction.test.readWorkspaceContextForSummary wraps AGENTS critical sections' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/compaction.zig:720:5: 0x1032891cb in test.readWorkspaceContextForSummary wraps AGENTS critical sections (test)
-           try std.testing.expect(std.mem.indexOf(u8, context, "<workspace-critical-rules>") != null);
-           ^
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/compaction.zig:720:5: 0x10302a053 in test.readWorkspaceContextForSummary wraps AGENTS critical sections (test)
+           try std.testing.expect(std.mem.indexOf(u8, context, "<workspace-critical-rules>") != nu
 error: 'agent.dispatcher.test.buildToolInstructions empty tools' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       ll);
+           ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:1477:5: 0x10328fdd3 in test.buildToolInstructions empty tools (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:1477:5: 0x103030c5b in test.buildToolInstructions empty tools (test)
            try std.testing.expect(std.mem.indexOf(u8, instructions, "tool_call") != null);
            ^
 error: 'agent.dispatcher.test.formatNativeToolResults single result' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:1104:29: 0x102d0fdeb in peekNextTokenType (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:1104:29: 0x102aafdeb in peekNextTokenType (test)
                            else => return error.SyntaxError,
                                    ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:134:23: 0x102d0a80f in nextAllocMax (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:134:23: 0x102aaa80f in nextAllocMax (test)
                else => |err| return err,
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102d01d6f in jsonParse__anon_41179 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102aa1d6f in jsonParse__anon_41139 (test)
                    switch (try source.nextAllocMax(allocator, .alloc_always, options.max_value_len.?)) {
                            ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102ceb9ab in innerParse__anon_38796 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102a8b9ab in innerParse__anon_38756 (test)
                        return T.jsonParse(allocator, source, options);
                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102cd0efb in parseFromTokenSourceLeaky__anon_37989 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102a70efb in parseFromTokenSourceLeaky__anon_37949 (test)
            const value = try innerParse(T, allocator, scanner_or_reader, resolved_options);
                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102cb7a97 in parseFromTokenSource__anon_37051 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102a57a97 in parseFromTokenSource__anon_37011 (test)
            parsed.value = try parseFromTokenSourceLeaky(T, parsed.arena.allocator(), scanner_or_reader, options);
                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102cb346b in parseFromSlice__anon_34154 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102a5346b in parseFromSlice__anon_34114 (test)
            return parseFromTokenSource(T, allocator, &scanner, options);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:1844:20: 0x1032985c3 in test.formatNativeToolResults single result (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:1844:20: 0x10303944b in test.formatNativeToolResults single result (test)
            const parsed = try std.json.parseFromSlice(std.json.Value, allocator, formatted, .{});
                           ^
 error: 'agent.dispatcher.test.formatNativeToolResults multiple results' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:991:29: 0x102cf1f43 in next (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:991:29: 0x102a91f43 in next (test)
                            else => return error.SyntaxError,
                                    ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:169:27: 0x102d0b0cb in nextAllocMax (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:169:27: 0x102aab0cb in nextAllocMax (test)
                    else => |err| return err,
                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102d01d6f in jsonParse__anon_41179 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102aa1d6f in jsonParse__anon_41139 (test)
                    switch (try source.nextAllocMax(allocator, .alloc_always, options.max_value_len.?)) {
                            ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102ceb9ab in innerParse__anon_38796 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102a8b9ab in innerParse__anon_38756 (test)
                        return T.jsonParse(allocator, source, options);
                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102cd0efb in parseFromTokenSourceLeaky__anon_37989 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102a70efb in parseFromTokenSourceLeaky__anon_37949 (test)
            const value = try innerParse(T, allocator, scanner_or_reader, resolved_options);
                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102cb7a97 in parseFromTokenSource__anon_37051 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102a57a97 in parseFromTokenSource__anon_37011 (test)
            parsed.value = try parseFromTokenSourceLeaky(T, parsed.arena.allocator(), scanner_or_reader, options);
                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102cb346b in parseFromSlice__anon_34154 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102a5346b in parseFromSlice__anon_34114 (test)
            return parseFromTokenSource(T, allocator, &scanner, options);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:1868:20: 0x1032992f7 in test.formatNativeToolResults multiple results (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:1868:20: 0x10303a17f in test.formatNativeToolResults multiple results (test)
            const parsed = try std.json.parseFromSlice(std.json.Value, allocator, formatted, .{});
                           ^
 error: 'agent.dispatcher.test.formatNativeToolResults missing tool_call_id defaults to unknown' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:1104:29: 0x102d0fdeb in peekNextTokenType (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:1104:29: 0x102aafdeb in peekNextTokenType (test)
                            else => return error.SyntaxError,
                                    ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:134:23: 0x102d0a80f in nextAllocMax (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:134:23: 0x102aaa80f in nextAllocMax (test)
                else => |err| return err,
                              ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102d01d6f in jsonParse__anon_41179 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102aa1d6f in jsonParse__anon_41139 (test)
                    switch (try source.nextAllocMax(allocator, .alloc_always, options.max_value_len.?)) {
                            ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102ceb9ab in innerParse__anon_38796 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102a8b9ab in innerParse__anon_38756 (test)
                        return T.jsonParse(allocator, source, options);
                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102cd0efb in parseFromTokenSourceLeaky__anon_37989 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102a70efb in parseFromTokenSourceLeaky__anon_37949 (test)
            const value = try innerParse(T, allocator, scanner_or_reader, resolved_options);
                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102cb7a97 in parseFromTokenSource__anon_37051 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102a57a97 in parseFromTokenSource__anon_37011 (test)
            parsed.value = try parseFromTokenSourceLeaky(T, parsed.arena.allocator(), scanner_or_reader, options);
                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102cb346b in parseFromSlice__anon_34154 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102a5346b in parseFromSlice__anon_34114 (test)
            return parseFromTokenSource(T, allocator, &scanner, options);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:1889:20: 0x103299b53 in test.formatNativeToolResults missing tool_call_id defaults to unknown (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:1889:20: 0x10303a9db in test.formatNativeToolResults missing tool_call_id defaults to unknown (test)
            const parsed = try std.json.parseFromSlice(std.json.Value, allocator, formatted, .{});
                           ^
 error: 'agent.dispatcher.test.formatNativeToolResults escapes special characters in output' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:991:29: 0x102cf1f43 in next (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:991:29: 0x102a91f43 in next (test)
                            else => return error.SyntaxError,
                                    ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:169:27: 0x102d0b0cb in nextAllocMax (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/Scanner.zig:169:27: 0x102aab0cb in nextAllocMax (test)
                    else => |err| return err,
                                  ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102d01d6f in jsonParse__anon_41179 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/dynamic.zig:88:21: 0x102aa1d6f in jsonParse__anon_41139 (test)
                    switch (try source.nextAllocMax(allocator, .alloc_always, options.max_value_len.?)) {
                            ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102ceb9ab in innerParse__anon_38796 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:273:17: 0x102a8b9ab in innerParse__anon_38756 (test)
                        return T.jsonParse(allocator, source, options);
                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102cd0efb in parseFromTokenSourceLeaky__anon_37989 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:149:19: 0x102a70efb in parseFromTokenSourceLeaky__anon_37949 (test)
            const value = try innerParse(T, allocator, scanner_or_reader, resolved_options);
                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102cb7a97 in parseFromTokenSource__anon_37051 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:116:20: 0x102a57a97 in parseFromTokenSource__anon_37011 (test)
            parsed.value = try parseFromTokenSourceLeaky(T, parsed.arena.allocator(), scanner_or_reader, options);
                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102cb346b in parseFromSlice__anon_34154 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/json/static.zig:82:5: 0x102a5346b in parseFromSlice__anon_34114 (test)
            return parseFromTokenSource(T, allocator, &scanner, options);
            ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:1916:20: 0x10329a26f in test.formatNativeToolResults escapes special characters in output (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:1916:20: 0x10303b0f7 in test.formatNativeToolResults escapes special characters in output (test)
            const parsed = try std.json.parseFromSlice(std.json.Value, allocator, formatted, .{});
                           ^
 error: 'agent.dispatcher.test.buildAssistantHistoryWithToolCalls with text and calls' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:2447:5: 0x1032a3ae3 in test.buildAssistantHistoryWithToolCalls with text and calls (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:2447:5: 0x10304496b in test.buildAssistantHistoryWithToolCalls with text and calls (test)
            try std.testing.expect(std.mem.indexOf(u8, result, "<tool_call>") != null);
            ^
 error: 'agent.dispatcher.test.buildAssistantHistoryWithToolCalls empty text' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102cb647b in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x102a5647b in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:2475:5: 0x1032a4187 in test.buildAssistantHistoryWithToolCalls empty text (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:2475:5: 0x10304500f in test.buildAssistantHistoryWithToolCalls empty text (test)
            try std.testing.expect(result[0] == '<');
            ^
 error: 'agent.dispatcher.test.buildAssistantHistoryWithToolCalls escapes special chars in name' terminated with signal ABRT with stderr:
-       thread 645165 panic: attempt to use null value
-       /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:2533:66: 0x1032a4a37 in test.buildAssistantHistoryWithToolCalls escapes special chars in name (test)
+       thread 4499140 panic: attempt to use null value
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/dispatcher.zig:2533:66: 0x1030458bf in test.buildAssistantHistoryWithToolCalls escapes special chars in name (test)
            const tc_start = std.mem.indexOf(u8, result, "<tool_call>\n").?;
                                                                         ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x102c4f2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1029ef2a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x102c4d1b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1029ed1b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x102c4ccaf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x1029eccaf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-failed command: ./.zig-cache/o/14384ebf783c059e2bd434435a051139/test --cache-dir=./.zig-cache --seed=0x60fc24ff --listen=-
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
+failed command: ./.zig-cache/o/358fee3ce2a4476bcb215cc78da58c57/test --cache-dir=./.zig-cache --seed=0x5b3c45d9 --listen=-
 
 Build Summary: 6/8 steps succeeded (1 failed); 359/392 tests passed (32 failed, 1 crashed)
 test transitive failure
-+- run test 359 pass, 32 fail, 1 crash (392 total); 1 leaks
-|  +- compile test Debug native cached 253ms MaxRSS:39M
++- run test 359 pass, 32 fail, 1 crash (392 total)
+|  +- compile test Debug native success 20s MaxRSS:640M
 |     +- WriteFile sqlite3.h cached
-|     +- compile lib sqlite3 Debug native cached 150ms MaxRSS:38M
+|     +- compile lib sqlite3 Debug native cached 100ms MaxRSS:30M
 |     +- compile lib sqlite3 Debug native (reused)
 |     +- options cached
-+- run test success 22ms MaxRSS:3M
-   +- compile test Debug native cached 260ms MaxRSS:39M
++- run test success 1s MaxRSS:2M
+   +- compile test Debug native success 6s MaxRSS:228M
       +- WriteFile sqlite3.h (reused)
       +- compile lib sqlite3 Debug native (reused)
       +- compile lib sqlite3 Debug native (reused)
@@ -399,4 +379,4 @@ test transitive failure
       +- options (reused)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/97ad94d4407b5c06eb3e53426824537f/build /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/zig /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib /Users/j-p/dev/nullclaw .zig-cache /Users/j-p/.cache/zig --seed 0x60fc24ff -Z9643adfbf07dcf5a test -Dtest-file=agent --summary all
+.zig-cache/o/0105c9ee9be62dc964bdfac84a8967a7/build /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib /Users/asil/.openclaw/workspace/nullclaw .zig-cache /Users/asil/.cache/zig --seed 0x5b3c45d9 -Zd19538a6eaaa0bb6 test -Dtest-file=agent --summary all

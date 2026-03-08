@@ -27,6 +27,11 @@ pub const Hybrid = @This();
 // This is set during init() and cleared during stop()
 var active_hybrid: ?*Hybrid = null;
 
+/// Reset active hybrid reference (for test isolation)
+pub fn resetActiveHybrid() void {
+    active_hybrid = null;
+}
+
 // Security constants
 pub const MAX_AGENT_ID_LEN = 64;
 pub const MAX_MESSAGE_LEN = 1024 * 10; // 10KB

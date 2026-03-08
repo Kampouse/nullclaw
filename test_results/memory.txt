@@ -1,13 +1,13 @@
 test
 +- run test 873 pass, 22 fail (895 total); 20 leaks
 error: 'onboard.test.scaffoldWorkspace treats memory-backed workspace as existing and skips BOOTSTRAP' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Reader.zig:662:26: 0x1048d7703 in readSliceAll (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Reader.zig:662:26: 0x10376f703 in readSliceAll (test)
            if (n != buffer.len) return error.EndOfStream;
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Reader.zig:742:5: 0x104a77bcf in readAlloc (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Reader.zig:742:5: 0x10390fbcf in readAlloc (test)
            try readSliceAll(r, dest);
            ^
-       /Users/j-p/dev/nullclaw/src/onboard.zig:2615:28: 0x104a7711b in test.scaffoldWorkspace treats memory-backed workspace as existing and skips BOOTSTRAP (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/onboard.zig:2615:28: 0x10390f11b in test.scaffoldWorkspace treats memory-backed workspace as existing and skips BOOTSTRAP (test)
            const memory_content = try memory_reader.interface.readAlloc(std.testing.allocator, 4 * 1024);
                                   ^
 error: 'memory.engines.sqlite.test.sqlite fts5 syncs on insert' failed:
@@ -16,547 +16,547 @@ error: 'memory.engines.sqlite.test.sqlite fts5 syncs on insert' failed:
        [memory] (warn): enabled memory backends in this build: 
        [memory] (warn): fallback_policy=fail_fast: durable vector sync unavailable, aborting runtime creation
        expected 1, found 0
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x104f31bbb in expectEqualInner__anon_471749 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x103dca93b in expectEqualInner__anon_471675 (test)
                        return error.TestExpectedEqual;
                        ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/sqlite.zig:1142:5: 0x104f32a3f in test.sqlite fts5 syncs on insert (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/sqlite.zig:1142:5: 0x103dcb7bf in test.sqlite fts5 syncs on insert (test)
            try std.testing.expectEqual(@as(i64, 1), c.sqlite3_column_int64(stmt, 0));
            ^
 error: 'memory.engines.sqlite.test.sqlite fts5 syncs on update' failed:
        expected 1, found 0
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x104f31bbb in expectEqualInner__anon_471749 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x103dca93b in expectEqualInner__anon_471675 (test)
                        return error.TestExpectedEqual;
                        ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/sqlite.zig:1191:9: 0x104f337d3 in test.sqlite fts5 syncs on update (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/sqlite.zig:1191:9: 0x103dcc553 in test.sqlite fts5 syncs on update (test)
                try std.testing.expectEqual(@as(i64, 1), c.sqlite3_column_int64(stmt, 0));
                ^
 error: 'memory.engines.registry.test.formatEnabledBackends reflects compiled registry' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/registry.zig:547:9: 0x104f4e09f in test.formatEnabledBackends reflects compiled registry (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/registry.zig:547:9: 0x103de6e1f in test.formatEnabledBackends reflects compiled registry (test)
                try std.testing.expect(std.mem.indexOf(u8, rendered, desc.name) != null);
                ^
 error: 'memory.vector.store.test.healthCheck returns ok with entry count' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/vector/store.zig:639:5: 0x104f849b3 in test.healthCheck returns ok with entry count (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/vector/store.zig:639:5: 0x103e1d733 in test.healthCheck returns ok with entry count (test)
            try std.testing.expect(status.latency_ns > 0);
            ^
 error: 'memory.vector.circuit_breaker.test.allow returns false when open before cooldown' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/vector/circuit_breaker.zig:127:5: 0x104f8ad87 in test.allow returns false when open before cooldown (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/vector/circuit_breaker.zig:127:5: 0x103e23b07 in test.allow returns false when open before cooldown (test)
            try std.testing.expect(!cb.allow());
            ^
 error: 'memory.vector.circuit_breaker.test.open state blocks all requests before cooldown' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/vector/circuit_breaker.zig:287:9: 0x104f8db33 in test.open state blocks all requests before cooldown (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/vector/circuit_breaker.zig:287:9: 0x103e268b3 in test.open state blocks all requests before cooldown (test)
                try std.testing.expect(!cb.allow());
                ^
 error: 'agent.prompt.test.buildSystemPrompt injects memory.md when MEMORY.md is absent' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:602:5: 0x104fa2ec7 in test.buildSystemPrompt injects memory.md when MEMORY.md is absent (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:602:5: 0x103e3bc47 in test.buildSystemPrompt injects memory.md when MEMORY.md is absent (test)
            try std.testing.expect(has_memory_header);
            ^
 error: 'agent.prompt.test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/agent/prompt.zig:953:5: 0x104fa3e93 in test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/agent/prompt.zig:953:5: 0x103e3cc13 in test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct (test)
            try std.testing.expect(std.mem.indexOf(u8, prompt, "### MEMORY.md") != null);
            ^
 error: 'memory.lifecycle.diagnostics.test.formatReport produces valid output' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/diagnostics.zig:458:5: 0x104fa8393 in test.formatReport produces valid output (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/diagnostics.zig:458:5: 0x103e41113 in test.formatReport produces valid output (test)
            try testing.expect(std.mem.indexOf(u8, text, "Capabilities") != null);
            ^
 error: 'memory.lifecycle.diagnostics.test.formatReport with cache stats' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/diagnostics.zig:497:5: 0x104fa8b3b in test.formatReport with cache stats (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/diagnostics.zig:497:5: 0x103e418bb in test.formatReport with cache stats (test)
            try testing.expect(std.mem.indexOf(u8, text, "canary") != null);
            ^
 error: 'memory.lifecycle.diagnostics.test.formatReport without optional components' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/diagnostics.zig:528:5: 0x104fa8eeb in test.formatReport without optional components (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/diagnostics.zig:528:5: 0x103e41c6b in test.formatReport without optional components (test)
            try testing.expect(std.mem.indexOf(u8, text, "n/a") != null);
            ^
 error: 'memory.lifecycle.diagnostics.test.R3: diagnose on empty system returns valid report with formatReport' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/diagnostics.zig:561:5: 0x104fa9baf in test.R3: diagnose on empty system returns valid report with formatReport (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/diagnostics.zig:561:5: 0x103e4292f in test.R3: diagnose on empty system returns valid report with formatReport (test)
            try testing.expect(std.mem.indexOf(u8, text, "Pipeline Stages") != null);
            ^
 error: 'memory.engines.markdown.test.markdown accepts session_id param' leaked 4 allocations:
-       [DebugAllocator] (err): memory address 0x10e480080 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x1119e0200 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:214:45: 0x104ba682b in implRecall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:214:45: 0x103a3ec2f in implRecall (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:354:34: 0x104acd04b in recall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:354:34: 0x10396504b in recall (test)
                return self.vtable.recall(self.ptr, allocator, query, limit, session_id);
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:483:34: 0x104fbef47 in test.markdown accepts session_id param (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:483:34: 0x103e57cc7 in test.markdown accepts session_id param (test)
            const recalled = try m.recall(std.testing.allocator, "session", 10, "session-123");
                                         ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10e480200 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x1119e0380 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:214:45: 0x104ba682b in implRecall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:214:45: 0x103a3ec2f in implRecall (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:354:34: 0x104acd04b in recall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:354:34: 0x10396504b in recall (test)
                return self.vtable.recall(self.ptr, allocator, query, limit, session_id);
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:483:34: 0x104fbef47 in test.markdown accepts session_id param (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:483:34: 0x103e57cc7 in test.markdown accepts session_id param (test)
            const recalled = try m.recall(std.testing.allocator, "session", 10, "session-123");
                                         ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10e480380 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x1119e0580 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:308:45: 0x104ba7d63 in implList (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:308:45: 0x103a40167 in implList (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:362:32: 0x104ae64cb in list (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:362:32: 0x10397e4cb in list (test)
                return self.vtable.list(self.ptr, allocator, category, session_id);
                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:489:30: 0x104fbf077 in test.markdown accepts session_id param (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:489:30: 0x103e57df7 in test.markdown accepts session_id param (test)
            const listed = try m.list(std.testing.allocator, null, "session-123");
                                     ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
-       [DebugAllocator] (err): memory address 0x10e480500 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
-           const new_buf = try allocator.alloc(T, m.len);
-                                              ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
-                   const key_copy = try allocator.dupe(u8, canonical);
-                                                      ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:308:45: 0x104ba7d63 in implList (test)
-               const all = try self_.readAllEntries(allocator);
-                                                   ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:362:32: 0x104ae64cb in list (test)
-               return self.vtable.list(self.ptr, allocator, category, session_id);
-                                      ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:489:30: 0x104fbf077 in test.markdown accepts session_id param (test)
-           const listed = try m.list(std.testing.allocator, null, "session-123");
-                                    ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
+         
 error: 'memory.engines.markdown.test.markdown reads memory.md when MEMORY.md is absent' failed:
+                     const status: TestResults.Status = if (test_fn.func()) |v| s: {
+                                                                          ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
+               return mainServer(init) catch @panic("internal test runner failure");
+                                ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
+           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                              ^
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
+       
+       [DebugAllocator] (err): memory address 0x1119e0700 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
+           const new_buf = try allocator.alloc(T, m.len);
+                                              ^
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
+                   const key_copy = try allocator.dupe(u8, canonical);
+                                                      ^
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:308:45: 0x103a40167 in implList (test)
+               const all = try self_.readAllEntries(allocator);
+                                                   ^
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:362:32: 0x10397e4cb in list (test)
+               return self.vtable.list(self.ptr, allocator, category, session_id);
+                                      ^
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:489:30: 0x103e57df7 in test.markdown accepts session_id param (test)
+           const listed = try m.list(std.testing.allocator, null, "session-123");
+                                    ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
+                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
+                                                                          ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
+               return mainServer(init) catch @panic("internal test runner failure");
+                                ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
+           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                              ^
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
+       
        expected 1, found 2
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x104a5b35f in expectEqualInner__anon_54688 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x1038f335f in expectEqualInner__anon_54648 (test)
                        return error.TestExpectedEqual;
                        ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:516:5: 0x104fbf9f7 in test.markdown reads memory.md when MEMORY.md is absent (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:516:5: 0x103e58777 in test.markdown reads memory.md when MEMORY.md is absent (test)
            try std.testing.expectEqual(@as(usize, 1), recalled.len);
            ^
-       [DebugAllocator] (err): memory address 0x10e760080 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111c40180 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:214:45: 0x104ba682b in implRecall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:214:45: 0x103a3ec2f in implRecall (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:354:34: 0x104acd04b in recall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:354:34: 0x10396504b in recall (test)
                return self.vtable.recall(self.ptr, allocator, query, limit, session_id);
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:510:34: 0x104fbf6db in test.markdown reads memory.md when MEMORY.md is absent (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:510:34: 0x103e5845b in test.markdown reads memory.md when MEMORY.md is absent (test)
            const recalled = try m.recall(std.testing.allocator, "legacy", 10, null);
                                         ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10e760200 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111c40300 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:214:45: 0x104ba682b in implRecall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:214:45: 0x103a3ec2f in implRecall (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:354:34: 0x104acd04b in recall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:354:34: 0x10396504b in recall (test)
                return self.vtable.recall(self.ptr, allocator, query, limit, session_id);
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:510:34: 0x104fbf6db in test.markdown reads memory.md when MEMORY.md is absent (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:510:34: 0x103e5845b in test.markdown reads memory.md when MEMORY.md is absent (test)
            const recalled = try m.recall(std.testing.allocator, "legacy", 10, null);
                                         ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
 error: 'memory.engines.markdown.test.markdown get returns latest matching entry for duplicate key' leaked 2 allocations:
-       [DebugAllocator] (err): memory address 0x10f080080 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111ce0280 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:272:45: 0x104ba77cb in implGet (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:272:45: 0x103a3fbcf in implGet (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:358:31: 0x104accf5f in get (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:358:31: 0x103964f5f in get (test)
                return self.vtable.get(self.ptr, allocator, key);
                                      ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:581:29: 0x104fc0d97 in test.markdown get returns latest matching entry for duplicate key (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:581:29: 0x103e59b17 in test.markdown get returns latest matching entry for duplicate key (test)
            const entry = (try m.get(std.testing.allocator, "dup_key")).?;
                                    ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f080200 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111ce0400 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:272:45: 0x104ba77cb in implGet (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:272:45: 0x103a3fbcf in implGet (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:358:31: 0x104accf5f in get (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:358:31: 0x103964f5f in get (test)
                return self.vtable.get(self.ptr, allocator, key);
                                      ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:581:29: 0x104fc0d97 in test.markdown get returns latest matching entry for duplicate key (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:581:29: 0x103e59b17 in test.markdown get returns latest matching entry for duplicate key (test)
            const entry = (try m.get(std.testing.allocator, "dup_key")).?;
                                    ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
 error: 'memory.engines.api.test.api parse curl output with body' failed:
-       /Users/j-p/dev/nullclaw/src/memory/engines/api.zig:183:9: 0x104fccc53 in parseCurlOutput (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/api.zig:183:9: 0x103e659d3 in parseCurlOutput (test)
                return error.NotImplemented;
                ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/api.zig:1038:20: 0x104fccd67 in test.api parse curl output with body (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/api.zig:1038:20: 0x103e65ae7 in test.api parse curl output with body (test)
            const parsed = try ApiMemory.parseCurlOutput(std.testing.allocator, out);
                           ^
 error: 'memory.engines.api.test.api parse curl output with empty body' failed:
-       /Users/j-p/dev/nullclaw/src/memory/engines/api.zig:183:9: 0x104fccc53 in parseCurlOutput (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/api.zig:183:9: 0x103e659d3 in parseCurlOutput (test)
                return error.NotImplemented;
                ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/api.zig:1049:20: 0x104fcd017 in test.api parse curl output with empty body (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/api.zig:1049:20: 0x103e65d97 in test.api parse curl output with empty body (test)
            const parsed = try ApiMemory.parseCurlOutput(std.testing.allocator, out);
                           ^
 error: 'memory.lifecycle.snapshot.test.R3: snapshot export then import roundtrip preserves all entries' failed:
        expected 3, found 0
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x104a5b35f in expectEqualInner__anon_54688 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x1038f335f in expectEqualInner__anon_54648 (test)
                        return error.TestExpectedEqual;
                        ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/snapshot.zig:164:5: 0x105021877 in test.R3: snapshot export then import roundtrip preserves all entries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/snapshot.zig:164:5: 0x103eba5f7 in test.R3: snapshot export then import roundtrip preserves all entries (test)
            try std.testing.expectEqual(@as(usize, 3), hydrated);
            ^
 error: 'memory.lifecycle.snapshot.test.R3: shouldHydrate returns true when memory is empty and snapshot exists' failed:
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x104a5b3df in expect (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x1038f33df in expect (test)
            if (!ok) return error.TestUnexpectedResult;
                     ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/snapshot.zig:205:5: 0x105022a9f in test.R3: shouldHydrate returns true when memory is empty and snapshot exists (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/snapshot.zig:205:5: 0x103ebb81f in test.R3: shouldHydrate returns true when memory is empty and snapshot exists (test)
            try std.testing.expect(shouldHydrate(allocator, mem, workspace_dir));
            ^
 error: 'memory.lifecycle.hygiene.test.runIfDue with markdown backend does not append hygiene marker twice inside interval' failed:
        expected 3, found 2
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x104a5b35f in expectEqualInner__anon_54688 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x1038f335f in expectEqualInner__anon_54648 (test)
                        return error.TestExpectedEqual;
                        ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:266:5: 0x1050239b3 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:266:5: 0x103ebc733 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
            try std.testing.expectEqual(before + 1, after_first);
            ^
-       [DebugAllocator] (err): memory address 0x10f0e0080 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111da0200 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:341:45: 0x104ba87bf in implCount (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:341:45: 0x103a40bc3 in implCount (test)
                const all = try self_.readAllEntries(self_.allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:370:33: 0x104acce93 in count (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:370:33: 0x103964e93 in count (test)
                return self.vtable.count(self.ptr);
                                        ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:254:33: 0x105023573 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:254:33: 0x103ebc2f3 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
            const before = try mem.count();
                                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f0e0200 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111da0380 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:341:45: 0x104ba87bf in implCount (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:341:45: 0x103a40bc3 in implCount (test)
                const all = try self_.readAllEntries(self_.allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:370:33: 0x104acce93 in count (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:370:33: 0x103964e93 in count (test)
                return self.vtable.count(self.ptr);
                                        ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:254:33: 0x105023573 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:254:33: 0x103ebc2f3 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
            const before = try mem.count();
                                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f0e0380 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111da0580 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:272:45: 0x104ba77cb in implGet (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:272:45: 0x103a3fbcf in implGet (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:358:31: 0x104accf5f in get (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:358:31: 0x103964f5f in get (test)
                return self.vtable.get(self.ptr, allocator, key);
                                      ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:87:24: 0x104e35e73 in shouldRunNow (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:87:24: 0x103cce1fb in shouldRunNow (test)
            const entry = m.get(allocator, LAST_HYGIENE_KEY) catch return true;
                               ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:47:22: 0x104e32633 in runIfDue (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:47:22: 0x103cca9bb in runIfDue (test)
            if (!shouldRunNow(allocator, config, mem)) return .{};
                             ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:264:17: 0x1050236c7 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:264:17: 0x103ebc447 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
            _ = runIfDue(std.testing.allocator, cfg, mem);
                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
        
-       [DebugAllocator] (err): memory address 0x10f0e0500 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111da0700 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:272:45: 0x104ba77cb in implGet (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:272:45: 0x103a3fbcf in implGet (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:358:31: 0x104accf5f in get (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:358:31: 0x103964f5f in get (test)
                return self.vtable.get(self.ptr, allocator, key);
                                      ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:87:24: 0x104e35e73 in shouldRunNow (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:87:24: 0x103cce1fb in shouldRunNow (test)
            const entry = m.get(allocator, LAST_HYGIENE_KEY) catch return true;
                               ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:47:22: 0x104e32633 in runIfDue (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:47:22: 0x103cca9bb in runIfDue (test)
            if (!shouldRunNow(allocator, config, mem)) return .{};
                             ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:264:17: 0x1050236c7 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:264:17: 0x103ebc447 in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
            _ = runIfDue(std.testing.allocator, cfg, mem);
                        ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
        
-       [DebugAllocator] (err): memory address 0x10f0e0700 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111da0980 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:341:45: 0x104ba87bf in implCount (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:341:45: 0x103a40bc3 in implCount (test)
                const all = try self_.readAllEntries(self_.allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:370:33: 0x104acce93 in count (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:370:33: 0x103964e93 in count (test)
                return self.vtable.count(self.ptr);
                                        ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:265:38: 0x1050236df in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:265:38: 0x103ebc45f in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
            const after_first = try mem.count();
                                             ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f0e0880 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111da0b00 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:341:45: 0x104ba87bf in implCount (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:341:45: 0x103a40bc3 in implCount (test)
                const all = try self_.readAllEntries(self_.allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:370:33: 0x104acce93 in count (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:370:33: 0x103964e93 in count (test)
                return self.vtable.count(self.ptr);
                                        ^
-       /Users/j-p/dev/nullclaw/src/memory/lifecycle/hygiene.zig:265:38: 0x1050236df in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/lifecycle/hygiene.zig:265:38: 0x103ebc45f in test.runIfDue with markdown backend does not append hygiene marker twice inside interval (test)
            const after_first = try mem.count();
                                             ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
+               return mainServer(init) catch @panic("internal test runner failure");
+                                ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
+           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                              ^
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
 error: 'memory.retrieval.qmd.test.exportSessions with mock session store writes files' failed:
-       x1049791b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-       
        [qmd] (warn): qmd process spawn failed: error.FileNotFound
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:4861:35: 0x104895e0b in dirOpenFilePosix (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Threaded.zig:4861:35: 0x10372de0b in dirOpenFilePosix (test)
                                .NOENT => return error.FileNotFound,
                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:508:5: 0x1048d3883 in openFile (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:508:5: 0x10376b883 in openFile (test)
            return io.vtable.dirOpenFile(io.userdata, dir, sub_path, flags);
            ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:1245:16: 0x104b4a6d3 in readFileAllocOptions__anon_66181 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:1245:16: 0x1039e26d3 in readFileAllocOptions__anon_66143 (test)
            var file = try dir.openFile(io, sub_path, .{
                       ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:1223:5: 0x104ab47c3 in readFileAlloc (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/Io/Dir.zig:1223:5: 0x10394c7c3 in readFileAlloc (test)
            return readFileAllocOptions(dir, io, sub_path, gpa, limit, .of(u8), null);
            ^
-       /Users/j-p/dev/nullclaw/src/memory/retrieval/qmd.zig:550:21: 0x10502964f in test.exportSessions with mock session store writes files (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/retrieval/qmd.zig:550:21: 0x103ec23cf in test.exportSessions with mock session store writes files (test)
            const content = try tmp.dir.readFileAlloc(std.Options.debug_io, "session-1.md", allocator, .limited(4096));
                            ^
 error: 'memory.retrieval.qmd.test.pruneExportedSessions deletes old files' failed:
        [qmd] (warn): skipping unsafe session id in qmd export: '../escape'
-       expected 1, found 3
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x104e675e7 in expectEqualInner__anon_448753 (test)
+       expected 1, found 2
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x103cff96f in expectEqualInner__anon_448657 (test)
                        return error.TestExpectedEqual;
                        ^
-       /Users/j-p/dev/nullclaw/src/memory/retrieval/qmd.zig:644:5: 0x10502ccaf in test.pruneExportedSessions deletes old files (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/retrieval/qmd.zig:644:5: 0x103ec5a2f in test.pruneExportedSessions deletes old files (test)
            try std.testing.expectEqual(@as(u32, 1), deleted);
            ^
 error: 'memory.engines.contract_test.test.contract: markdown append-only' failed:
@@ -564,206 +564,208 @@ error: 'memory.engines.contract_test.test.contract: markdown append-only' failed
        [provider_router] (warn): primary provider 'failing' failed (class=transient): error.EmbeddingApiError
        [provider_router] (warn): fallback provider 'failing' failed (class=transient): error.EmbeddingApiError
        expected 1, found 2
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x104a5b35f in expectEqualInner__anon_54688 (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:118:17: 0x1038f335f in expectEqualInner__anon_54648 (test)
                        return error.TestExpectedEqual;
                        ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:161:5: 0x10507c977 in contractMarkdown (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:161:5: 0x103f156f7 in contractMarkdown (test)
            try std.testing.expectEqual(@as(usize, 1), try m.count());
            ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:277:5: 0x10507d8b7 in test.contract: markdown append-only (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:277:5: 0x103f16637 in test.contract: markdown append-only (test)
            try contractMarkdown(mem.memory());
            ^
-       [DebugAllocator] (err): memory address 0x10f180080 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111dc0380 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:341:45: 0x104ba87bf in implCount (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:341:45: 0x103a40bc3 in implCount (test)
                const all = try self_.readAllEntries(self_.allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:370:33: 0x104acce93 in count (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:370:33: 0x103964e93 in count (test)
                return self.vtable.count(self.ptr);
                                        ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:161:59: 0x10507c7cb in contractMarkdown (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:161:59: 0x103f1554b in contractMarkdown (test)
            try std.testing.expectEqual(@as(usize, 1), try m.count());
                                                                  ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:277:25: 0x10507d73f in test.contract: markdown append-only (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:277:25: 0x103f164bf in test.contract: markdown append-only (test)
            try contractMarkdown(mem.memory());
                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f180200 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111dc0500 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:341:45: 0x104ba87bf in implCount (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:341:45: 0x103a40bc3 in implCount (test)
                const all = try self_.readAllEntries(self_.allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:370:33: 0x104acce93 in count (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:370:33: 0x103964e93 in count (test)
                return self.vtable.count(self.ptr);
                                        ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:161:59: 0x10507c7cb in contractMarkdown (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:161:59: 0x103f1554b in contractMarkdown (test)
            try std.testing.expectEqual(@as(usize, 1), try m.count());
                                                                  ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:277:25: 0x10507d73f in test.contract: markdown append-only (test)
-           try contractMarkdown(mem.memory());
-                               ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
-                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
-                                                                          ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
-               return mainServer(init) catch @panic("internal test runner failure");
-                                ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
-           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
-                                                                                              ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engi
 error: 'memory.engines.contract_test.test.contract: markdown session_id' leaked 4 allocations:
-       [DebugAllocator] (err): memory address 0x10f240080 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       nes/contract_test.zig:277:25: 0x103f164bf in test.contract: markdown append-only (test)
+           try contractMarkdown(mem.memory());
+                               ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
+                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
+                                                                          ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
+               return mainServer(init) catch @panic("internal test runner failure");
+                                ^
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
+           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                              ^
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
+       
+       [DebugAllocator] (err): memory address 0x111e60200 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:214:45: 0x104ba682b in implRecall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:214:45: 0x103a3ec2f in implRecall (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:354:34: 0x104acd04b in recall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:354:34: 0x10396504b in recall (test)
                return self.vtable.recall(self.ptr, allocator, query, limit, session_id);
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:205:34: 0x10507ac37 in contractSessionId (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:205:34: 0x103f139b7 in contractSessionId (test)
            const recalled = try m.recall(allocator, "session", 10, "session-42");
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x10507db17 in test.contract: markdown session_id (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x103f16897 in test.contract: markdown session_id (test)
            try contractSessionId(mem.memory());
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f240200 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111e60380 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:214:45: 0x104ba682b in implRecall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:214:45: 0x103a3ec2f in implRecall (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:354:34: 0x104acd04b in recall (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:354:34: 0x10396504b in recall (test)
                return self.vtable.recall(self.ptr, allocator, query, limit, session_id);
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:205:34: 0x10507ac37 in contractSessionId (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:205:34: 0x103f139b7 in contractSessionId (test)
            const recalled = try m.recall(allocator, "session", 10, "session-42");
                                         ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x10507db17 in test.contract: markdown session_id (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x103f16897 in test.contract: markdown session_id (test)
            try contractSessionId(mem.memory());
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f240380 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111e60580 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:308:45: 0x104ba7d63 in implList (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:308:45: 0x103a40167 in implList (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:362:32: 0x104ae64cb in list (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:362:32: 0x10397e4cb in list (test)
                return self.vtable.list(self.ptr, allocator, category, session_id);
                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:209:30: 0x10507ad07 in contractSessionId (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:209:30: 0x103f13a87 in contractSessionId (test)
            const listed = try m.list(allocator, null, "session-42");
                                     ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x10507db17 in test.contract: markdown session_id (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x103f16897 in test.contract: markdown session_id (test)
            try contractSessionId(mem.memory());
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
        
-       [DebugAllocator] (err): memory address 0x10f240500 leaked: 
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x1048e0d5f in dupe__anon_16171 (test)
+       [DebugAllocator] (err): memory address 0x111e60700 leaked: 
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/mem/Allocator.zig:450:40: 0x103778d5f in dupe__anon_16132 (test)
            const new_buf = try allocator.alloc(T, m.len);
                                               ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:166:48: 0x104ba5253 in readAllEntries (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:166:48: 0x103a3d657 in readAllEntries (test)
                    const key_copy = try allocator.dupe(u8, canonical);
                                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/markdown.zig:308:45: 0x104ba7d63 in implList (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/markdown.zig:308:45: 0x103a40167 in implList (test)
                const all = try self_.readAllEntries(allocator);
                                                    ^
-       /Users/j-p/dev/nullclaw/src/memory/root.zig:362:32: 0x104ae64cb in list (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/root.zig:362:32: 0x10397e4cb in list (test)
                return self.vtable.list(self.ptr, allocator, category, session_id);
                                       ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:209:30: 0x10507ad07 in contractSessionId (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:209:30: 0x103f13a87 in contractSessionId (test)
            const listed = try m.list(allocator, null, "session-42");
                                     ^
-       /Users/j-p/dev/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x10507db17 in test.contract: markdown session_id (test)
+       /Users/asil/.openclaw/workspace/nullclaw/src/memory/engines/contract_test.zig:288:26: 0x103f16897 in test.contract: markdown session_id (test)
            try contractSessionId(mem.memory());
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x10497b2a7 in mainServer (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1038132a7 in mainServer (test)
                        const status: TestResults.Status = if (test_fn.func()) |v| s: {
                                                                           ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1049791b7 in main (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1038111b7 in main (test)
                return mainServer(init) catch @panic("internal test runner failure");
                                 ^
-       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x104978caf in callMain (test)
+       /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x103810caf in callMain (test)
            if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
                                                                                               ^
-       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
-failed command: ./.zig-cache/o/e1de62bd0b57a5f97cb2823662fcd720/test --cache-dir=./.zig-cache --seed=0x7dbba51d --listen=-
+       ???:?:?: 0x1877b1d53 in start (/usr/lib/dyld)
+failed command: ./.zig-cache/o/7e68ce7e779a13ed7f7d040ffefd8447/test --cache-dir=./.zig-cache --seed=0xfd1a9e79 --listen=-
 
 Build Summary: 6/8 steps succeeded (1 failed); 873/895 tests passed (22 failed)
 test transitive failure
 +- run test 873 pass, 22 fail (895 total); 20 leaks
-|  +- compile test Debug native cached 208ms MaxRSS:39M
+|  +- compile test Debug native success 21s MaxRSS:751M
 |     +- WriteFile sqlite3.h cached
-|     +- compile lib sqlite3 Debug native cached 156ms MaxRSS:38M
+|     +- compile lib sqlite3 Debug native cached 87ms MaxRSS:30M
 |     +- compile lib sqlite3 Debug native (reused)
 |     +- options cached
-+- run test success 9ms MaxRSS:3M
-   +- compile test Debug native cached 317ms MaxRSS:39M
++- run test success 606ms MaxRSS:2M
+   +- compile test Debug native success 4s MaxRSS:227M
       +- WriteFile sqlite3.h (reused)
       +- compile lib sqlite3 Debug native (reused)
       +- compile lib sqlite3 Debug native (reused)
@@ -773,4 +775,4 @@ test transitive failure
       +- options (reused)
 
 error: the following build command failed with exit code 1:
-.zig-cache/o/97ad94d4407b5c06eb3e53426824537f/build /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/zig /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib /Users/j-p/dev/nullclaw .zig-cache /Users/j-p/.cache/zig --seed 0x7dbba51d -Zd734185228c12dde test -Dtest-file=memory --summary all
+.zig-cache/o/0105c9ee9be62dc964bdfac84a8967a7/build /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib /Users/asil/.openclaw/workspace/nullclaw .zig-cache /Users/asil/.cache/zig --seed 0xfd1a9e79 -Z4cfb3cd8664855dc test -Dtest-file=memory --summary all

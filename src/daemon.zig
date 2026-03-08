@@ -149,6 +149,11 @@ pub fn isShutdownRequested() bool {
     return shutdown_requested.load(.acquire);
 }
 
+/// Reset shutdown flag (for test isolation)
+pub fn resetShutdownRequested() void {
+    shutdown_requested.store(false, .release);
+}
+
 /// Gateway thread entry point.
 fn gatewayThread(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16, state: *DaemonState, event_bus: *bus_mod.Bus) void {
     const gateway = @import("gateway.zig");

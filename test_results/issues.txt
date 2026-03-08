@@ -1,113 +1,12 @@
-PASS: channels/signal
+PASS: agent/root
+PASS: agent/prompt
 PASS: channels/telegram
-PASS: channels/discord
 PASS: channels/cli
+PASS: agent/dispatcher
+PASS: agent/compaction
+PASS: agent/routing
+PASS: channels/discord
 PASS: channels/slack
-PASS: channels/matrix
-PASS: channels/email
-PASS: channels/irc
-PASS: memory/engines
-PASS: memory/engines/contract_test
-PASS: memory/engines/markdown
-PASS: memory/engines/sqlite
-PASS: memory/lifecycle
-PASS: memory/lifecycle/cache
-PASS: memory/lifecycle/snapshot
-PASS: memory/lifecycle/hygiene
-PASS: memory/retrieval
-PASS: memory/vector
-PASS: providers/openai
-PASS: providers/anthropic
-PASS: providers/gemini
-PASS: providers/ollama
-PASS: providers/factory
-FAIL_ERROR: agent
-  Failed tests:
-    • daemon.test.mergeSchedulerTickChangesAndSave preserves runtime agent fields
-    • agent.root.test.Agent buildProviderMessages allows workspace image paths
-    • agent.root.test.turn refreshes system prompt after workspace markdown change
-    • agent.root.test.turn refreshes system prompt after TOOLS.md change
-    • agent.root.test.turn refreshes system prompt after USER.md change
-    • agent.prompt.test.buildSystemPrompt includes AGENTS operational guidance
-    • agent.prompt.test.buildSystemPrompt includes TOOLS availability guidance
-    • agent.prompt.test.buildSystemPrompt blocks AGENTS symlink escape outside workspace
-    • agent.prompt.test.buildSystemPrompt includes core sections
-    • agent.prompt.test.buildSystemPrompt includes channel attachment marker guidance
-
-  \033[0;31m💥 CRASH DETECTED:\033[0m
-           thread 645165 panic: attempt to use null value
-           /Users/j-p/dev/nullclaw/src/agent/dispatcher.zig:2533:66: 0x1032a4a37 in test.buildAssistantHistoryWithToolCalls escapes special chars in name (test)
-               const tc_start = std.mem.indexOf(u8, result, "<tool_call>\n").?;
----
-PASS: security/policy
-PASS: security/pairing
-PASS: security/secrets
-PASS: security/tracker
-PASS: tools/shell
-PASS: tools/file_append
-PASS: tools/memory
-FAIL_ERROR: security
-  Failed tests:
-    • security.policy.test.rate tracker records actions
-    • security.policy.test.record action blocks over limit
-    • security.policy.test.is rate limited reflects count
-    • security.policy.test.record action returns false on exact boundary plus one
-    • security.tracker.test.rate tracker records and counts
-    • security.tracker.test.rate tracker blocks when over limit
-    • security.tracker.test.rate tracker is limited at boundary
-    • security.tracker.test.rate tracker reset clears actions
-    • security.tracker.test.rate tracker remaining decreases
-    • security.tracker.test.rate tracker remaining at zero when full
----
-PASS: tools/cron
-PASS: tools/browser
-FAIL_ERROR: providers
-  Failed tests:
-    • providers.gemini.test.GeminiCliCredentials isExpired with future timestamp returns false
-    • providers.gemini.test.GeminiCliCredentials isExpired with 5-min buffer edge case
-    • providers.gemini.test.writeCredentialsJson produces valid JSON
-    • providers.gemini.test.writeCredentialsJson without refresh token
-    • providers.gemini.test.writeCredentialsJson escapes token strings
-    • providers.sse.test.parseAnthropicSseLine empty line returns skip
-    • providers.claude_cli.test.ClaudeCliProvider.init returns CliNotFound for missing binary
-    • providers.codex_cli.test.CodexCliProvider checkCliAvailable returns CliNotFound for missing binary
-
-  \033[0;31m💥 CRASH DETECTED:\033[0m
-           thread 648979 panic: start index 6 is larger than end index 0
-           /Users/j-p/dev/nullclaw/src/providers/sse.zig:186:25: 0x10186a8a3 in parseAnthropicSseLine (test)
-               const data = trimmed[data_prefix.len..];
----
-FAIL_ERROR: memory
-  Failed tests:
-    • onboard.test.scaffoldWorkspace treats memory-backed workspace as existing and skips BOOTSTRAP
-    • memory.engines.sqlite.test.sqlite fts5 syncs on insert
-    • memory.engines.sqlite.test.sqlite fts5 syncs on update
-    • memory.engines.registry.test.formatEnabledBackends reflects compiled registry
-    • memory.vector.store.test.healthCheck returns ok with entry count
-    • memory.vector.circuit_breaker.test.allow returns false when open before cooldown
-    • memory.vector.circuit_breaker.test.open state blocks all requests before cooldown
-    • agent.prompt.test.buildSystemPrompt injects memory.md when MEMORY.md is absent
-    • agent.prompt.test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct
-    • memory.lifecycle.diagnostics.test.formatReport produces valid output
----
-FAIL_ERROR: tools
-  Failed tests:
-    • tools.delegate.test.delegate executes gracefully without config
-    • tools.delegate.test.delegate with valid params handles missing provider gracefully
-    • tools.delegate.test.delegate with context field handles missing provider gracefully
-    • tools.delegate.test.delegate depth within limit proceeds
-    • tools.http_request.test.execute rejects non-allowlisted domain
-    • tools.web_search.test.formatBraveResults parses valid JSON
-    • tools.web_search.test.formatSearxngResults parses valid JSON
-    • tools.web_search.test.formatDuckDuckGoResults parses related topics
-    • tools.web_fetch.test.WebFetchTool localhost blocked
-    • agent.dispatcher.test.buildToolInstructions empty tools
-
-  \033[0;31m💥 CRASH DETECTED:\033[0m
-           Segmentation fault at address 0x1021e0000
-           ???:?:?: 0x19e3efb90 in _OSAtomicTestAndClear (/usr/lib/system/libsystem_platform.dylib)
-           /Users/j-p/dev/nullclaw/src/tools/root.zig:141:31: 0x1011cf8f3 in deinit (test)
----
 FAIL_ERROR: channels
   Failed tests:
     • channels.discord.test.discord handleMessageCreate publishes inbound guild message with metadata
@@ -118,3 +17,33 @@ FAIL_ERROR: channels
     • channels.signal.test.process envelope attachment only not skipped when ignore disabled
     • channels.email.test.consent granted allows send attempt
 ---
+PASS: channels/signal
+PASS: channels/matrix
+PASS: channels/email
+PASS: channels/irc
+PASS: memory/engines/contract_test
+PASS: memory/engines
+PASS: memory/engines/markdown
+PASS: memory/engines/sqlite
+PASS: memory/lifecycle
+PASS: memory/lifecycle/cache
+PASS: memory/lifecycle/hygiene
+PASS: memory/lifecycle/snapshot
+PASS: memory/retrieval
+PASS: memory/vector
+PASS: providers/anthropic
+PASS: providers/openai
+PASS: providers/gemini
+PASS: providers/factory
+PASS: providers/ollama
+PASS: security/policy
+PASS: security/pairing
+PASS: providers/helpers
+PASS: security/secrets
+PASS: test_isolation
+PASS: security/tracker
+PASS: tools/shell
+PASS: tools/file_append
+PASS: tools/browser
+PASS: tools/memory
+PASS: tools/cron

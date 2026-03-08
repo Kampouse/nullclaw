@@ -1,121 +1,29 @@
-[0;90m[20:07:19][0m Starting: agent
-[0;90m[20:07:19][0m Starting: channels
-[0;90m[20:07:19][0m Starting: channels/cli
-[0;90m[20:07:19][0m Starting: channels/telegram
-[0;90m[20:07:19][0m Starting: channels/discord
-[0;90m[20:07:19][0m Starting: channels/slack
-[0;90m[20:07:19][0m Starting: channels/signal
-[0;90m[20:07:19][0m Starting: channels/matrix
-[0;90m[20:07:21][0m [0;32mPASS:[0m channels/signal
-[0;90m[20:07:21][0m [0;32mPASS:[0m channels/telegram
-[0;90m[20:07:21][0m Starting: channels/email
-[0;90m[20:07:21][0m Starting: channels/irc
-[0;90m[20:07:21][0m [0;32mPASS:[0m channels/discord
-[0;90m[20:07:21][0m [0;32mPASS:[0m channels/slack
-[0;90m[20:07:21][0m [0;32mPASS:[0m channels/cli
-[0;90m[20:07:21][0m Starting: memory
-[0;90m[20:07:21][0m Starting: memory/engines
-[0;90m[20:07:21][0m Starting: memory/engines/contract_test
-[0;90m[20:07:22][0m [0;32mPASS:[0m channels/matrix
-[0;90m[20:07:22][0m Starting: memory/engines/markdown
-[0;90m[20:07:23][0m [0;32mPASS:[0m channels/email
-[0;90m[20:07:23][0m [0;32mPASS:[0m channels/irc
-[0;90m[20:07:23][0m Starting: memory/engines/sqlite
-[0;90m[20:07:23][0m Starting: memory/lifecycle
-[0;90m[20:07:23][0m [0;32mPASS:[0m memory/engines
-[0;90m[20:07:23][0m Starting: memory/lifecycle/cache
-[0;90m[20:07:23][0m [0;32mPASS:[0m memory/engines/contract_test
-[0;90m[20:07:23][0m [0;32mPASS:[0m memory/engines/markdown
-[0;90m[20:07:23][0m Starting: memory/lifecycle/hygiene
-[0;90m[20:07:23][0m Starting: memory/lifecycle/snapshot
-[0;90m[20:07:25][0m [0;32mPASS:[0m memory/engines/sqlite
-[0;90m[20:07:25][0m [0;32mPASS:[0m memory/lifecycle
-[0;90m[20:07:25][0m Starting: memory/retrieval
-[0;90m[20:07:25][0m [0;32mPASS:[0m memory/lifecycle/cache
-[0;90m[20:07:25][0m Starting: memory/vector
-[0;90m[20:07:25][0m Starting: providers
-[0;90m[20:07:25][0m [0;32mPASS:[0m memory/lifecycle/snapshot
-[0;90m[20:07:25][0m [0;32mPASS:[0m memory/lifecycle/hygiene
-[0;90m[20:07:25][0m Starting: providers/anthropic
-[0;90m[20:07:25][0m Starting: providers/openai
-[0;90m[20:07:26][0m [0;32mPASS:[0m memory/retrieval
-[0;90m[20:07:26][0m Starting: providers/gemini
-[0;90m[20:07:27][0m [0;32mPASS:[0m memory/vector
-[0;90m[20:07:27][0m Starting: providers/ollama
-[0;90m[20:07:27][0m [0;32mPASS:[0m providers/openai
-[0;90m[20:07:27][0m [0;32mPASS:[0m providers/anthropic
-[0;90m[20:07:27][0m Starting: providers/factory
-[0;90m[20:07:27][0m Starting: security
-[0;90m[20:07:28][0m [0;32mPASS:[0m providers/gemini
-[0;90m[20:07:28][0m Starting: security/policy
-[0;90m[20:07:28][0m [0;32mPASS:[0m providers/ollama
-[0;90m[20:07:28][0m Starting: security/pairing
-[0;90m[20:07:28][0m [0;32mPASS:[0m providers/factory
-[0;90m[20:07:28][0m Starting: security/secrets
-    • daemon.test.mergeSchedulerTickChangesAndSave preserves runtime agent fields
-    • agent.root.test.Agent buildProviderMessages allows workspace image paths
-    • agent.root.test.turn refreshes system prompt after workspace markdown change
-    • agent.root.test.turn refreshes system prompt after TOOLS.md change
-    • agent.root.test.turn refreshes system prompt after USER.md change
-    • agent.prompt.test.buildSystemPrompt includes AGENTS operational guidance
-    • agent.prompt.test.buildSystemPrompt includes TOOLS availability guidance
-    • agent.prompt.test.buildSystemPrompt blocks AGENTS symlink escape outside workspace
-    • agent.prompt.test.buildSystemPrompt includes core sections
-    • agent.prompt.test.buildSystemPrompt includes channel attachment marker guidance
-[0;90m[20:07:29][0m Starting: security/tracker
-[0;90m[20:07:30][0m [0;32mPASS:[0m security/policy
-[0;90m[20:07:30][0m Starting: tools
-[0;90m[20:07:30][0m [0;32mPASS:[0m security/pairing
-[0;90m[20:07:30][0m Starting: tools/shell
-[0;90m[20:07:30][0m [0;32mPASS:[0m security/secrets
-[0;90m[20:07:30][0m Starting: tools/file_append
-[0;90m[20:07:31][0m [0;32mPASS:[0m security/tracker
-[0;90m[20:07:31][0m Starting: tools/memory
-[0;90m[20:07:32][0m [0;32mPASS:[0m tools/shell
-[0;90m[20:07:32][0m [0;32mPASS:[0m tools/file_append
-[0;90m[20:07:32][0m Starting: tools/browser
-[0;90m[20:07:32][0m Starting: tools/cron
-[0;90m[20:07:33][0m [0;32mPASS:[0m tools/memory
-    • security.policy.test.rate tracker records actions
-    • security.policy.test.record action blocks over limit
-    • security.policy.test.is rate limited reflects count
-    • security.policy.test.record action returns false on exact boundary plus one
-    • security.tracker.test.rate tracker records and counts
-    • security.tracker.test.rate tracker blocks when over limit
-    • security.tracker.test.rate tracker is limited at boundary
-    • security.tracker.test.rate tracker reset clears actions
-    • security.tracker.test.rate tracker remaining decreases
-    • security.tracker.test.rate tracker remaining at zero when full
-[0;90m[20:07:33][0m [0;32mPASS:[0m tools/cron
-[0;90m[20:07:33][0m [0;32mPASS:[0m tools/browser
-    • providers.gemini.test.GeminiCliCredentials isExpired with future timestamp returns false
-    • providers.gemini.test.GeminiCliCredentials isExpired with 5-min buffer edge case
-    • providers.gemini.test.writeCredentialsJson produces valid JSON
-    • providers.gemini.test.writeCredentialsJson without refresh token
-    • providers.gemini.test.writeCredentialsJson escapes token strings
-    • providers.sse.test.parseAnthropicSseLine empty line returns skip
-    • providers.claude_cli.test.ClaudeCliProvider.init returns CliNotFound for missing binary
-    • providers.codex_cli.test.CodexCliProvider checkCliAvailable returns CliNotFound for missing binary
-    • onboard.test.scaffoldWorkspace treats memory-backed workspace as existing and skips BOOTSTRAP
-    • memory.engines.sqlite.test.sqlite fts5 syncs on insert
-    • memory.engines.sqlite.test.sqlite fts5 syncs on update
-    • memory.engines.registry.test.formatEnabledBackends reflects compiled registry
-    • memory.vector.store.test.healthCheck returns ok with entry count
-    • memory.vector.circuit_breaker.test.allow returns false when open before cooldown
-    • memory.vector.circuit_breaker.test.open state blocks all requests before cooldown
-    • agent.prompt.test.buildSystemPrompt injects memory.md when MEMORY.md is absent
-    • agent.prompt.test.buildSystemPrompt includes both MEMORY.md and memory.md when distinct
-    • memory.lifecycle.diagnostics.test.formatReport produces valid output
-    • tools.delegate.test.delegate executes gracefully without config
-    • tools.delegate.test.delegate with valid params handles missing provider gracefully
-    • tools.delegate.test.delegate with context field handles missing provider gracefully
-    • tools.delegate.test.delegate depth within limit proceeds
-    • tools.http_request.test.execute rejects non-allowlisted domain
-    • tools.web_search.test.formatBraveResults parses valid JSON
-    • tools.web_search.test.formatSearxngResults parses valid JSON
-    • tools.web_search.test.formatDuckDuckGoResults parses related topics
-    • tools.web_fetch.test.WebFetchTool localhost blocked
-    • agent.dispatcher.test.buildToolInstructions empty tools
+[0;90m[20:46:44][0m Starting: agent/prompt
+[0;90m[20:46:44][0m Starting: agent/root
+[0;90m[20:46:44][0m Starting: agent/dispatcher
+[0;90m[20:46:44][0m Starting: agent/compaction
+[0;90m[20:46:44][0m Starting: agent/routing
+[0;90m[20:46:44][0m Starting: channels
+[0;90m[20:46:44][0m Starting: channels/cli
+[0;90m[20:46:44][0m Starting: channels/telegram
+[0;90m[20:46:45][0m [0;32mPASS:[0m agent/root
+[0;90m[20:46:45][0m [0;32mPASS:[0m agent/prompt
+[0;90m[20:46:45][0m Starting: channels/discord
+[0;90m[20:46:45][0m Starting: channels/slack
+[0;90m[20:47:00][0m [0;32mPASS:[0m channels/telegram
+[0;90m[20:47:00][0m Starting: channels/signal
+[0;90m[20:47:00][0m [0;32mPASS:[0m channels/cli
+[0;90m[20:47:00][0m Starting: channels/matrix
+[0;90m[20:47:00][0m [0;32mPASS:[0m agent/dispatcher
+[0;90m[20:47:01][0m Starting: channels/email
+[0;90m[20:47:01][0m [0;32mPASS:[0m agent/compaction
+[0;90m[20:47:01][0m Starting: channels/irc
+[0;90m[20:47:01][0m [0;32mPASS:[0m agent/routing
+[0;90m[20:47:01][0m Starting: memory/engines
+[0;90m[20:47:01][0m [0;32mPASS:[0m channels/discord
+[0;90m[20:47:02][0m Starting: memory/engines/contract_test
+[0;90m[20:47:02][0m [0;32mPASS:[0m channels/slack
+[0;90m[20:47:02][0m Starting: memory/engines/markdown
     • channels.discord.test.discord handleMessageCreate publishes inbound guild message with metadata
     • channels.discord.test.discord handleMessageCreate sets is_dm metadata for direct messages
     • channels.slack.test.slack processHistoryMessage publishes inbound message to bus
@@ -123,3 +31,56 @@
     • channels.imessage.test.imessage publishInboundMessage emits direct session key and dm metadata
     • channels.signal.test.process envelope attachment only not skipped when ignore disabled
     • channels.email.test.consent granted allows send attempt
+[0;90m[20:47:14][0m Starting: memory/engines/sqlite
+[0;90m[20:47:14][0m [0;32mPASS:[0m channels/signal
+[0;90m[20:47:14][0m Starting: memory/lifecycle
+[0;90m[20:47:15][0m [0;32mPASS:[0m channels/matrix
+[0;90m[20:47:15][0m Starting: memory/lifecycle/cache
+[0;90m[20:47:15][0m [0;32mPASS:[0m channels/email
+[0;90m[20:47:15][0m Starting: memory/lifecycle/hygiene
+[0;90m[20:47:15][0m [0;32mPASS:[0m channels/irc
+[0;90m[20:47:15][0m Starting: memory/lifecycle/snapshot
+[0;90m[20:47:15][0m [0;32mPASS:[0m memory/engines/contract_test
+[0;90m[20:47:15][0m Starting: memory/retrieval
+[0;90m[20:47:16][0m [0;32mPASS:[0m memory/engines
+[0;90m[20:47:16][0m Starting: memory/vector
+[0;90m[20:47:16][0m [0;32mPASS:[0m memory/engines/markdown
+[0;90m[20:47:16][0m Starting: providers/anthropic
+[0;90m[20:47:30][0m [0;32mPASS:[0m memory/engines/sqlite
+[0;90m[20:47:30][0m Starting: providers/openai
+[0;90m[20:47:30][0m [0;32mPASS:[0m memory/lifecycle
+[0;90m[20:47:30][0m Starting: providers/gemini
+[0;90m[20:47:30][0m [0;32mPASS:[0m memory/lifecycle/cache
+[0;90m[20:47:30][0m Starting: providers/ollama
+[0;90m[20:47:31][0m [0;32mPASS:[0m memory/lifecycle/hygiene
+[0;90m[20:47:31][0m Starting: providers/factory
+[0;90m[20:47:31][0m [0;32mPASS:[0m memory/lifecycle/snapshot
+[0;90m[20:47:31][0m Starting: providers/helpers
+[0;90m[20:47:31][0m [0;32mPASS:[0m memory/retrieval
+[0;90m[20:47:31][0m Starting: security/policy
+[0;90m[20:47:32][0m [0;32mPASS:[0m memory/vector
+[0;90m[20:47:32][0m Starting: security/pairing
+[0;90m[20:47:32][0m [0;32mPASS:[0m providers/anthropic
+[0;90m[20:47:32][0m Starting: security/secrets
+[0;90m[20:47:45][0m [0;32mPASS:[0m providers/openai
+[0;90m[20:47:45][0m Starting: security/tracker
+[0;90m[20:47:45][0m [0;32mPASS:[0m providers/gemini
+[0;90m[20:47:45][0m Starting: tools/shell
+[0;90m[20:47:46][0m [0;32mPASS:[0m providers/factory
+[0;90m[20:47:46][0m Starting: tools/file_append
+[0;90m[20:47:46][0m [0;32mPASS:[0m providers/ollama
+[0;90m[20:47:46][0m Starting: tools/memory
+[0;90m[20:47:46][0m [0;32mPASS:[0m security/policy
+[0;90m[20:47:46][0m Starting: tools/browser
+[0;90m[20:47:47][0m [0;32mPASS:[0m security/pairing
+[0;90m[20:47:47][0m Starting: tools/cron
+[0;90m[20:47:47][0m [0;32mPASS:[0m providers/helpers
+[0;90m[20:47:47][0m Starting: test_isolation
+[0;90m[20:47:47][0m [0;32mPASS:[0m security/secrets
+[0;90m[20:47:47][0m [0;32mPASS:[0m test_isolation
+[0;90m[20:47:57][0m [0;32mPASS:[0m security/tracker
+[0;90m[20:47:57][0m [0;32mPASS:[0m tools/shell
+[0;90m[20:47:58][0m [0;32mPASS:[0m tools/file_append
+[0;90m[20:47:58][0m [0;32mPASS:[0m tools/browser
+[0;90m[20:47:58][0m [0;32mPASS:[0m tools/memory
+[0;90m[20:47:59][0m [0;32mPASS:[0m tools/cron

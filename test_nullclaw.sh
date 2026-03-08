@@ -5,6 +5,13 @@ set -e
 # Zig 0.16 path (required for this project)
 ZIG="${ZIG:-/Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig}"
 
+# Check for --isolate flag
+ISOLATE=false
+if [ "$1" = "--isolate" ]; then
+    ISOLATE=true
+    shift
+fi
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -17,7 +24,13 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 MODULES=(
-    "agent"
+    # Agent sub-modules (more granular for better isolation)
+    "agent/prompt"
+    "agent/root"
+    "agent/dispatcher"
+    "agent/compaction"
+    "agent/routing"
+    # Channels
     "channels"
     "channels/cli"
     "channels/telegram"
@@ -27,7 +40,7 @@ MODULES=(
     "channels/matrix"
     "channels/email"
     "channels/irc"
-    "memory"
+    # Memory sub-modules
     "memory/engines"
     "memory/engines/contract_test"
     "memory/engines/markdown"
@@ -38,23 +51,26 @@ MODULES=(
     "memory/lifecycle/snapshot"
     "memory/retrieval"
     "memory/vector"
-    "providers"
+    # Providers sub-modules
     "providers/anthropic"
     "providers/openai"
     "providers/gemini"
     "providers/ollama"
     "providers/factory"
-    "security"
+    "providers/helpers"
+    # Security sub-modules
     "security/policy"
     "security/pairing"
     "security/secrets"
     "security/tracker"
-    "tools"
+    # Tools sub-modules
     "tools/shell"
     "tools/file_append"
     "tools/memory"
     "tools/browser"
     "tools/cron"
+    # Test isolation
+    "test_isolation"
 )
 
 OUTPUT_DIR="test_results"
