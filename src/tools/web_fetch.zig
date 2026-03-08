@@ -39,27 +39,43 @@ pub const WebFetchTool = struct {
         const url = root.getString(args, "url") orelse
             return ToolResult.fail("Missing required 'url' parameter");
 
+        log.info("web_fetch: Starting fetch for URL: {s}", .{url});
+
         // Validate URL scheme
         if (!std.mem.startsWith(u8, url, "http://") and !std.mem.startsWith(u8, url, "https://")) {
+            log.err("web_fetch: Invalid URL scheme for {s}", .{url});
             return ToolResult.fail("Only http:// and https:// URLs are allowed");
         }
 
-        const uri = std.Uri.parse(url) catch
+        const uri = std.Uri.parse(url) catch {
+            log.err("web_fetch: Failed to parse URL: {s}", .{url});
             return ToolResult.fail("Invalid URL format");
+        };
         const default_port: u16 = if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) 443 else 80;
         const resolved_port: u16 = uri.port orelse default_port;
 
         // SSRF protection and DNS-rebinding hardening:
         // resolve once, validate global address, and connect directly to it.
-        const host = net_security.extractHost(url) orelse
+        const host = net_security.extractHost(url) orelse {
+            log.err("web_fetch: Cannot extract host from URL: {s}", .{url});
             return ToolResult.fail("Invalid URL: cannot extract host");
+        };
+        log.debug("web_fetch: Resolved host: {s}, port: {d}", .{host, resolved_port});
+
         const connect_host = net_security.resolveConnectHost(allocator, host, resolved_port) catch |err| switch (err) {
-            error.LocalAddressBlocked => return ToolResult.fail("Blocked local/private host"),
-            else => return ToolResult.fail("Unable to verify host safety"),
+            error.LocalAddressBlocked => {
+                log.warn("web_fetch: Blocked local/private host: {s}", .{host});
+                return ToolResult.fail("Blocked local/private host");
+            },
+            else => {
+                log.err("web_fetch: Unable to verify host safety for {s}: {}", .{host, err});
+                return ToolResult.fail("Unable to verify host safety");
+            },
         };
         defer allocator.free(connect_host);
 
         const max_chars = parseMaxCharsWithDefault(args, self.default_max_chars);
+        log.debug("web_fetch: max_chars={d}", .{max_chars});
 
         // Step 1: Try fetching with markdown Accept header
         const markdown_headers = [_][]const u8{
@@ -67,10 +83,12 @@ pub const WebFetchTool = struct {
             "Accept: text/markdown, text/plain, text/x-markdown",
         };
 
+        log.info("web_fetch: Fetching {s} with markdown headers", .{url});
         const body = blk: {
             if (shouldUseCurlResolve(host)) {
                 const resolve_entry = try buildCurlResolveEntry(allocator, host, resolved_port, connect_host);
                 defer allocator.free(resolve_entry);
+                log.debug("web_fetch: Using curlGetWithResolve for {s}", .{url});
                 break :blk http_util.curlGetWithResolve(
                     allocator,
                     url,
@@ -79,6 +97,7 @@ pub const WebFetchTool = struct {
                     resolve_entry,
                 );
             }
+            log.debug("web_fetch: Using curlGet for {s}", .{url});
             break :blk http_util.curlGet(
                 allocator,
                 url,
@@ -92,21 +111,24 @@ pub const WebFetchTool = struct {
         };
         defer allocator.free(body);
 
+        log.info("web_fetch: Got {d} bytes from {s}", .{body.len, url});
+
         // Step 2: Check if we got markdown back (naive check)
         const is_markdown = looksLikeMarkdown(body);
 
         if (is_markdown) {
-            log.info("web_fetch: got markdown directly from {s}", .{url});
+            log.info("web_fetch: Got markdown directly from {s}, returning {d} chars", .{url, @min(body.len, max_chars)});
             // Return markdown as-is (truncate if needed)
             const content = if (body.len > max_chars) body[0..max_chars] else body;
             return ToolResult.ok(try allocator.dupe(u8, content));
         }
 
         // Step 3: Convert HTML to markdown (with max_chars for early termination)
-        log.info("web_fetch: converting HTML to markdown for {s}", .{url});
+        log.info("web_fetch: Converting HTML to markdown for {s}", .{url});
         const extracted = try htmlToText(allocator, body, max_chars);
         defer allocator.free(extracted);
 
+        log.info("web_fetch: Successfully extracted {d} chars from {s}", .{extracted.len, url});
         return ToolResult.ok(try allocator.dupe(u8, extracted));
     }
 };
@@ -633,7 +655,7 @@ test "shouldUseCurlResolve skips ipv6 literal hosts" {
 
 test "htmlToText strips script and style" {
     const html = "<html><head><style>body{color:red}</style></head><body><script>alert(1)</script>Hello</body></html>";
-    const text = try htmlToText(testing.allocator, html);
+    const text = try htmlToText(testing.allocator, html, null);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "alert") == null);
     try testing.expect(std.mem.indexOf(u8, text, "color:red") == null);
@@ -642,7 +664,7 @@ test "htmlToText strips script and style" {
 
 test "htmlToText headings become markdown" {
     const html = "<h1>Title</h1><h2>Subtitle</h2><p>Content</p>";
-    const text = try htmlToText(testing.allocator, html);
+    const text = try htmlToText(testing.allocator, html, null);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "# Title") != null);
     try testing.expect(std.mem.indexOf(u8, text, "## Subtitle") != null);
@@ -651,14 +673,15 @@ test "htmlToText headings become markdown" {
 
 test "htmlToText links become markdown" {
     const html = "<a href=\"https://example.com\">Example</a>";
-    const text = try htmlToText(testing.allocator, html);
+    const text = try htmlToText(testing.allocator, html, null);
     defer testing.allocator.free(text);
-    try testing.expectEqualStrings("[Example](https://example.com)", text);
+    // htmlToText adds a Links section at the end
+    try testing.expect(std.mem.indexOf(u8, text, "[Example](https://example.com)") != null);
 }
 
 test "htmlToText list items" {
     const html = "<ul><li>First</li><li>Second</li></ul>";
-    const text = try htmlToText(testing.allocator, html);
+    const text = try htmlToText(testing.allocator, html, null);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "- First") != null);
     try testing.expect(std.mem.indexOf(u8, text, "- Second") != null);
@@ -666,14 +689,14 @@ test "htmlToText list items" {
 
 test "htmlToText entities decoded" {
     const html = "A &amp; B &lt; C &gt; D";
-    const text = try htmlToText(testing.allocator, html);
+    const text = try htmlToText(testing.allocator, html, null);
     defer testing.allocator.free(text);
     try testing.expectEqualStrings("A & B < C > D", text);
 }
 
 test "htmlToText whitespace normalization" {
     const html = "hello   \n\n\n   world";
-    const text = try htmlToText(testing.allocator, html);
+    const text = try htmlToText(testing.allocator, html, null);
     defer testing.allocator.free(text);
     // Multiple whitespace collapsed, newlines become spaces
     try testing.expect(std.mem.indexOf(u8, text, "hello") != null);
@@ -682,19 +705,19 @@ test "htmlToText whitespace normalization" {
 
 test "htmlToText br becomes newline" {
     const html = "line1<br>line2<br/>line3";
-    const text = try htmlToText(testing.allocator, html);
+    const text = try htmlToText(testing.allocator, html, null);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "line1\nline2") != null);
 }
 
 test "htmlToText empty input" {
-    const text = try htmlToText(testing.allocator, "");
+    const text = try htmlToText(testing.allocator, "", null);
     defer testing.allocator.free(text);
     try testing.expectEqual(@as(usize, 0), text.len);
 }
 
 test "htmlToText plain text passthrough" {
-    const text = try htmlToText(testing.allocator, "Just plain text");
+    const text = try htmlToText(testing.allocator, "Just plain text", null);
     defer testing.allocator.free(text);
     try testing.expectEqualStrings("Just plain text", text);
 }

@@ -139,6 +139,12 @@ pub fn parseXmlToolCalls(
                         log.info("✓ Parsed valid JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
                         try isDuplicate.mark(allocator, &seen_calls, call);
                         try calls.append(allocator, call);
+
+                        // Capture text before the tool call
+                        const before = std.mem.trim(u8, remaining[0..start_idx], " \t\r\n");
+                        if (before.len > 0) {
+                            try text_parts.append(allocator, before);
+                        }
                         remaining = remaining[end_idx..];
                     } else {
                         log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
@@ -174,6 +180,12 @@ pub fn parseXmlToolCalls(
                         log.info("✓ Parsed malformed JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
                         try isDuplicate.mark(allocator, &seen_calls, call);
                         try calls.append(allocator, call);
+
+                        // Capture text before the tool call
+                        const before = std.mem.trim(u8, remaining[0..start_idx], " \t\r\n");
+                        if (before.len > 0) {
+                            try text_parts.append(allocator, before);
+                        }
                         remaining = remaining[end_idx..];
                     } else {
                         log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
@@ -223,6 +235,12 @@ pub fn parseXmlToolCalls(
                             log.info("✓ Parsed MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
                             try isDuplicate.mark(allocator, &seen_calls, call);
                             try calls.append(allocator, call);
+
+                            // Capture text before the tool call
+                            const before = std.mem.trim(u8, remaining[0..content_start], " \t\r\n");
+                            if (before.len > 0) {
+                                try text_parts.append(allocator, before);
+                            }
                         } else {
                             log.warn("Skipping duplicate MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
                         }

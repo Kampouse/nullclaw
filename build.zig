@@ -481,6 +481,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("zquic", zquic_dep.module("zquic"));
+
+        // Add tls.zig for better ECDSA certificate support
+        const tls_mod = b.addModule("tls", .{
+            .root_source_file = b.path("lib/tls_zig/src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        module.addImport("tls", tls_mod);
         break :blk module;
     };
 
@@ -537,6 +545,59 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);
+    }
+
+    // ---------- web_search real test ----------
+    if (lib_mod) |mod| {
+        const web_search_test_exe = b.addExecutable(.{
+            .name = "test_web_search_real",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test_web_search_real.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "nullclaw", .module = mod },
+                },
+            }),
+        });
+
+        const web_search_test_step = b.step("test-web-search-real", "Run real web_search integration test");
+        const web_search_test_cmd = b.addRunArtifact(web_search_test_exe);
+        web_search_test_step.dependOn(&web_search_test_cmd.step);
+
+        // Hacker News ECDSA test
+        const hn_test_exe = b.addExecutable(.{
+            .name = "test_hacker_news",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test_hacker_news.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "nullclaw", .module = mod },
+                },
+            }),
+        });
+
+        const hn_test_step = b.step("test-hacker-news", "Run Hacker News ECDSA certificate test");
+        const hn_test_cmd = b.addRunArtifact(hn_test_exe);
+        hn_test_step.dependOn(&hn_test_cmd.step);
+
+        // Hacker News content quality test
+        const hn_content_exe = b.addExecutable(.{
+            .name = "test_hacker_news_content",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test_hacker_news_content.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "nullclaw", .module = mod },
+                },
+            }),
+        });
+
+        const hn_content_step = b.step("test-hn-content", "Run Hacker News content extraction test");
+        const hn_content_cmd = b.addRunArtifact(hn_content_exe);
+        hn_content_step.dependOn(&hn_content_cmd.step);
     }
 
     // ---------- tests ----------

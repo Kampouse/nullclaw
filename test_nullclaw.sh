@@ -68,6 +68,8 @@ MODULES=(
     "tools/memory"
     "tools/browser"
     "tools/cron"
+    "tools/web_fetch"
+    "tools/web_search"
     # Test isolation
     "test_isolation"
 )
