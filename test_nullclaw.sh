@@ -2,6 +2,9 @@
 # Run all test modules in parallel and capture issues
 set -e
 
+# Zig 0.16 path (required for this project)
+ZIG="${ZIG:-/Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig}"
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -83,7 +86,7 @@ run_test() {
 
     echo -e "${GRAY}[$(date '+%H:%M:%S')]${NC} Starting: $module" | tee -a "$OUTPUT_DIR/progress.txt"
 
-    if zig build test -Dtest-file="$module" --summary all > "$output_file" 2>&1; then
+    if "$ZIG" build test -Dtest-file="$module" --summary all > "$output_file" 2>&1; then
         # Check for leaks
         if grep -q "leaks\|leaked" "$output_file"; then
             echo "FAIL_LEAKS: $module" >> "$OUTPUT_DIR/issues.txt"
