@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Options.debug_io;
 
 /// Standalone action tracker for rate limiting.
 /// This is a convenience wrapper that can be used independently of SecurityPolicy.
@@ -66,7 +67,7 @@ pub const RateTracker = struct {
     }
 
     fn prune(self: *RateTracker) void {
-        const now = 0;
+        const now = std.Io.Clock.real.now(io).nanoseconds;
         const cutoff = now - self.window_ns;
         var write_idx: usize = 0;
         for (self.timestamps.items) |ts| {
