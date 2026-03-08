@@ -106,16 +106,16 @@ pub fn loadHistory(allocator: std.mem.Allocator, path: []const u8) ![][]const u8
     };
     defer allocator.free(content);
 
-    var lines = std.ArrayList([]const u8).init(allocator);
-    errdefer lines.deinit(allocator);
+    var lines: std.ArrayList([]const u8) = .empty;
+    defer lines.deinit(allocator);
 
-    var it = std.mem.split(u8, content, "\n");
+    var it = std.mem.splitScalar(u8, content, '\n');
     while (it.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) continue; // Skip blank lines
 
         const dupe = try allocator.dupe(u8, trimmed);
-        try lines.append(dupe);
+        try lines.append(allocator, dupe);
     }
 
     // Keep only the most recent MAX_HISTORY_LINES entries
@@ -125,8 +125,8 @@ pub fn loadHistory(allocator: std.mem.Allocator, path: []const u8) ![][]const u8
         0;
 
     const result = try allocator.alloc([]const u8, lines.items.len - start);
-    for (lines.items[start..], result[0..]) |line, i| {
-        result[i] = line;
+    for (lines.items[start..], result) |src, *dst| {
+        dst.* = src;
     }
 
     // Free the entries we're not keeping

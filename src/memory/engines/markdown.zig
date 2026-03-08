@@ -140,11 +140,7 @@ pub const MarkdownMemory = struct {
         }
 
         var seen_root_paths: std.StringHashMapUnmanaged(void) = .empty;
-        defer {
-            var key_it = seen_root_paths.keyIterator();
-            while (key_it.next()) |key| allocator.free(key.*);
-            seen_root_paths.deinit(allocator);
-        }
+        defer seen_root_paths.deinit(allocator);
 
         const root_candidates = [_]struct {
             filename: []const u8,

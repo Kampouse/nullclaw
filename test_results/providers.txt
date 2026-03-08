@@ -1,0 +1,101 @@
+test
++- run test 467 pass, 7 fail, 1 crash (475 total)
+[provider_router] (warn): primary provider 'failing' failed (class=transient): error.EmbeddingApiError
+[provider_router] (warn): fallback provider 'failing' failed (class=transient): error.EmbeddingApiError
+error: 'providers.gemini.test.GeminiCliCredentials isExpired with future timestamp returns false' failed:
+       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x101462197 in expect (test)
+           if (!ok) return error.TestUnexpectedResult;
+                    ^
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:1251:5: 0x1018166df in test.GeminiCliCredentials isExpired with future timestamp returns false (test)
+           try std.testing.expect(!creds.isExpired());
+           ^
+error: 'providers.gemini.test.GeminiCliCredentials isExpired with 5-min buffer edge case' failed:
+       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:615:14: 0x101462197 in expect (test)
+           if (!ok) return error.TestUnexpectedResult;
+                    ^
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:1290:5: 0x101816ab3 in test.GeminiCliCredentials isExpired with 5-min buffer edge case (test)
+           try std.testing.expect(!creds_valid.isExpired());
+           ^
+error: 'providers.gemini.test.writeCredentialsJson produces valid JSON' failed:
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:255:5: 0x10181d71b in writeCredentialsJson (test)
+           return error.FileWriteError;
+           ^
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:1570:5: 0x10181dcab in test.writeCredentialsJson produces valid JSON (test)
+           try writeCredentialsJson(alloc, creds, path);
+           ^
+error: 'providers.gemini.test.writeCredentialsJson without refresh token' failed:
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:255:5: 0x10181d71b in writeCredentialsJson (test)
+           return error.FileWriteError;
+           ^
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:1610:5: 0x101821b3f in test.writeCredentialsJson without refresh token (test)
+           try writeCredentialsJson(alloc, creds, path);
+           ^
+error: 'providers.gemini.test.writeCredentialsJson escapes token strings' failed:
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:255:5: 0x10181d71b in writeCredentialsJson (test)
+           return error.FileWriteError;
+           ^
+       /Users/j-p/dev/nullclaw/src/providers/gemini.zig:1649:5: 0x10182263b in test.writeCredentialsJson escapes token strings (test)
+           try writeCredentialsJson(alloc, creds, path);
+           ^
+error: 'providers.sse.test.parseAnthropicSseLine empty line returns skip' terminated with signal ABRT with stderr:
+       thread 648979 panic: start index 6 is larger than end index 0
+       /Users/j-p/dev/nullclaw/src/providers/sse.zig:186:25: 0x10186a8a3 in parseAnthropicSseLine (test)
+           const data = trimmed[data_prefix.len..];
+                               ^
+       /Users/j-p/dev/nullclaw/src/providers/sse.zig:360:45: 0x10186b677 in test.parseAnthropicSseLine empty line returns skip (test)
+           const result = try parseAnthropicSseLine(std.testing.allocator, "", "");
+                                                   ^
+       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:147:68: 0x1013872a7 in mainServer (test)
+                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
+                                                                          ^
+       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/compiler/test_runner.zig:68:26: 0x1013851b7 in main (test)
+               return mainServer(init) catch @panic("internal test runner failure");
+                                ^
+       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/start.zig:678:88: 0x101384caf in callMain (test)
+           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                              ^
+       ???:?:?: 0x19e038273 in start (/usr/lib/dyld)
+error: 'providers.claude_cli.test.ClaudeCliProvider.init returns CliNotFound for missing binary' failed:
+       expected error.CliNotFound, found error.NotSupported
+       /Users/j-p/dev/nullclaw/src/providers/claude_cli.zig:150:5: 0x10342a777 in checkCliAvailable (test)
+           return error.NotSupported;
+           ^
+       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:72:13: 0x10342a8db in expectError__anon_449808 (test)
+                   return error.TestUnexpectedError;
+                   ^
+       /Users/j-p/dev/nullclaw/src/providers/claude_cli.zig:260:5: 0x10342a9e7 in test.ClaudeCliProvider.init returns CliNotFound for missing binary (test)
+           try std.testing.expectError(error.CliNotFound, result);
+           ^
+error: 'providers.codex_cli.test.CodexCliProvider checkCliAvailable returns CliNotFound for missing binary' failed:
+       expected error.CliNotFound, found error.NotSupported
+       /Users/j-p/dev/nullclaw/src/providers/codex_cli.zig:113:5: 0x10342bdcf in checkCliAvailable (test)
+           return error.NotSupported;
+           ^
+       /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib/std/testing.zig:72:13: 0x10342bf33 in expectError__anon_449890 (test)
+                   return error.TestUnexpectedError;
+                   ^
+       /Users/j-p/dev/nullclaw/src/providers/codex_cli.zig:162:5: 0x10342c02b in test.CodexCliProvider checkCliAvailable returns CliNotFound for missing binary (test)
+           try std.testing.expectError(error.CliNotFound, result);
+           ^
+failed command: ./.zig-cache/o/be236403ccc8398ee25076d465fbea3a/test --cache-dir=./.zig-cache --seed=0x4e4e4746 --listen=-
+
+Build Summary: 6/8 steps succeeded (1 failed); 467/475 tests passed (7 failed, 1 crashed)
+test transitive failure
++- run test 467 pass, 7 fail, 1 crash (475 total)
+|  +- compile test Debug native cached 351ms MaxRSS:39M
+|     +- WriteFile sqlite3.h cached
+|     +- compile lib sqlite3 Debug native cached 133ms MaxRSS:38M
+|     +- compile lib sqlite3 Debug native (reused)
+|     +- options cached
++- run test success 10ms MaxRSS:3M
+   +- compile test Debug native cached 165ms MaxRSS:39M
+      +- WriteFile sqlite3.h (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- WriteFile sqlite3.h (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- options (reused)
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/97ad94d4407b5c06eb3e53426824537f/build /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/zig /Users/j-p/zig/0.16.0-dev.2694+74f361a5c/files/lib /Users/j-p/dev/nullclaw .zig-cache /Users/j-p/.cache/zig --seed 0x4e4e4746 -Ze45202bb9f2ac762 test -Dtest-file=providers --summary all
