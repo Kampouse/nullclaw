@@ -100,9 +100,42 @@ const MAX_HISTORY_LINES: usize = 500;
 /// If the file does not exist, returns an empty slice.
 /// Caller owns the returned slice and all strings within it.
 pub fn loadHistory(allocator: std.mem.Allocator, path: []const u8) ![][]const u8 {
-    _ = path;
-    // TODO: Zig 0.16.0 - file.read() API changed, stubbed for now
-    return try allocator.alloc([]const u8, 0);
+    const content = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, path, allocator, .limited(1024 * 100)) catch |err| switch (err) {
+        error.FileNotFound => return try allocator.alloc([]const u8, 0),
+        else => return err,
+    };
+    defer allocator.free(content);
+
+    var lines = std.ArrayList([]const u8).init(allocator);
+    errdefer lines.deinit(allocator);
+
+    var it = std.mem.split(u8, content, "\n");
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) continue; // Skip blank lines
+
+        const dupe = try allocator.dupe(u8, trimmed);
+        try lines.append(dupe);
+    }
+
+    // Keep only the most recent MAX_HISTORY_LINES entries
+    const start = if (lines.items.len > MAX_HISTORY_LINES)
+        lines.items.len - MAX_HISTORY_LINES
+    else
+        0;
+
+    const result = try allocator.alloc([]const u8, lines.items.len - start);
+    for (lines.items[start..], result[0..]) |line, i| {
+        result[i] = line;
+    }
+
+    // Free the entries we're not keeping
+    for (lines.items[0..start]) |line| {
+        allocator.free(line);
+    }
+
+    lines.clearAndFree(allocator);
+    return result;
 }
 
 /// Free history entries returned by loadHistory.
@@ -114,9 +147,19 @@ pub fn freeHistory(allocator: std.mem.Allocator, history: [][]const u8) void {
 /// Save command history to a file (one command per line).
 /// Writes at most MAX_HISTORY_LINES entries.
 pub fn saveHistory(history: []const []const u8, path: []const u8) !void {
-    _ = history;
-    _ = path;
-    // TODO: Zig 0.16.0 - createFile/writeAll APIs changed, stubbed for now
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{ .truncate = true });
+    defer file.close(std.Options.debug_io);
+
+    // Write only the most recent MAX_HISTORY_LINES entries
+    const start = if (history.len > MAX_HISTORY_LINES)
+        history.len - MAX_HISTORY_LINES
+    else
+        0;
+
+    for (history[start..]) |line| {
+        try file.writeStreamingAll(std.Options.debug_io, line);
+        try file.writeStreamingAll(std.Options.debug_io, "\n");
+    }
 }
 
 /// Resolve the default history file path (~/.nullclaw_history).
