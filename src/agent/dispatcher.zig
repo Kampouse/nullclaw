@@ -1,5 +1,6 @@
 const std = @import("std");
 const providers = @import("../providers/root.zig");
+const log = std.log.scoped(.dispatcher);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Dispatcher — tool call parsing and result formatting
@@ -95,6 +96,51 @@ pub fn parseXmlToolCalls(
     }
 
     var remaining = response;
+
+    // Special case: Check for malformed MiniMax format at the start.
+    // This format starts with {"name": or {"name= or {"invoke name= and ends with </minimax:tool_call>
+    const mini_max_pattern_colon = "{\"name\":";
+    const mini_max_pattern_equals = "{\"name=";
+    const mini_max_pattern_invoke = "{\"invoke name=";
+    const start_idx = blk: {
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_colon)) |idx| break :blk idx;
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_equals)) |idx| break :blk idx;
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_invoke)) |idx| break :blk idx;
+        break :blk null;
+    };
+
+    if (start_idx) |idx| {
+        if (std.mem.indexOf(u8, remaining, "\">")) |_| {
+            if (std.mem.indexOf(u8, remaining, "</invoke>")) |_| {
+                if (std.mem.indexOf(u8, remaining, "</minimax:tool_call>")) |mini_end| {
+                    // Found MiniMax hybrid format
+                    const content_start = idx;
+                    const content_end = mini_end + "</minimax:tool_call>".len;
+                    const mini_max_content = remaining[content_start..content_end];
+
+                    // Determine format type for logging
+                    const format_type = if (std.mem.indexOf(u8, mini_max_content, "{\"name\":")) |_| "colon"
+                                         else if (std.mem.indexOf(u8, mini_max_content, "{\"name=")) |_| "equals"
+                                         else if (std.mem.indexOf(u8, mini_max_content, "{\"invoke name=")) |_| "invoke"
+                                         else "unknown";
+
+                    log.debug("Detected MiniMax tool call (format: {s})", .{format_type});
+                    log.debug("Raw MiniMax content: {s}", .{mini_max_content});
+
+                    // Parse using hybrid tag parser
+                    if (parseHybridTagCall(allocator, mini_max_content)) |call| {
+                        log.info("✓ Parsed MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        try calls.append(allocator, call);
+                        // Skip this entire block in remaining
+                        remaining = remaining[content_end..];
+                    } else |err| {
+                        log.warn("Failed to parse MiniMax tool call: {}", .{err});
+                        // If parsing fails, just continue normally
+                    }
+                }
+            }
+        }
+    }
 
     while (true) {
         // Find next tool call marker: either <tool_call> or [TOOL_CALL] or [tool_call]
@@ -414,6 +460,9 @@ pub fn parseNativeToolCalls(
     allocator: std.mem.Allocator,
     response: []const u8,
 ) !ParseResult {
+    log.debug("Detected native OpenAI tool call format", .{});
+    log.debug("Raw native response: {s}", .{response});
+
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
     defer parsed.deinit();
 
@@ -490,6 +539,12 @@ pub fn parseNativeToolCalls(
             .name = try allocator.dupe(u8, name_str),
             .arguments_json = try allocator.dupe(u8, args_str),
             .tool_call_id = if (tc_id) |id| try allocator.dupe(u8, id) else null,
+        });
+
+        log.info("✓ Parsed native tool call: name='{s}' args='{s}' id={s}", .{
+            name_str,
+            args_str,
+            if (tc_id) |id| id else "(none)",
         });
     }
 
@@ -994,6 +1049,38 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedToolCall {
     // 1. Greedy Name Extraction
     const tool_name: []const u8 = blk: {
+        // SPECIAL CASE 1: MiniMax format starts with {"name": "tool_name">
+        // This must be checked first to avoid matching parameter names
+        if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 8 ..]; // Skip past {"name":
+                if (std.mem.indexOfScalar(u8, after, '"')) |q1| {
+                    if (std.mem.indexOfScalar(u8, after[q1 + 1 ..], '"')) |q2| {
+                        const name_candidate = std.mem.trim(u8, after[q1 + 1 .. q1 + 1 + q2], " \t\r\n");
+                        // Verify this is followed by > (MiniMax format marker)
+                        const name_end = idx + 8 + q1 + 1 + q2 + 1;
+                        if (name_end < inner.len and inner[name_end] == '>') {
+                            break :blk name_candidate;
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 2: MiniMax format {"name=tool_name> (no quotes, no colon)
+        if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 7 ..]; // Skip past {"name=
+                // Find the closing >
+                if (std.mem.indexOfScalar(u8, after, '>')) |gt_idx| {
+                    const name_candidate = std.mem.trim(u8, after[0..gt_idx], " \t\r\n");
+                    if (name_candidate.len > 0) {
+                        break :blk name_candidate;
+                    }
+                }
+            }
+        }
+
         // Try HTML-style name attribute: name="value" or name='value'
         if (std.mem.indexOf(u8, inner, "name=\"")) |idx| {
             const after = inner[idx + 6 ..];
