@@ -97,8 +97,36 @@ pub fn parseXmlToolCalls(
 
     var remaining = response;
 
-    // Special case 1: Check for malformed JSON-like format
-    // Format: {"name="tool", "arguments": {...}}  (no closing tags)
+    // Special case 1: Check for valid JSON format with "name" and "arguments"
+    // Format: {"name": "tool", "arguments": {...}}  (valid JSON, non-standard structure)
+    if (std.mem.indexOf(u8, remaining, "{\"name\":")) |start_idx| {
+        // Check if it has "arguments": key (JSON format)
+        if (std.mem.indexOf(u8, remaining, "\"arguments\":")) |_| {
+            // Find the end of this JSON object
+            var depth: usize = 1; // Already inside the opening {
+            var end_idx = start_idx + 8; // Skip past {"name":
+            while (end_idx < remaining.len and depth > 0) : (end_idx += 1) {
+                if (remaining[end_idx] == '{') depth += 1;
+                if (remaining[end_idx] == '}') depth -= 1;
+            }
+            if (depth == 0) {
+                const content = remaining[start_idx..end_idx];
+                log.debug("Detected valid JSON format (non-standard)", .{});
+                log.debug("Raw JSON content: {s}", .{content});
+
+                if (parseHybridTagCall(allocator, content)) |call| {
+                    log.info("✓ Parsed valid JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                    try calls.append(allocator, call);
+                    remaining = remaining[end_idx..];
+                } else |err| {
+                    log.warn("Failed to parse valid JSON tool call: {}", .{err});
+                }
+            }
+        }
+    }
+
+    // Special case 2: Check for malformed JSON-like format
+    // Format: {"name="tool", "arguments": {...}}  (no closing tags, uses = instead of :)
     if (std.mem.indexOf(u8, remaining, "{\"name=")) |start_idx| {
         // Check if it has "arguments": key (JSON format)
         if (std.mem.indexOf(u8, remaining, "\"arguments\":")) |_| {
@@ -125,7 +153,7 @@ pub fn parseXmlToolCalls(
         }
     }
 
-    // Special case 2: Check for malformed MiniMax format at the start.
+    // Special case 3: Check for malformed MiniMax format at the start.
     // This format starts with {"name": or {"name= or {"invoke name= and ends with </minimax:tool_call>
     const mini_max_pattern_colon = "{\"name\":";
     const mini_max_pattern_equals = "{\"name=";
@@ -1077,7 +1105,30 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedToolCall {
     // 1. Greedy Name Extraction
     const tool_name: []const u8 = blk: {
-        // SPECIAL CASE 1: MiniMax format starts with {"name": "tool_name">
+        // SPECIAL CASE 1: Valid JSON format {"name": "tool", "arguments": {...}}
+        // This must be checked before the > marker check
+        if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 8 ..]; // Skip past {"name":
+                if (std.mem.indexOfScalar(u8, after, '"')) |q1| {
+                    if (std.mem.indexOfScalar(u8, after[q1 + 1 ..], '"')) |q2| {
+                        const name_candidate = std.mem.trim(u8, after[q1 + 1 .. q1 + 1 + q2], " \t\r\n");
+                        // Check if followed by comma and "arguments" (valid JSON format)
+                        const name_end = idx + 8 + q1 + 1 + q2 + 1;
+                        if (name_end < inner.len) {
+                            const after_name = inner[name_end..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '}')) {
+                                // Valid JSON format with "arguments" key
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 2: MiniMax format starts with {"name": "tool_name">
         // This must be checked first to avoid matching parameter names
         if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
@@ -1095,7 +1146,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 2: MiniMax format {"name=tool_name> (no quotes, no colon)
+        // SPECIAL CASE 3: MiniMax format {"name=tool_name> (no quotes, no colon)
         if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
                 const after = inner[idx + 7 ..]; // Skip past {"name=
