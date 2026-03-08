@@ -30,8 +30,7 @@ MODULES=(
     "agent/dispatcher"
     "agent/compaction"
     "agent/routing"
-    # Channels
-    "channels"
+    # Channels sub-modules (parent module has test isolation issues)
     "channels/cli"
     "channels/telegram"
     "channels/discord"

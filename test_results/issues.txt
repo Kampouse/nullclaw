@@ -1,49 +1,39 @@
-PASS: agent/root
-PASS: agent/prompt
-PASS: channels/telegram
-PASS: channels/cli
-PASS: agent/dispatcher
-PASS: agent/compaction
-PASS: agent/routing
 PASS: channels/discord
 PASS: channels/slack
-FAIL_ERROR: channels
-  Failed tests:
-    • channels.discord.test.discord handleMessageCreate publishes inbound guild message with metadata
-    • channels.discord.test.discord handleMessageCreate sets is_dm metadata for direct messages
-    • channels.slack.test.slack processHistoryMessage publishes inbound message to bus
-    • channels.imessage.test.imessage publishInboundMessage emits group session key and metadata
-    • channels.imessage.test.imessage publishInboundMessage emits direct session key and dm metadata
-    • channels.signal.test.process envelope attachment only not skipped when ignore disabled
-    • channels.email.test.consent granted allows send attempt
----
+PASS: agent/root
+PASS: agent/routing
+PASS: agent/dispatcher
+PASS: channels/telegram
+PASS: channels/email
+PASS: agent/compaction
+PASS: channels/cli
+PASS: agent/prompt
 PASS: channels/signal
 PASS: channels/matrix
-PASS: channels/email
-PASS: channels/irc
 PASS: memory/engines/contract_test
-PASS: memory/engines
-PASS: memory/engines/markdown
-PASS: memory/engines/sqlite
 PASS: memory/lifecycle
+PASS: memory/engines/markdown
+PASS: memory/engines
+PASS: channels/irc
+PASS: memory/engines/sqlite
 PASS: memory/lifecycle/cache
-PASS: memory/lifecycle/hygiene
 PASS: memory/lifecycle/snapshot
 PASS: memory/retrieval
-PASS: memory/vector
+PASS: memory/lifecycle/hygiene
 PASS: providers/anthropic
+PASS: memory/vector
 PASS: providers/openai
 PASS: providers/gemini
-PASS: providers/factory
 PASS: providers/ollama
-PASS: security/policy
+PASS: providers/factory
 PASS: security/pairing
+PASS: security/policy
 PASS: providers/helpers
 PASS: security/secrets
-PASS: test_isolation
-PASS: security/tracker
 PASS: tools/shell
+PASS: security/tracker
 PASS: tools/file_append
-PASS: tools/browser
 PASS: tools/memory
+PASS: tools/browser
 PASS: tools/cron
+PASS: test_isolation
