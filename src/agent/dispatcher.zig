@@ -97,7 +97,35 @@ pub fn parseXmlToolCalls(
 
     var remaining = response;
 
-    // Special case: Check for malformed MiniMax format at the start.
+    // Special case 1: Check for malformed JSON-like format
+    // Format: {"name="tool", "arguments": {...}}  (no closing tags)
+    if (std.mem.indexOf(u8, remaining, "{\"name=")) |start_idx| {
+        // Check if it has "arguments": key (JSON format)
+        if (std.mem.indexOf(u8, remaining, "\"arguments\":")) |_| {
+            // Find the end of this JSON object
+            var depth: usize = 1; // Already inside the opening {
+            var end_idx = start_idx + 7; // Skip past {"name=
+            while (end_idx < remaining.len and depth > 0) : (end_idx += 1) {
+                if (remaining[end_idx] == '{') depth += 1;
+                if (remaining[end_idx] == '}') depth -= 1;
+            }
+            if (depth == 0) {
+                const content = remaining[start_idx..end_idx];
+                log.debug("Detected malformed JSON format (no closing tags)", .{});
+                log.debug("Raw JSON content: {s}", .{content});
+
+                if (parseHybridTagCall(allocator, content)) |call| {
+                    log.info("✓ Parsed malformed JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                    try calls.append(allocator, call);
+                    remaining = remaining[end_idx..];
+                } else |err| {
+                    log.warn("Failed to parse malformed JSON tool call: {}", .{err});
+                }
+            }
+        }
+    }
+
+    // Special case 2: Check for malformed MiniMax format at the start.
     // This format starts with {"name": or {"name= or {"invoke name= and ends with </minimax:tool_call>
     const mini_max_pattern_colon = "{\"name\":";
     const mini_max_pattern_equals = "{\"name=";
@@ -1081,6 +1109,25 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
+        // SPECIAL CASE 3: Malformed JSON format {"name="tool_name", "arguments": {...}}
+        // This is a hybrid of JSON and MiniMax formats
+        if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 7 ..]; // Skip past {"name=
+                // Look for quoted tool name followed by comma: "tool",
+                if (after[0] == '"') {
+                    if (std.mem.indexOfScalarPos(u8, after, 1, '"')) |q_end| {
+                        if (q_end + 1 < after.len and after[q_end + 1] == ',') {
+                            const name_candidate = after[1..q_end];
+                            if (name_candidate.len > 0) {
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Try HTML-style name attribute: name="value" or name='value'
         if (std.mem.indexOf(u8, inner, "name=\"")) |idx| {
             const after = inner[idx + 6 ..];
@@ -1139,6 +1186,39 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
     if (tool_name.len == 0) return error.EmptyToolName;
 
     // 2. Greedy Parameter Collection
+    // SPECIAL CASE: Check for JSON-style arguments like {"name="tool", "arguments": {...}}
+    const json_args: ?[]const u8 = blk: {
+        if (std.mem.indexOf(u8, inner, "\"arguments\":")) |args_idx| {
+            // Find the opening brace of the arguments value
+            const after_args = inner[args_idx + "\"arguments\":".len ..];
+            const brace_start = std.mem.trim(u8, after_args, " \t\r\n");
+            if (brace_start.len > 0 and brace_start[0] == '{') {
+                // Try to find the matching closing brace
+                var depth: usize = 1;
+                var i: usize = 1;
+                while (i < brace_start.len and depth > 0) : (i += 1) {
+                    if (brace_start[i] == '{') depth += 1;
+                    if (brace_start[i] == '}') depth -= 1;
+                }
+                if (depth == 0) {
+                    const json_content = brace_start[0..i];
+                    break :blk try allocator.dupe(u8, json_content);
+                }
+            }
+        }
+
+        // Default: fall through to parameter parsing
+        break :blk null;
+    };
+
+    if (json_args) |args| {
+        return .{
+            .name = try allocator.dupe(u8, tool_name),
+            .arguments_json = args,
+        };
+    }
+
+    // Regular parameter parsing (for XML-style formats)
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer args_buf.deinit(allocator);
     try args_buf.append(allocator, '{');

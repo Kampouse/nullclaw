@@ -31,6 +31,15 @@ The MiniMax model (`ollama-cloud/minimax-m2.5`) was generating malformed hybrid 
 </minimax:tool_call>
 ```
 
+### Format 4: Malformed JSON (NEW)
+```
+{"name="web_fetch", "arguments": {"url":"https://weather.gc.ca/..."}}
+```
+- Uses `=` instead of `:` after "name"
+- Has `"arguments":` with JSON object
+- No `<parameter>` tags
+- No closing tags like `</minimax:tool_call>`
+
 ## Solution Implemented
 
 ### 1. Pattern Detection (`src/agent/dispatcher.zig` lines 99-122)
