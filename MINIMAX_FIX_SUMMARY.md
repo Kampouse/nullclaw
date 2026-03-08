@@ -5,7 +5,7 @@ The MiniMax model (`ollama-cloud/minimax-m2.5`) was generating malformed hybrid 
 
 ## Malformed Formats Detected
 
-### Format 1: Colon style
+### Format 1: Colon style with tags
 ```
 {"name": "web_fetch">
 <parameter name="max_chars">8000</parameter>
@@ -14,7 +14,7 @@ The MiniMax model (`ollama-cloud/minimax-m2.5`) was generating malformed hybrid 
 </minimax:tool_call>
 ```
 
-### Format 2: Equals style (no quotes, no colon)
+### Format 2: Equals style with tags
 ```
 {"name=web_search>
 <parameter name="count">5</parameter>
@@ -31,14 +31,23 @@ The MiniMax model (`ollama-cloud/minimax-m2.5`) was generating malformed hybrid 
 </minimax:tool_call>
 ```
 
-### Format 4: Malformed JSON (NEW)
+### Format 4: Malformed JSON (equals sign)
 ```
 {"name="web_fetch", "arguments": {"url":"https://weather.gc.ca/..."}}
 ```
 - Uses `=` instead of `:` after "name"
 - Has `"arguments":` with JSON object
 - No `<parameter>` tags
-- No closing tags like `</minimax:tool_call>`
+- No closing tags
+
+### Format 5: Valid JSON (colon) ✨ NEW
+```
+{"name": "web_fetch", "arguments": {"max_chars": 3000, "url": "https://en.wikipedia.org/..."}}
+```
+- Uses proper `:` after "name" (valid JSON)
+- Has `"arguments":` with JSON object
+- No `<parameter>` tags
+- No closing tags
 
 ## Solution Implemented
 

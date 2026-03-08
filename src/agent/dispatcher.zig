@@ -97,6 +97,25 @@ pub fn parseXmlToolCalls(
 
     var remaining = response;
 
+    // Track seen tool calls to avoid duplicates
+    var seen_calls = std.StringHashMap(void).init(allocator);
+    defer seen_calls.deinit();
+
+    // Helper function to check if a tool call is a duplicate
+    const isDuplicate = struct {
+        fn check(alloc: std.mem.Allocator, seen: *std.StringHashMap(void), call: ParsedToolCall) bool {
+            const key = std.fmt.allocPrint(alloc, "{s}|{s}", .{call.name, call.arguments_json}) catch return false;
+            defer alloc.free(key);
+            return seen.contains(key);
+        }
+
+        fn mark(alloc: std.mem.Allocator, seen: *std.StringHashMap(void), call: ParsedToolCall) !void {
+            const key = std.fmt.allocPrint(alloc, "{s}|{s}", .{call.name, call.arguments_json}) catch return;
+            defer alloc.free(key);
+            try seen.put(key, {});
+        }
+    };
+
     // Special case 1: Check for valid JSON format with "name" and "arguments"
     // Format: {"name": "tool", "arguments": {...}}  (valid JSON, non-standard structure)
     if (std.mem.indexOf(u8, remaining, "{\"name\":")) |start_idx| {
@@ -115,9 +134,16 @@ pub fn parseXmlToolCalls(
                 log.debug("Raw JSON content: {s}", .{content});
 
                 if (parseHybridTagCall(allocator, content)) |call| {
-                    log.info("✓ Parsed valid JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                    try calls.append(allocator, call);
-                    remaining = remaining[end_idx..];
+                    // Check for duplicate
+                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                        log.info("✓ Parsed valid JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        try isDuplicate.mark(allocator, &seen_calls, call);
+                        try calls.append(allocator, call);
+                        remaining = remaining[end_idx..];
+                    } else {
+                        log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        remaining = remaining[end_idx..];
+                    }
                 } else |err| {
                     log.warn("Failed to parse valid JSON tool call: {}", .{err});
                 }
@@ -143,9 +169,16 @@ pub fn parseXmlToolCalls(
                 log.debug("Raw JSON content: {s}", .{content});
 
                 if (parseHybridTagCall(allocator, content)) |call| {
-                    log.info("✓ Parsed malformed JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                    try calls.append(allocator, call);
-                    remaining = remaining[end_idx..];
+                    // Check for duplicate
+                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                        log.info("✓ Parsed malformed JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        try isDuplicate.mark(allocator, &seen_calls, call);
+                        try calls.append(allocator, call);
+                        remaining = remaining[end_idx..];
+                    } else {
+                        log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        remaining = remaining[end_idx..];
+                    }
                 } else |err| {
                     log.warn("Failed to parse malformed JSON tool call: {}", .{err});
                 }
@@ -185,8 +218,14 @@ pub fn parseXmlToolCalls(
 
                     // Parse using hybrid tag parser
                     if (parseHybridTagCall(allocator, mini_max_content)) |call| {
-                        log.info("✓ Parsed MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                        try calls.append(allocator, call);
+                        // Check for duplicate
+                        if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                            log.info("✓ Parsed MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                            try isDuplicate.mark(allocator, &seen_calls, call);
+                            try calls.append(allocator, call);
+                        } else {
+                            log.warn("Skipping duplicate MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        }
                         // Skip this entire block in remaining
                         remaining = remaining[content_end..];
                     } else |err| {
