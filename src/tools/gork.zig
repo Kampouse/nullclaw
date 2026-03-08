@@ -5,6 +5,7 @@
 //! decentralized P2P network with NEAR blockchain trust verification.
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
@@ -276,9 +277,8 @@ fn handleHybridEvent(allocator: std.mem.Allocator, event: hybrid_mod.Event) void
     switch (mut_event) {
         .message_received => |*msg| {
             // Replay protection: check timestamp
-            // TODO: Zig 0.16.0 removed util.timestampUnix()
-            // Need to implement using std.os.clock_gettime or similar
-            const now: u64 = 0; // Placeholder - implement proper timestamp
+            const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+            const now: u64 = @intCast(@divTrunc(now_ns, 1_000_000_000));
             const msg_time = msg.timestamp;
 
             if (now > msg_time) {
