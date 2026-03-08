@@ -688,7 +688,7 @@ pub const TelegramChannel = struct {
 
         // Build JSON body
         var body_buf: [256]u8 = undefined;
-        const body = std.fmt.bufPrint(&body_buf, "{{\"chat_id\":{s},\"action\":\"typing\"}}", .{chat_id}) catch return;
+        const body = std.fmt.bufPrint(&body_buf, "{{\"chat_id\":\"{s}\",\"action\":\"typing\"}}", .{chat_id}) catch return;
 
         // Use curl subprocess - avoids Zig 0.16 TLS crash in spawned threads
         // This is safe because curl handles TLS in its own process
@@ -1117,6 +1117,13 @@ pub const TelegramChannel = struct {
         reply_to: ?i64,
         reply_markup_json: ?[]const u8,
     ) !SentMessageMeta {
+        // Validate: reject empty or whitespace-only text
+        const trimmed = std.mem.trim(u8, text, &std.ascii.whitespace);
+        if (trimmed.len == 0) {
+            log.warn("telegram.sendWithMarkdownFallbackWithMarkup: rejecting empty message for chat_id '{s}'", .{chat_id});
+            return error.EmptyMessage;
+        }
+
         var url_buf: [512]u8 = undefined;
         const url = try self.apiUrl(&url_buf, "sendMessage");
 
@@ -1126,6 +1133,13 @@ pub const TelegramChannel = struct {
             return try self.sendChunkPlainWithMarkup(chat_id, text, reply_to, reply_markup_json);
         };
         defer self.allocator.free(html_text);
+
+        // Validate: reject empty HTML after conversion
+        const html_trimmed = std.mem.trim(u8, html_text, &std.ascii.whitespace);
+        if (html_trimmed.len == 0) {
+            log.warn("telegram.sendWithMarkdownFallbackWithMarkup: HTML conversion produced empty text for chat_id '{s}'", .{chat_id});
+            return error.EmptyMessage;
+        }
 
         // Build HTML body
         var html_body: std.ArrayListUnmanaged(u8) = .empty;
@@ -1166,6 +1180,13 @@ pub const TelegramChannel = struct {
         reply_to: ?i64,
         reply_markup_json: ?[]const u8,
     ) !SentMessageMeta {
+        // Validate: reject empty or whitespace-only text
+        const trimmed = std.mem.trim(u8, text, &std.ascii.whitespace);
+        if (trimmed.len == 0) {
+            log.warn("telegram.sendChunkPlainWithMarkup: rejecting empty message for chat_id '{s}'", .{chat_id});
+            return error.EmptyMessage;
+        }
+
         var url_buf: [512]u8 = undefined;
         const url = try self.apiUrl(&url_buf, "sendMessage");
 
@@ -1390,6 +1411,13 @@ pub const TelegramChannel = struct {
 
     /// Send a message with optional reply-to, continuation markers, and delay between chunks.
     pub fn sendMessageWithReply(self: *TelegramChannel, chat_id: []const u8, text: []const u8, reply_to: ?i64) !void {
+        // Validate: reject empty or whitespace-only text to avoid Telegram API errors
+        const trimmed = std.mem.trim(u8, text, &std.ascii.whitespace);
+        if (trimmed.len == 0) {
+            log.warn("telegram.sendMessageWithReply: rejecting empty message for chat_id '{s}'", .{chat_id});
+            return error.EmptyMessage;
+        }
+
         // Send typing indicator (best-effort)
         self.sendTypingIndicator(chat_id);
 
@@ -1446,6 +1474,13 @@ pub const TelegramChannel = struct {
     }
 
     fn sendChunk(self: *TelegramChannel, chat_id: []const u8, text: []const u8) !void {
+        // Validate: reject empty or whitespace-only text
+        const trimmed = std.mem.trim(u8, text, &std.ascii.whitespace);
+        if (trimmed.len == 0) {
+            log.warn("telegram.sendChunk: rejecting empty message for chat_id '{s}'", .{chat_id});
+            return error.EmptyMessage;
+        }
+
         // Build URL
         var url_buf: [512]u8 = undefined;
         const url = try self.apiUrl(&url_buf, "sendMessage");

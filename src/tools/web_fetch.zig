@@ -61,10 +61,10 @@ pub const WebFetchTool = struct {
 
         const max_chars = parseMaxCharsWithDefault(args, self.default_max_chars);
 
-        // Fetch URL via curl subprocess
-        const headers = [_][]const u8{
-            "User-Agent: nullclaw/0.1 (web_fetch tool)",
-            "Accept: text/html,application/json,text/plain,*/*",
+        // Step 1: Try fetching with markdown Accept header
+        const markdown_headers = [_][]const u8{
+            "User-Agent: nullclaw/1.0 (web_fetch tool - markdown)",
+            "Accept: text/markdown, text/plain, text/x-markdown",
         };
 
         const body = blk: {
@@ -74,7 +74,7 @@ pub const WebFetchTool = struct {
                 break :blk http_util.curlGetWithResolve(
                     allocator,
                     url,
-                    &headers,
+                    &markdown_headers,
                     "30",
                     resolve_entry,
                 );
@@ -82,7 +82,7 @@ pub const WebFetchTool = struct {
             break :blk http_util.curlGet(
                 allocator,
                 url,
-                &headers,
+                &markdown_headers,
                 "30",
             );
         } catch |err| {
@@ -92,19 +92,20 @@ pub const WebFetchTool = struct {
         };
         defer allocator.free(body);
 
-        // Extract text from HTML
-        const extracted = try htmlToText(allocator, body);
-        defer allocator.free(extracted);
+        // Step 2: Check if we got markdown back (naive check)
+        const is_markdown = looksLikeMarkdown(body);
 
-        // Truncate if needed
-        if (extracted.len > max_chars) {
-            const truncated = try std.fmt.allocPrint(
-                allocator,
-                "{s}\n\n[Content truncated at {d} chars, total {d} chars]",
-                .{ extracted[0..max_chars], max_chars, extracted.len },
-            );
-            return ToolResult.ok(truncated);
+        if (is_markdown) {
+            log.info("web_fetch: got markdown directly from {s}", .{url});
+            // Return markdown as-is (truncate if needed)
+            const content = if (body.len > max_chars) body[0..max_chars] else body;
+            return ToolResult.ok(try allocator.dupe(u8, content));
         }
+
+        // Step 3: Convert HTML to markdown (with max_chars for early termination)
+        log.info("web_fetch: converting HTML to markdown for {s}", .{url});
+        const extracted = try htmlToText(allocator, body, max_chars);
+        defer allocator.free(extracted);
 
         return ToolResult.ok(try allocator.dupe(u8, extracted));
     }
@@ -150,18 +151,71 @@ fn stripHostBrackets(host: []const u8) []const u8 {
     return host;
 }
 
+/// Check if content looks like markdown (not HTML).
+/// Naive heuristic: markdown doesn't have HTML tags.
+fn looksLikeMarkdown(content: []const u8) bool {
+    // Check for HTML indicators
+    if (std.mem.indexOf(u8, content, "<html") != null) return false;
+    if (std.mem.indexOf(u8, content, "<!DOCTYPE") != null) return false;
+    if (std.mem.indexOf(u8, content, "<body") != null) return false;
+
+    // Check for markdown indicators
+    if (std.mem.indexOf(u8, content, "# ") != null) return true;
+    if (std.mem.indexOf(u8, content, "## ") != null) return true;
+    if (std.mem.indexOf(u8, content, "- ") != null) return true;
+    if (std.mem.indexOf(u8, content, "* ") != null) return true;
+
+    // If no HTML tags and has some structure, assume markdown
+    return true;
+}
+
 /// Convert HTML to readable text with basic markdown formatting.
-pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
-    var buf: std.ArrayList(u8) = .empty;
+/// Sanitizes page to extract clean text content and links for AI agents.
+/// max_chars: optional limit to stop processing early (saves memory on large pages)
+pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8, max_chars: ?usize) ![]u8 {
+    // Estimate output size and pre-allocate
+    const estimated_size = @min(html.len / 2, max_chars orelse 1_000_000);
+    var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_size);
     errdefer buf.deinit(allocator);
+
+    // Link struct for tracking links
+    const Link = struct { text: []const u8, url: []const u8 };
+
+    // Limit link tracking to avoid massive memory usage
+    const MAX_LINKS = 500;
+    var links = try std.ArrayList(Link).initCapacity(allocator, MAX_LINKS);
+    defer {
+        for (links.items) |l| {
+            allocator.free(l.text);
+            allocator.free(l.url);
+        }
+        links.deinit(allocator);
+    }
 
     var i: usize = 0;
     var in_script = false;
     var in_style = false;
+    var in_head = false;
+    var in_nav = false;
+    var in_footer = false;
+    var in_aside = false;
+    var in_iframe = false;
+    var skip_content = false;
     var last_was_newline = false;
     var consecutive_newlines: u32 = 0;
 
     while (i < html.len) {
+        // Skip HTML comments <!-- ... -->
+        if (i + 4 < html.len and html[i] == '<' and html[i+1] == '!' and
+            html[i+2] == '-' and html[i+3] == '-') {
+            const comment_end = std.mem.indexOfPos(u8, html, i + 4, "-->") orelse {
+                i += 1;
+                continue;
+            };
+            i = comment_end + 3;
+            continue;
+        }
+
         // Check for tag start
         if (html[i] == '<') {
             const tag_end = std.mem.indexOfScalarPos(u8, html, i + 1, '>') orelse {
@@ -172,17 +226,23 @@ pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
             const tag_content = html[i + 1 .. tag_end];
             const tag_lower = tagName(tag_content);
 
-            // Handle closing script/style
+            // Handle closing tags
             if (tag_content.len > 0 and tag_content[0] == '/') {
                 const close_tag = tagName(tag_content[1..]);
                 if (eqlTag(close_tag, "script")) in_script = false;
                 if (eqlTag(close_tag, "style")) in_style = false;
-                if (eqlTag(close_tag, "noscript")) {} // just skip
+                if (eqlTag(close_tag, "noscript")) skip_content = false;
+                if (eqlTag(close_tag, "head")) in_head = false;
+                if (eqlTag(close_tag, "nav")) in_nav = false;
+                if (eqlTag(close_tag, "footer")) in_footer = false;
+                if (eqlTag(close_tag, "aside")) in_aside = false;
+                if (eqlTag(close_tag, "iframe")) in_iframe = false;
+                if (eqlTag(close_tag, "svg")) skip_content = false;
                 i = tag_end + 1;
                 continue;
             }
 
-            // Opening tags
+            // Opening tags - skip junk content
             if (eqlTag(tag_lower, "script")) {
                 in_script = true;
                 i = tag_end + 1;
@@ -193,8 +253,44 @@ pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
                 i = tag_end + 1;
                 continue;
             }
+            if (eqlTag(tag_lower, "noscript")) {
+                skip_content = true;
+                i = tag_end + 1;
+                continue;
+            }
+            if (eqlTag(tag_lower, "head")) {
+                in_head = true;
+                i = tag_end + 1;
+                continue;
+            }
+            if (eqlTag(tag_lower, "nav")) {
+                in_nav = true;
+                i = tag_end + 1;
+                continue;
+            }
+            if (eqlTag(tag_lower, "footer")) {
+                in_footer = true;
+                i = tag_end + 1;
+                continue;
+            }
+            if (eqlTag(tag_lower, "aside")) {
+                in_aside = true;
+                i = tag_end + 1;
+                continue;
+            }
+            if (eqlTag(tag_lower, "iframe")) {
+                in_iframe = true;
+                i = tag_end + 1;
+                continue;
+            }
+            if (eqlTag(tag_lower, "svg")) {
+                skip_content = true;
+                i = tag_end + 1;
+                continue;
+            }
 
-            if (in_script or in_style) {
+            // Skip content in junk sections
+            if (in_script or in_style or in_head or in_nav or in_footer or in_aside or in_iframe or skip_content) {
                 i = tag_end + 1;
                 continue;
             }
@@ -244,7 +340,7 @@ pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
                 last_was_newline = true;
             }
 
-            // <a href="url">text</a> — extract href for markdown link
+            // <a href="url">text</a> — extract href for markdown link and track for Links section
             if (eqlTag(tag_lower, "a")) {
                 if (extractHref(tag_content)) |href| {
                     // Find closing </a>
@@ -254,6 +350,7 @@ pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
                         const clean_text = try stripInnerTags(allocator, link_text);
                         defer allocator.free(clean_text);
                         if (clean_text.len > 0) {
+                            // Add inline markdown link
                             try buf.append(allocator, '[');
                             try buf.appendSlice(allocator, clean_text);
                             try buf.appendSlice(allocator, "](");
@@ -261,6 +358,16 @@ pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
                             try buf.append(allocator, ')');
                             last_was_newline = false;
                             consecutive_newlines = 0;
+
+                            // Track links for Links section (limit to MAX_LINKS to save memory)
+                            if (links.items.len < MAX_LINKS and
+                                !std.mem.startsWith(u8, href, "#") and
+                                !std.mem.startsWith(u8, href, "javascript:") and
+                                href.len > 0 and clean_text.len > 0) {
+                                const text_copy = try allocator.dupe(u8, clean_text);
+                                const url_copy = try allocator.dupe(u8, href);
+                                try links.append(allocator, .{ .text = text_copy, .url = url_copy });
+                            }
                         }
                         i = close_pos.end;
                         continue;
@@ -309,6 +416,13 @@ pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
             try buf.append(allocator, c);
             last_was_newline = false;
             consecutive_newlines = 0;
+
+            // Early termination: stop if approaching max_chars (leave room for Links section)
+            if (max_chars) |limit| {
+                if (buf.items.len >= limit - 1000) { // Leave 1KB for Links section
+                    break; // Stop processing HTML
+                }
+            }
         }
 
         i += 1;
@@ -319,6 +433,21 @@ pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![]u8 {
         buf.items[buf.items.len - 1] == '\n' or buf.items[buf.items.len - 1] == '\r'))
     {
         _ = buf.pop();
+    }
+
+    // Add Links section at the end for agent navigation
+    if (links.items.len > 0) {
+        try buf.appendSlice(allocator, "\n\n---\n## Links\n\n");
+        for (links.items, 0..) |link, idx| {
+            try buf.append(allocator, '[');
+            try buf.appendSlice(allocator, link.text);
+            try buf.appendSlice(allocator, "](");
+            try buf.appendSlice(allocator, link.url);
+            try buf.appendSlice(allocator, ")");
+            if (idx < links.items.len - 1) {
+                try buf.appendSlice(allocator, " |\n");
+            }
+        }
     }
 
     return buf.toOwnedSlice(allocator);

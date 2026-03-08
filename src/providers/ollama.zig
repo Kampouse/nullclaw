@@ -219,38 +219,82 @@ pub const OllamaProvider = struct {
 
     /// Parse an Ollama response, handling tool calls, thinking-only, and plain text.
     pub fn parseResponse(allocator: std.mem.Allocator, body: []const u8) ![]const u8 {
-        const parsed = try std.json.parseFromSlice(OllamaChatResponse, allocator, body, .{
+        // First try to parse as OllamaChatResponse
+        const parsed = std.json.parseFromSlice(OllamaChatResponse, allocator, body, .{
             .ignore_unknown_fields = true,
         });
+
+        if (parsed) |p| {
+            defer p.deinit();
+            const message = p.value.message;
+
+            // If model returned tool calls, format them for the agent loop
+            if (message.tool_calls) |tcs| {
+                if (tcs.len > 0) {
+                    return formatToolCallsForLoop(allocator, message);
+                }
+            }
+
+            // Plain text response
+            if (message.content) |content| {
+                if (content.len > 0) {
+                    // Check if content itself is a tool call (some models put it in content field)
+                    if (looksLikeDirectToolCall(content)) {
+                        return convertDirectToolCall(allocator, content);
+                    }
+                    return try allocator.dupe(u8, content);
+                }
+            }
+
+            // Thinking-only response (model reasoned but produced no output)
+            if (message.thinking) |thinking| {
+                const preview_len = @min(thinking.len, 200);
+                return try std.fmt.allocPrint(
+                    allocator,
+                    "I was thinking about this: {s}... but I didn't complete my response. Could you try asking again?",
+                    .{thinking[0..preview_len]},
+                );
+            }
+
+            // Empty response
+            return try allocator.dupe(u8, "");
+        } else |_| {
+            // If structured parsing fails, check if body is a direct tool call
+            // Some Ollama models return raw tool call JSON: {"name":"tool","arguments":{...}}
+            if (looksLikeDirectToolCall(body)) {
+                return convertDirectToolCall(allocator, body);
+            }
+            // Not a tool call, return as-is
+            return allocator.dupe(u8, body);
+        }
+    }
+
+    /// Check if JSON looks like a direct tool call: {"name":"tool","arguments":{...}}
+    fn looksLikeDirectToolCall(json: []const u8) bool {
+        const trimmed = std.mem.trim(u8, json, " \t\r\n");
+        return std.mem.startsWith(u8, trimmed, "{\"name\":") and
+               std.mem.indexOf(u8, trimmed, "\"arguments\":") != null;
+    }
+
+    /// Convert a direct tool call JSON to OpenAI format for the agent loop
+    fn convertDirectToolCall(allocator: std.mem.Allocator, json: []const u8) ![]const u8 {
+        // Parse {"name":"...","arguments":{...}}
+        const parsed = try std.json.parseFromSlice(struct { name: []const u8, arguments: std.json.Value }, allocator, json, .{});
         defer parsed.deinit();
-        const message = parsed.value.message;
 
-        // If model returned tool calls, format them for the agent loop
-        if (message.tool_calls) |tcs| {
-            if (tcs.len > 0) {
-                return formatToolCallsForLoop(allocator, message);
-            }
-        }
+        const name = parsed.value.name;
+        const args = parsed.value.arguments;
 
-        // Plain text response
-        if (message.content) |content| {
-            if (content.len > 0) {
-                return try allocator.dupe(u8, content);
-            }
-        }
+        // Stringify arguments
+        const args_str = try std.json.Stringify.valueAlloc(allocator, args, .{});
+        defer allocator.free(args_str);
 
-        // Thinking-only response (model reasoned but produced no output)
-        if (message.thinking) |thinking| {
-            const preview_len = @min(thinking.len, 200);
-            return try std.fmt.allocPrint(
-                allocator,
-                "I was thinking about this: {s}... but I didn't complete my response. Could you try asking again?",
-                .{thinking[0..preview_len]},
-            );
-        }
-
-        // Empty response
-        return try allocator.dupe(u8, "");
+        // Format as OpenAI tool call
+        return try std.fmt.allocPrint(
+            allocator,
+            "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}",
+            .{ name, args_str }
+        );
     }
 
     /// Create a Provider interface from this OllamaProvider.
@@ -315,7 +359,7 @@ pub const OllamaProvider = struct {
     }
 
     fn supportsNativeToolsImpl(_: *anyopaque) bool {
-        return false;
+        return true;  // Ollama supports tool calling via tools parameter
     }
 
     fn supportsVisionImpl(_: *anyopaque) bool {
@@ -376,7 +420,17 @@ fn buildChatRequestBody(
         try buf.append(allocator, '}');
     }
 
-    try buf.appendSlice(allocator, "],\"stream\":false,\"options\":{\"temperature\":");
+    try buf.appendSlice(allocator, "],\"stream\":false");
+
+    // Add tools if present (Ollama uses OpenAI-compatible tool format)
+    if (request.tools) |tools| {
+        if (tools.len > 0) {
+            try buf.appendSlice(allocator, ",\"tools\":");
+            try root.convertToolsOpenAI(&buf, allocator, tools);
+        }
+    }
+
+    try buf.appendSlice(allocator, ",\"options\":{\"temperature\":");
     var temp_buf: [16]u8 = undefined;
     const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.2}", .{temperature}) catch return error.OllamaApiError;
     try buf.appendSlice(allocator, temp_str);

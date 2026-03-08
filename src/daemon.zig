@@ -727,6 +727,13 @@ fn inboundDispatcherThread(
         };
         defer allocator.free(reply);
 
+        // Validate: skip empty or whitespace-only replies
+        const trimmed_reply = std.mem.trim(u8, reply, &std.ascii.whitespace);
+        if (trimmed_reply.len == 0) {
+            log.warn("inbound dispatch: skipping empty reply for chat_id '{s}'", .{msg.chat_id});
+            continue;
+        }
+
         const out = (if (outbound_account_id) |aid|
             bus_mod.makeOutboundWithAccount(allocator, msg.channel, aid, msg.chat_id, reply)
         else
@@ -810,7 +817,7 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
 
     // Spawn gateway thread
     state.markRunning("gateway");
-    const gw_thread = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus }) catch |err| {
+    const gw_thread = std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus }) catch |err| {
         state.markError("gateway", @errorName(err));
         try stdout.print("Failed to spawn gateway: {}\n", .{err});
         return err;
@@ -832,7 +839,7 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
     var sched_thread: ?std.Thread = null;
     if (config.scheduler.enabled) {
         state.markRunning("scheduler");
-        if (std.Thread.spawn(.{ .stack_size = 256 * 1024 }, schedulerThread, .{ allocator, config, &state, &event_bus })) |thread| {
+        if (std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, schedulerThread, .{ allocator, config, &state, &event_bus })) |thread| {
             sched_thread = thread;
         } else |err| {
             state.markError("scheduler", @errorName(err));
@@ -862,7 +869,7 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
     // Spawn channel supervisor thread (only if channels are configured)
     var chan_thread: ?std.Thread = null;
     if (has_supervised_channels) {
-        if (std.Thread.spawn(.{ .stack_size = 256 * 1024 }, channelSupervisorThread, .{
+        if (std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, channelSupervisorThread, .{
             allocator, config, &state, &channel_registry, channel_rt, &event_bus,
         })) |thread| {
             chan_thread = thread;
@@ -1821,7 +1828,7 @@ test "channelSupervisorThread respects shutdown" {
     var event_bus = bus_mod.Bus.init();
 
     std.debug.print("Spawning channelSupervisorThread...\n", .{});
-    const thread = try std.Thread.spawn(.{ .stack_size = 256 * 1024 }, channelSupervisorThread, .{
+    const thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, channelSupervisorThread, .{
         std.testing.allocator, &config, &state, &channel_registry, null, &event_bus,
     });
     std.debug.print("Thread spawned, joining...\n", .{});

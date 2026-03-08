@@ -1120,14 +1120,16 @@ pub const Agent = struct {
                 return final_text;
             }
 
-            // There are tool calls — print intermediary text.
-            // In tests, stdout is used by Zig's test runner protocol (`--listen`),
-            // so avoid writing arbitrary text that can corrupt the control channel.
+            // There are tool calls — show minimal status to user, execute tools, then return final answer.
+            // In tests, avoid corrupting the test runner protocol.
             if (!builtin.is_test and display_text.len > 0 and parsed_calls.len > 0 and !is_streaming) {
-                var out_buf: [4096]u8 = undefined;
+                // Only show a brief "thinking" indicator, not the full text
+                // The actual text content will be incorporated into the final response
+                var out_buf: [256]u8 = undefined;
                 var bw = std.Io.File.stdout().writer(std.Options.debug_io, &out_buf);
                 const w = &bw.interface;
-                w.print("{s}", .{display_text}) catch {};
+                const plural = if (parsed_calls.len == 1) "" else "s";
+                w.print("⚙️ Using {d} tool{s}...\n", .{ parsed_calls.len, plural }) catch {};
                 w.flush() catch {};
             }
 

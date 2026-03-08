@@ -103,6 +103,8 @@ pub const pushover = @import("pushover.zig");
 pub const schema = @import("schema.zig");
 pub const web_search = @import("web_search.zig");
 pub const web_fetch = @import("web_fetch.zig");
+// TODO: Re-enable after fixing compilation errors
+// pub const web_scrape = @import("web_scrape.zig");
 pub const file_append = @import("file_append.zig");
 pub const spawn = @import("spawn.zig");
 pub const i2c = @import("i2c.zig");
@@ -444,6 +446,11 @@ pub fn allTools(
         const wft = try allocator.create(web_fetch.WebFetchTool);
         wft.* = .{ .default_max_chars = tc.web_fetch_max_chars };
         try list.append(allocator, wft.tool());
+
+        // TODO: Add web_scrape tool after fixing compilation errors
+        // const wst2 = try allocator.create(web_scrape.WebScrapeTool);
+        // wst2.* = .{ .default_max_chars = tc.web_fetch_max_chars };
+        // try list.append(allocator, wst2.tool());
     }
 
     if (opts.browser_enabled) {

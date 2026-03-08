@@ -58,9 +58,11 @@ pub fn curlPostWithProxy(
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
-    // Build headers array
+    // Build headers array - always include Content-Type: application/json
     var header_buf: [32]std.http.Header = undefined;
     var n_headers: usize = 0;
+    header_buf[n_headers] = .{ .name = "content-type", .value = "application/json" };
+    n_headers += 1;
     for (headers) |header| {
         if (n_headers >= header_buf.len) break;
         const colon_idx = std.mem.indexOfScalar(u8, header, ':') orelse continue;
@@ -91,7 +93,37 @@ pub fn curlPostWithProxy(
     };
 
     if (response.head.status != .ok) {
-        log.err("curlPostWithProxy: HTTP status not ok: {}", .{response.head.status});
+        // Read error response body to help debug
+        var transfer_buf: [8192]u8 = undefined;
+        const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+        var error_buffer = std.ArrayListUnmanaged(u8){};
+        defer error_buffer.deinit(allocator);
+
+        const max_error = 8192;
+        while (error_buffer.items.len < max_error) {
+            const fill_size = @min(4096, max_error - error_buffer.items.len);
+            body_reader.fill(fill_size) catch |err| {
+                if (err == error.EndOfStream) {
+                    const buffered = body_reader.bufferedLen();
+                    if (buffered == 0) break;
+                    const data = try body_reader.take(buffered);
+                    try error_buffer.appendSlice(allocator, data);
+                    break;
+                }
+                break;
+            };
+
+            const buffered = body_reader.bufferedLen();
+            if (buffered == 0) break;
+
+            const to_read = @min(buffered, max_error - error_buffer.items.len);
+            const data = try body_reader.take(to_read);
+            if (data.len == 0) break;
+
+            try error_buffer.appendSlice(allocator, data);
+        }
+
+        log.err("curlPostWithProxy: HTTP status not ok: {} | body: {s}", .{response.head.status, error_buffer.items});
         return error.HttpError;
     }
 
@@ -157,9 +189,11 @@ pub fn curlPostStream(
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
-    // Build headers array
+    // Build headers array - always include Content-Type: application/json
     var header_buf: [32]std.http.Header = undefined;
     var n_headers: usize = 0;
+    header_buf[n_headers] = .{ .name = "content-type", .value = "application/json" };
+    n_headers += 1;
     for (headers) |header| {
         if (n_headers >= header_buf.len) break;
         const colon_idx = std.mem.indexOfScalar(u8, header, ':') orelse continue;
@@ -323,10 +357,15 @@ pub fn curlPut(allocator: Allocator, url: []const u8, body: []const u8, headers:
 
     if (response.head.status != .ok) return error.HttpError;
 
-    // Use bodyReader() on the request, not response.reader()
-    // This properly handles chunked encoding and other HTTP details
+    // Use bodyReaderDecompressing to handle gzip decompression automatically
     var transfer_buf: [8192]u8 = undefined;
-    const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+    var decompress: std.http.Decompress = undefined;
+    var decompress_buf: [65536]u8 = undefined; // Must be at least flate.max_window_len
+
+    const body_reader = if (response.head.content_encoding == .identity)
+        req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length)
+    else
+        response.readerDecompressing(&transfer_buf, &decompress, &decompress_buf);
 
     // Read response body by actively reading
     var response_buffer = std.ArrayListUnmanaged(u8){};
@@ -404,10 +443,15 @@ pub fn curlGetWithProxy(
 
     if (response.head.status != .ok) return error.HttpError;
 
-    // Use bodyReader() on the request, not response.reader()
-    // This properly handles chunked encoding and other HTTP details
+    // Use bodyReaderDecompressing to handle gzip decompression automatically
     var transfer_buf: [8192]u8 = undefined;
-    const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+    var decompress: std.http.Decompress = undefined;
+    var decompress_buf: [65536]u8 = undefined; // Must be at least flate.max_window_len
+
+    const body_reader = if (response.head.content_encoding == .identity)
+        req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length)
+    else
+        response.readerDecompressing(&transfer_buf, &decompress, &decompress_buf);
 
     // Read response body by actively reading
     var response_buffer = std.ArrayListUnmanaged(u8){};

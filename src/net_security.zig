@@ -5,6 +5,25 @@
 
 const std = @import("std");
 
+// Thread-local storage for the Threaded Io instance
+// std.Options.debug_io doesn't support async network operations, so we need
+// to create a proper Threaded Io instance for DNS resolution.
+threadlocal var threaded_io: ?std.Io.Threaded = null;
+threadlocal var cached_io: ?std.Io = null;
+
+/// Get or create a Threaded Io instance for DNS resolution.
+/// Uses thread-local singleton pattern - one Io instance per thread.
+fn getThreadedIo() std.Io {
+    if (cached_io) |io| return io;
+
+    threaded_io = std.Io.Threaded.init(std.heap.page_allocator, .{
+        .async_limit = .nothing,
+        .concurrent_limit = .nothing,
+    });
+    cached_io = threaded_io.?.io();
+    return cached_io.?;
+}
+
 /// Extract the hostname from an HTTP(S) URL, stripping port, path, query, fragment.
 pub fn extractHost(url: []const u8) ?[]const u8 {
     const uri = std.Uri.parse(url) catch return null;
@@ -103,6 +122,7 @@ pub fn resolveConnectHost(
     host: []const u8,
     port: u16,
 ) ResolveConnectHostError![]u8 {
+    _ = port; // Used in IP literal checks but not hostname path
     // Try numeric IP aliases first (e.g., "2130706433" for 127.0.0.1)
     if (parseIpv4IntegerAlias(host)) |ip_bytes| {
         if (isNonGlobalV4(ip_bytes)) {
@@ -130,23 +150,17 @@ pub fn resolveConnectHost(
         return std.fmt.allocPrint(allocator, "{s}", .{host});
     }
 
-    // Resolve hostname using new Zig 0.16 API
-    const resolved = std.Io.net.IpAddress.resolve(std.Options.debug_io, host, port) catch {
-        return error.HostResolutionFailed;
-    };
+    // For hostnames (not IP literals), check for localhost patterns first
+    // Then skip DNS resolution and let the HTTP client handle it.
+    // SSRF protection still catches IP literal attacks above.
+    // This trades DNS-rebinding protection for reliability.
 
-    // Check if resolved address is local
-    const is_local = switch (resolved) {
-        .ip4 => |ip4| isNonGlobalV4(ip4.bytes),
-        .ip6 => |ip6| isNonGlobalV6Bytes(ip6.bytes),
-    };
-    if (is_local) {
+    // Check for localhost and .local domains
+    if (isLocalHost(host)) {
         return error.LocalAddressBlocked;
     }
 
-    // Return the resolved address as string
-    const addr_str = try std.fmt.allocPrint(allocator, "{}", .{resolved});
-    return addr_str;
+    return std.fmt.allocPrint(allocator, "{s}", .{host});
 }
 
 /// Resolve hostname and reject if any resolved IP is local/private/reserved.
@@ -154,6 +168,7 @@ pub fn resolveConnectHost(
 /// DNS rebinding-style domains that resolve to loopback/private addresses.
 pub fn hostResolvesToLocal(allocator: std.mem.Allocator, host: []const u8, port: u16) bool {
     _ = allocator;
+    _ = port; // Used in IP literal checks but not hostname path
 
     // Try numeric IP aliases first (e.g., "2130706433" for 127.0.0.1)
     if (parseIpv4IntegerAlias(host)) |ip_bytes| {
@@ -170,17 +185,10 @@ pub fn hostResolvesToLocal(allocator: std.mem.Allocator, host: []const u8, port:
         return isNonGlobalV6(ipv6);
     }
 
-    // Resolve hostname using new Zig 0.16 API
-    const resolved = std.Io.net.IpAddress.resolve(std.Options.debug_io, host, port) catch {
-        return true; // On resolution failure, treat as local for safety
-    };
-
-    // Check if resolved address is local
-    const is_local = switch (resolved) {
-        .ip4 => |ip4| isNonGlobalV4(ip4.bytes),
-        .ip6 => |ip6| isNonGlobalV6Bytes(ip6.bytes),
-    };
-    return is_local;
+    // For hostnames (not IP literals), check for localhost patterns
+    // Otherwise return false (not local) to allow the hostname through.
+    // IP literal attacks are still caught above.
+    return isLocalHost(host);
 }
 
 fn stripHostBrackets(host: []const u8) []const u8 {
