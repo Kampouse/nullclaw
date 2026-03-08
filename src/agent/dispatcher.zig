@@ -203,7 +203,23 @@ pub fn parseXmlToolCalls(
                 }
             }
             if (!call_parsed) {
-                if (parseHybridTagCall(allocator, inner)) |call| {
+                // Check for minimax-style hybrid format: {"name="tool">\n<parameter name="arg">value</parameter>\n</invoke>
+                if (containsIgnoreCase(inner, "invoke") and
+                    containsIgnoreCase(inner, "parameter") and
+                    (std.mem.indexOf(u8, inner, "name=") != null)) {
+                    // Strip the opening { if present and invoke parseHybridTagCall
+                    const adjusted_inner = if (inner[0] == '{')
+                        std.mem.trim(u8, inner[1..], " \t\r\n")
+                    else
+                        inner;
+                    if (parseHybridTagCall(allocator, adjusted_inner)) |call| {
+                        try calls.append(allocator, call);
+                        call_parsed = true;
+                    } else |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => {},
+                    }
+                } else if (parseHybridTagCall(allocator, inner)) |call| {
                     try calls.append(allocator, call);
                     call_parsed = true;
                 } else |err| switch (err) {
@@ -978,6 +994,18 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedToolCall {
     // 1. Greedy Name Extraction
     const tool_name: []const u8 = blk: {
+        // Try HTML-style name attribute: name="value" or name='value'
+        if (std.mem.indexOf(u8, inner, "name=\"")) |idx| {
+            const after = inner[idx + 6 ..];
+            if (std.mem.indexOfScalarPos(u8, after, 0, '"')) |q_end| {
+                break :blk std.mem.trim(u8, after[0..q_end], " \t\r\n");
+            }
+        } else if (std.mem.indexOf(u8, inner, "name='")) |idx| {
+            const after = inner[idx + 6 ..];
+            if (std.mem.indexOfScalarPos(u8, after, 0, '\'')) |q_end| {
+                break :blk std.mem.trim(u8, after[0..q_end], " \t\r\n");
+            }
+        }
         // Try JSON-style name
         if (std.mem.indexOf(u8, inner, "\"name\":")) |idx| {
             const after = inner[idx + 7 ..];

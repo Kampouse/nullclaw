@@ -259,10 +259,14 @@ pub const OllamaProvider = struct {
             // Empty response
             return try allocator.dupe(u8, "");
         } else |_| {
-            // If structured parsing fails, check if body is a direct tool call
-            // Some Ollama models return raw tool call JSON: {"name":"tool","arguments":{...}}
+            // If structured parsing fails, check if body is a tool call in various formats
+            // JSON format: {"name":"tool","arguments":{...}}
             if (looksLikeDirectToolCall(body)) {
                 return convertDirectToolCall(allocator, body);
+            }
+            // XML format: <invoke name="tool"><parameter name="arg">value</parameter></invoke>
+            if (looksLikeXMLToolCall(body)) {
+                return convertXMLToolCall(allocator, body);
             }
             // Not a tool call, return as-is
             return allocator.dupe(u8, body);
@@ -294,6 +298,91 @@ pub const OllamaProvider = struct {
             allocator,
             "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}",
             .{ name, args_str }
+        );
+    }
+
+    /// Check if content looks like XML tool call: <invoke name="..."><parameter name="...">...</parameter></invoke>
+    fn looksLikeXMLToolCall(content: []const u8) bool {
+        const trimmed = std.mem.trim(u8, content, " \t\r\n");
+        // Check for various XML tool call formats
+        const has_invoke = std.mem.indexOf(u8, trimmed, "<invoke") != null or
+                           std.mem.indexOf(u8, trimmed, "{\"invoke") != null or
+                           std.mem.indexOf(u8, trimmed, "<invoke>") != null;
+        const has_parameter = std.mem.indexOf(u8, trimmed, "<parameter") != null;
+        return has_invoke and has_parameter;
+    }
+
+    /// Convert XML tool call to OpenAI format for the agent loop
+    fn convertXMLToolCall(allocator: std.mem.Allocator, xml: []const u8) ![]const u8 {
+        // Handle mixed format: {"invoke name="shell">...</invoke>}
+        // Skip the opening { if present
+        const content = if (std.mem.startsWith(u8, xml, "{\"invoke")) xml[1..] else xml;
+
+        // Extract tool name from <invoke name="...">
+        var tool_name: []const u8 = "";
+        if (std.mem.indexOf(u8, content, "<invoke name=\"")) |start| {
+            const name_start = start + "<invoke name=\"".len;
+            if (std.mem.indexOfScalarPos(u8, content, name_start, '"')) |name_end| {
+                tool_name = content[name_start..name_end];
+            }
+        } else if (std.mem.indexOf(u8, content, "<invoke>")) |start| {
+            // Try nested format: <invoke><name>shell</name>...
+            const name_tag_start = start + "<invoke>".len;
+            if (std.mem.indexOfPos(u8, content, name_tag_start, "<name>")) |name_start| {
+                const val_start = name_start + "<name>".len;
+                if (std.mem.indexOfPos(u8, content, val_start, "</name>")) |name_end| {
+                    tool_name = content[val_start..name_end];
+                }
+            }
+        }
+
+        // If no tool name found, return as-is (not a valid tool call)
+        if (tool_name.len == 0) {
+            return allocator.dupe(u8, xml);
+        }
+
+        // Extract parameters
+        var args_obj = std.json.ObjectMap.init(allocator);
+        var param_idx = std.mem.indexOf(u8, content, "<parameter");
+        while (param_idx != null) : (param_idx = std.mem.indexOfPos(u8, content, param_idx.?, "<parameter")) {
+            const param_start = param_idx.? + "<parameter".len;
+            // Skip whitespace and find name="
+            var name_start = param_start;
+            while (name_start < content.len and (content[name_start] == ' ' or content[name_start] == '\t')) : (name_start += 1) {}
+
+            if (name_start >= content.len or !std.mem.startsWith(u8, content[name_start..], "name=\"")) {
+                break;
+            }
+
+            const val_start = name_start + "name=\"".len;
+            const val_end = std.mem.indexOfScalarPos(u8, content, val_start, '"') orelse break;
+            const param_name = content[val_start..val_end];
+
+            // Find closing >
+            const gt_pos = std.mem.indexOfScalarPos(u8, content, val_end, '>') orelse break;
+            const content_start = gt_pos + 1;
+
+            // Find closing </parameter>
+            const close_tag = std.mem.indexOfPos(u8, content, content_start, "</parameter>") orelse break;
+            const param_value = content[content_start..close_tag];
+
+            // Store in args object
+            const key_copy = try allocator.dupe(u8, param_name);
+            const val_copy = try allocator.dupe(u8, param_value);
+            try args_obj.put(key_copy, std.json.Value{ .string = val_copy });
+
+            param_idx = close_tag + "</parameter>".len;
+        }
+
+        // Build arguments JSON string
+        const args_str = try std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = args_obj }, .{});
+        defer allocator.free(args_str);
+
+        // Format as OpenAI tool call
+        return try std.fmt.allocPrint(
+            allocator,
+            "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}",
+            .{ tool_name, args_str }
         );
     }
 
