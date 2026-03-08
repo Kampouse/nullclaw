@@ -676,7 +676,9 @@ pub const TelegramChannel = struct {
 
     // ── Typing indicator ────────────────────────────────────────────
 
-    /// Send a "typing" chat action. Best-effort: errors are ignored.
+    /// Send a "typing" chat action using curl subprocess.
+    /// Uses curl to avoid Zig 0.16 TLS crash in spawned threads.
+    /// Best-effort: errors are silently ignored.
     pub fn sendTypingIndicator(self: *TelegramChannel, chat_id: []const u8) void {
         if (builtin.is_test) return;
         if (chat_id.len == 0) return;
@@ -684,15 +686,31 @@ pub const TelegramChannel = struct {
         var url_buf: [512]u8 = undefined;
         const url = self.apiUrl(&url_buf, "sendChatAction") catch return;
 
-        var body_list: std.ArrayListUnmanaged(u8) = .empty;
-        defer body_list.deinit(self.allocator);
+        // Build JSON body
+        var body_buf: [256]u8 = undefined;
+        const body = std.fmt.bufPrint(&body_buf, "{{\"chat_id\":{s},\"action\":\"typing\"}}", .{chat_id}) catch return;
 
-        body_list.appendSlice(self.allocator, "{\"chat_id\":") catch return;
-        body_list.appendSlice(self.allocator, chat_id) catch return;
-        body_list.appendSlice(self.allocator, ",\"action\":\"typing\"}") catch return;
+        // Use curl subprocess - avoids Zig 0.16 TLS crash in spawned threads
+        // This is safe because curl handles TLS in its own process
+        var argv: [9][]const u8 = undefined;
+        argv[0] = "curl";
+        argv[1] = "-s";
+        argv[2] = "-X";
+        argv[3] = "POST";
+        argv[4] = "-H";
+        argv[5] = "Content-Type: application/json";
+        argv[6] = "-d";
+        argv[7] = body;
+        argv[8] = url;
 
-        const resp = root.http_util.curlPostWithProxy(self.allocator, url, body_list.items, &.{}, self.proxy, "10") catch return;
-        self.allocator.free(resp);
+        // Use new Zig 0.16 process API
+        var child = std.process.spawn(io, .{
+            .argv = &argv,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .ignore,
+        }) catch return;
+        _ = child.wait(io) catch return;
     }
 
     pub fn startTyping(self: *TelegramChannel, chat_id: []const u8) !void {
@@ -709,7 +727,7 @@ pub const TelegramChannel = struct {
             .chat_id = key_copy,
         };
 
-        task.thread = try std.Thread.spawn(.{ .stack_size = 128 * 1024 }, typingLoop, .{task});
+        task.thread = try std.Thread.spawn(.{ .stack_size = 1024 * 1024 }, typingLoop, .{task}); // 1MB stack for TLS safety
         errdefer {
             task.stop_requested.store(true, .release);
             if (task.thread) |t| t.join();
@@ -2208,11 +2226,8 @@ pub const TelegramChannel = struct {
     }
 
     fn vtableStartTyping(ptr: *anyopaque, recipient: []const u8) anyerror!void {
-        _ = ptr;
-        _ = recipient;
-        // Disabled - typing indicator causes crash in threaded HTTP client
-        // const self: *TelegramChannel = @ptrCast(@alignCast(ptr));
-        // try self.startTyping(recipient);
+        const self: *TelegramChannel = @ptrCast(@alignCast(ptr));
+        try self.startTyping(recipient);
     }
 
     fn vtableStopTyping(ptr: *anyopaque, recipient: []const u8) anyerror!void {

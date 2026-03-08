@@ -17,31 +17,17 @@ threadlocal var cached_io: ?std.Io = null;
 
 /// Get or create a Threaded Io instance for HTTP/network requests.
 ///
-/// This function uses a thread-local singleton pattern - one Io instance per thread
-/// that persists for the thread's lifetime. This is intentional for performance:
-/// - Threaded Io instances are expensive to create
-/// - Creating multiple instances per thread wastes resources
-/// - Resources are automatically cleaned up when the thread exits
-///
-/// Returns: std.Io instance backed by a Threaded Io with default configuration
+/// Uses thread-local singleton pattern - one Io instance per thread.
+/// Properly initialized via std.Io.Threaded.init() for Zig 0.16 compatibility.
 pub fn getThreadedIo() std.Io {
     if (cached_io) |io| return io;
 
-    threaded_io = std.Io.Threaded{
-        .allocator = std.heap.page_allocator,
-        .stack_size = std.Thread.SpawnConfig.default_stack_size,
+    // Use the proper init() API instead of manual struct construction
+    // This ensures compatibility with Zig 0.16's Threaded struct layout
+    threaded_io = std.Io.Threaded.init(std.heap.page_allocator, .{
         .async_limit = .nothing,
-        .cpu_count_error = null,
         .concurrent_limit = .nothing,
-        .old_sig_io = undefined,
-        .old_sig_pipe = undefined,
-        .have_signal_handler = false,
-        .argv0 = .empty,
-        .environ_initialized = true,
-        .environ = .empty,
-        .worker_threads = .init(null),
-        .disable_memory_mapping = false,
-    };
+    });
     cached_io = threaded_io.?.io();
     return cached_io.?;
 }
