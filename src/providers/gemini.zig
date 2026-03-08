@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Options.debug_io;
 const platform = @import("../platform.zig");
 const root = @import("root.zig");
 const error_classify = @import("error_classify.zig");
@@ -96,7 +97,8 @@ pub const GeminiCliCredentials = struct {
     /// If expires_at is null, the token is treated as never-expiring.
     pub fn isExpired(self: GeminiCliCredentials) bool {
         const expiry = self.expires_at orelse return false;
-        const now = 0; // TODO: Zig 0.16.0 - timestamp API changed
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
         const buffer_seconds: i64 = 5 * 60; // 5-minute safety buffer
         return now >= (expiry - buffer_seconds);
     }
@@ -268,7 +270,6 @@ pub fn tryLoadGeminiCliToken(allocator: std.mem.Allocator) ?GeminiCliCredentials
     defer allocator.free(path);
 
     const file = openFileAbsolute(path, .{}) catch return null;
-    const io = std.Options.debug_io;
     defer file.close(io);
 
     // TODO: Zig 0.16.0 - use reader pattern
@@ -283,7 +284,8 @@ pub fn tryLoadGeminiCliToken(allocator: std.mem.Allocator) ?GeminiCliCredentials
         if (creds.refresh_token) |rt| {
             if (refreshOAuthToken(allocator, rt)) |refreshed_resp| {
                 // Build refreshed credentials
-        const now = 0; // TODO: Zig 0.16.0 - timestamp API changed
+                const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+                const now = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
                 const ttl: i64 = if (refreshed_resp.expires_in > 0) refreshed_resp.expires_in else 3600;
                 const new_expires_at = std.math.add(i64, now, ttl) catch std.math.maxInt(i64);
 
@@ -1552,7 +1554,6 @@ test "writeCredentialsJson produces valid JSON" {
     defer temp_dir.cleanup();
 
     // Create placeholder file so realpathAlloc works
-    const io = std.Options.debug_io;
     const tmp_file = try temp_dir.dir.createFile(io, "creds.json", .{});
     tmp_file.close(io);
 
