@@ -137,19 +137,22 @@ pub const cert = struct {
 
     pub fn fromFilePath(allocator: mem.Allocator, io: Io, dir: std.Io.Dir, path: []const u8) !Bundle {
         var bundle: Bundle = .{};
-        try bundle.addCertsFromFilePath(allocator, io, Io.Clock.real.now(io), dir, path);
+        const now1 = Io.Clock.real.now(io);
+        try bundle.addCertsFromFilePath(allocator, io, now1, dir, path);
         return bundle;
     }
 
     pub fn fromFilePathAbsolute(allocator: mem.Allocator, io: Io, path: []const u8) !Bundle {
         var bundle: Bundle = .{};
-        try bundle.addCertsFromFilePathAbsolute(allocator, io, Io.Clock.real.now(io), path);
+        const now2 = Io.Clock.real.now(io);
+        try bundle.addCertsFromFilePathAbsolute(allocator, io, now2, path);
         return bundle;
     }
 
     pub fn fromSystem(allocator: mem.Allocator, io: Io) !Bundle {
         var bundle: Bundle = .{};
-        try bundle.rescan(allocator, io, Io.Clock.real.now(io));
+        const now = Io.Clock.real.now(io);
+        try bundle.rescan(allocator, io, now);
         return bundle;
     }
 
