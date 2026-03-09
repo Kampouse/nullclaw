@@ -340,7 +340,41 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const is_wasi = target.result.os.tag == .wasi;
-    const app_version = b.option([]const u8, "version", "Version string embedded in the binary") orelse "2026.3.1";
+
+    // Get git branch
+    const git_branch = b: {
+        var out_code: u8 = 0;
+        const result = b.runAllowFail(&[_][]const u8{ "git", "rev-parse", "--abbrev-ref", "HEAD" }, &out_code, .ignore) catch {
+            break :b "main";
+        };
+        const trimmed = if (result.len > 0) std.mem.trim(u8, result, "\r\n ") else "main";
+        break :b trimmed;
+    };
+
+    // Get build timestamp (compact format: YYYYMMDD-HHMM)
+    const build_timestamp = b: {
+        var out_code: u8 = 0;
+        const result = b.runAllowFail(&[_][]const u8{ "date", "-u", "+%Y%m%d-%H%M" }, &out_code, .ignore) catch {
+            break :b "unknown";
+        };
+        const trimmed = if (result.len > 0) std.mem.trim(u8, result, "\r\n ") else "unknown";
+        break :b trimmed;
+    };
+
+    // Get git commit for build name generation
+    const git_commit_for_name = b: {
+        var out_code: u8 = 0;
+        const result = b.runAllowFail(&[_][]const u8{ "git", "rev-parse", "HEAD" }, &out_code, .ignore) catch {
+            break :b "";
+        };
+        break :b if (result.len > 0) result[0..@min(31, result.len)] else "";
+    };
+
+    // Generate random build name
+    const build_name = generateBuildName(b, git_commit_for_name);
+
+    // Build version string: nullclaw beta-b-20260308-2030 (crimson-phoenix)
+    const app_version = b.fmt("nullclaw {s}-{s} ({s})", .{ git_branch, build_timestamp, build_name });
 
     // Get git commit hash at build time
     const git_commit = b: {
@@ -426,6 +460,8 @@ pub fn build(b: *std.Build) void {
     var build_options = b.addOptions();
     build_options.addOption([]const u8, "version", app_version);
     build_options.addOption([]const u8, "git_commit", git_commit);
+    build_options.addOption([]const u8, "git_branch", git_branch);
+    build_options.addOption([]const u8, "build_timestamp", build_timestamp);
     build_options.addOption(bool, "enable_memory_none", enable_memory_none);
     build_options.addOption(bool, "enable_memory_markdown", enable_memory_markdown);
     build_options.addOption(bool, "enable_memory_memory", enable_memory_memory);
@@ -636,4 +672,40 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(lib_tests).step);
         test_step.dependOn(&b.addRunArtifact(exe_tests).step);
     }
+}
+
+// Generate a fun, memorable build name from git commit hash
+fn generateBuildName(b: *std.Build, git_commit: []const u8) []const u8 {
+    // Fun adjectives and nouns for build names
+    const adjectives = [_][]const u8{
+        "crimson",   "quantum",   "neon",      "phoenix",   "thunder",
+        "cobalt",    "ember",     "frost",     "golden",   "hollow",
+        "iron",      "jade",      "kinetic",   "lunar",    "mystic",
+        "nebula",    "obsidian",  "prism",     "quartz",   "radiant",
+        "shadow",    "titan",     "umbra",     "vivid",    "wicked",
+        "azure",     "brisk",     "cosmic",    "drift",    "electric",
+    };
+
+    const nouns = [_][]const u8{
+        "panda",     "phoenix",   "raven",     "tiger",    "vortex",
+        "badger",    "bear",      "cougar",    "dragon",   "eagle",
+        "fox",       "griffin",   "hawk",      "iguana",   "jaguar",
+        "koala",     "leopard",   "mammoth",   "nightingale","owl",
+        "panther",   "quokka",    "raptor",    "shark",    "tiger",
+        "urchin",    "viper",     "wolf",      "yak",      "zebra",
+        "asteroid",  "comet",     "cosmos",    "drift",    "eclipse",
+        "flux",      "galaxy",    "horizon",   "impact",   "jet",
+    };
+
+    // Hash the git commit to get a deterministic index
+    var hash: u32 = 5381;
+    for (git_commit) |byte| {
+        hash = ((hash << 5) +% hash) +% byte;
+    }
+
+    // Use hash to pick adjective and noun
+    const adj = adjectives[hash % adjectives.len];
+    const noun = nouns[(hash / adjectives.len) % nouns.len];
+
+    return b.fmt("{s}-{s}", .{ adj, noun });
 }

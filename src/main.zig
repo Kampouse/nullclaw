@@ -130,7 +130,18 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
 }
 
 fn printVersion() void {
-    std.debug.print("nullclaw {s} (commit {s})\n", .{ yc.version.string, yc.version.commit });
+    std.debug.print(
+        \\nullclaw {s}
+        \\  Branch:     {s}
+        \\  Commit:     {s}
+        \\  Built:      {s}
+        \\
+    , .{
+        yc.version.string,
+        yc.version.branch,
+        yc.version.commit,
+        yc.version.build_timestamp,
+    });
 }
 
 const GatewayDaemonOverrideError = error{InvalidPort};
