@@ -1,7 +1,0 @@
-Example output BEFORE:
-  error: 'tools.delegate.test.delegate executes gracefully without config'
-  error: 'agent.prompt.test.buildSystemPrompt includes core sections'
-
-Example output AFTER:
-  • tools.delegate.test.delegate executes gracefully without config
-  • agent.prompt.test.buildSystemPrompt includes core sections

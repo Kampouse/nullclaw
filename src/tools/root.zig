@@ -114,6 +114,7 @@ pub const spi = @import("spi.zig");
 pub const path_security = @import("path_security.zig");
 pub const process_util = @import("process_util.zig");
 pub const gork = @import("gork.zig");
+pub const self_update = @import("self_update.zig");
 
 // ── Core types ──────────────────────────────────────────────────────
 
@@ -396,6 +397,11 @@ pub fn allTools(
     const sdt = try allocator.create(self_diagnose.SelfDiagnoseTool);
     sdt.* = .{};
     try list.append(allocator, sdt.tool());
+
+    const sut = try allocator.create(self_update.SelfUpdateTool);
+    sut.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
+    try list.append(allocator, sut.tool());
+
     const it = try allocator.create(image.ImageInfoTool);
     it.* = .{};
     try list.append(allocator, it.tool());

@@ -17,6 +17,7 @@ const core_tool_names = [_][]const u8{
     "cargo_operations",
     "zig_build_operations",
     "self_diagnose",
+    "self_update",
     "image_info",
     "gork",
     "memory_store",
