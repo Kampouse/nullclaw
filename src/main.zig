@@ -1186,29 +1186,39 @@ fn parseOnboardArgs(sub_args: []const []const u8) OnboardArgParseResult {
 
 fn printOnboardUsage() void {
     std.debug.print(
+        \\Fastest Working Path:
+        \\  nullclaw onboard --provider openrouter --api-key <YOUR_API_KEY>
+        \\
         \\Usage: nullclaw onboard [--interactive | --channels-only | [--api-key KEY] [--provider PROV] [--memory MEM]]
         \\
         \\Modes:
-        \\  (default)         quick setup
+        \\  (default)         quick setup with sensible defaults
         \\  --interactive     run full interactive wizard
         \\  --channels-only   reconfigure channels and allowlists only
         \\
         \\Quick setup options:
         \\  --api-key KEY     provider API key to persist in config
-        \\  --provider PROV   default provider key (e.g. openrouter, anthropic)
+        \\  --provider PROV   default provider key (see list below)
         \\  --memory MEM      memory backend key (e.g. markdown, sqlite, memory)
         \\
         \\Examples:
-        \\  nullclaw onboard --api-key sk-... --provider openrouter
+        \\  nullclaw onboard --provider openrouter --api-key sk-or-...
         \\  nullclaw onboard --interactive
         \\
+        \\Available providers:
+        \\
     , .{});
+    printKnownOnboardProviders();
+    std.debug.print("\n", .{});
 }
 
 fn printKnownOnboardProviders() void {
-    std.debug.print("Known providers:", .{});
+    std.debug.print("  ", .{});
+    var first = true;
     for (yc.onboard.known_providers) |p| {
-        std.debug.print(" {s}", .{p.key});
+        if (!first) std.debug.print(", ", .{});
+        std.debug.print("{s}", .{p.key});
+        first = false;
     }
     std.debug.print("\n", .{});
 }

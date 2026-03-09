@@ -626,7 +626,7 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     // Save config so subsequent commands can find it
     try cfg.save();
 
-    // Print summary
+    // Print concise summary
     try stdout.print("  [OK] Workspace:  {s}\n", .{cfg.workspace_dir});
     try stdout.print("  [OK] Provider:   {s}\n", .{cfg.default_provider});
     if (cfg.default_model) |m| {
@@ -634,18 +634,30 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     }
     try stdout.print("  [OK] API Key:    {s}\n", .{if (cfg.defaultProviderKey() != null) "set" else "not set (use --api-key or edit config)"});
     try stdout.print("  [OK] Memory:     {s}\n", .{cfg.memory.backend});
-    try stdout.writeAll("\n  Next steps:\n");
+    try stdout.writeAll("\n");
+
+    // Streamlined next steps matching official docs
     if (cfg.defaultProviderKey() == null) {
         const env_hint = providerEnvVar(cfg.default_provider);
-        try stdout.print("    1. Set your API key:  export {s}=\"sk-...\"\n", .{env_hint});
-        try stdout.writeAll("    2. Chat:              nullclaw agent -m \"Hello!\"\n");
-        try stdout.writeAll("    3. Gateway:           nullclaw gateway\n");
-    } else {
-        try stdout.writeAll("    1. Chat:     nullclaw agent -m \"Hello!\"\n");
-        try stdout.writeAll("    2. Gateway:  nullclaw gateway\n");
-        try stdout.writeAll("    3. Status:   nullclaw status\n");
+        try stdout.print("  Set your API key:  export {s}=\"sk-...\"\n\n", .{env_hint});
     }
+
+    try stdout.writeAll("  Fastest Working Path:\n");
+    try stdout.writeAll("    1. Test:     nullclaw agent -m \"Hello from nullclaw\"\n");
+    try stdout.writeAll("    2. Verify:   nullclaw doctor\n");
+    try stdout.writeAll("    3. Status:   nullclaw status\n");
+    try stdout.writeAll("    4. Gateway:  nullclaw gateway (optional)\n");
     try stdout.writeAll("\n");
+
+    // Show providers in compact format
+    try stdout.writeAll("  Providers: ");
+    var first = true;
+    for (known_providers) |p| {
+        if (!first) try stdout.writeAll(", ");
+        try stdout.print("{s}", .{p.key});
+        first = false;
+    }
+    try stdout.writeAll("\n\n");
     try stdout.flush();
 }
 

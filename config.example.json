@@ -3,8 +3,9 @@
 
   "models": {
     "providers": {
-      "openrouter": {
-        "api_key": "YOUR_OPENROUTER_API_KEY"
+      "ollama-cloud": {
+        "api_key": "YOUR_OLLAMA_CLOUD_API_KEY",
+        "base_url": "https://ollama.com/v1"
       }
     }
   },
@@ -12,7 +13,7 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openrouter/anthropic/claude-sonnet-4"
+        "primary": "ollama-cloud/minimax-m2.5"
       }
     }
   },

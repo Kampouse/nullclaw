@@ -79,6 +79,8 @@ pub const file_edit = @import("file_edit.zig");
 pub const http_request = @import("http_request.zig");
 pub const git = @import("git.zig");
 pub const cargo = @import("cargo.zig");
+pub const zig_build = @import("zig_build.zig");
+pub const self_diagnose = @import("self_diagnose.zig");
 pub const memory_store = @import("memory_store.zig");
 pub const memory_recall = @import("memory_recall.zig");
 pub const memory_list = @import("memory_list.zig");
@@ -386,7 +388,14 @@ pub fn allTools(
     cargo_tool.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
     try list.append(allocator, cargo_tool.tool());
 
+    const zig_build_tool = try allocator.create(zig_build.ZigBuildTool);
+    zig_build_tool.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
+    try list.append(allocator, zig_build_tool.tool());
+
     // Tools without workspace_dir
+    const sdt = try allocator.create(self_diagnose.SelfDiagnoseTool);
+    sdt.* = .{};
+    try list.append(allocator, sdt.tool());
     const it = try allocator.create(image.ImageInfoTool);
     it.* = .{};
     try list.append(allocator, it.tool());

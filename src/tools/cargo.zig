@@ -137,12 +137,12 @@ pub const CargoTool = struct {
         @memcpy(argv_buf[0..args.len], args);
         var argc = args.len;
 
-        // Add extra args if provided
+        // Add extra args if provided (with proper quote handling)
         if (extra_args) |extra| {
-            var it = std.mem.tokenizeScalar(u8, extra, ' ');
-            while (it.next()) |arg| {
+            var token_iter = Tokenizer.init(extra);
+            while (token_iter.next()) |token| {
                 if (argc >= argv_buf.len - 1) break;
-                argv_buf[argc] = arg;
+                argv_buf[argc] = token;
                 argc += 1;
             }
         }
@@ -159,6 +159,87 @@ pub const CargoTool = struct {
         allocator.free(result.stdout);
         return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
+
+    /// Tokenizer that properly handles shell-style arguments with quotes and escapes
+    const Tokenizer = struct {
+        input: []const u8,
+        pos: usize = 0,
+
+        fn init(input: []const u8) Tokenizer {
+            return .{ .input = input };
+        }
+
+        fn next(self: *Tokenizer) ?[]const u8 {
+            // Skip leading whitespace
+            while (self.pos < self.input.len and std.ascii.isWhitespace(self.input[self.pos])) {
+                self.pos += 1;
+            }
+
+            if (self.pos >= self.input.len) return null;
+
+            const start = self.pos;
+            var in_quote: u8 = 0; // 0 = none, 1 = double quote, 2 = single quote
+            var escaped = false;
+
+            while (self.pos < self.input.len) {
+                const ch = self.input[self.pos];
+
+                if (escaped) {
+                    // Handle escaped character
+                    escaped = false;
+                    self.pos += 1;
+                    continue;
+                }
+
+                if (ch == '\\') {
+                    escaped = true;
+                    self.pos += 1;
+                    continue;
+                }
+
+                if (ch == '"' and in_quote != 2) {
+                    if (in_quote == 1) {
+                        // Closing double quote
+                        in_quote = 0;
+                        self.pos += 1;
+                        continue;
+                    } else {
+                        // Opening double quote
+                        in_quote = 1;
+                        if (self.pos == start) self.pos += 1; // Skip opening quote
+                        continue;
+                    }
+                }
+
+                if (ch == '\'' and in_quote != 1) {
+                    if (in_quote == 2) {
+                        // Closing single quote
+                        in_quote = 0;
+                        self.pos += 1;
+                        continue;
+                    } else {
+                        // Opening single quote
+                        in_quote = 2;
+                        if (self.pos == start) self.pos += 1; // Skip opening quote
+                        continue;
+                    }
+                }
+
+                if (in_quote == 0 and std.ascii.isWhitespace(ch)) {
+                    // End of token
+                    break;
+                }
+
+                self.pos += 1;
+            }
+
+            if (self.pos > start) {
+                return self.input[start..self.pos];
+            }
+
+            return null;
+        }
+    };
 
     fn cargoBuild(self: *CargoTool, allocator: std.mem.Allocator, cargo_cwd: []const u8, args: JsonObjectMap) !ToolResult {
         const extra = root.getString(args, "args");
@@ -324,4 +405,244 @@ test "sanitizeCargoArgs allows safe args" {
     try std.testing.expect(CargoTool.sanitizeCargoArgs("--release"));
     try std.testing.expect(CargoTool.sanitizeCargoArgs("--bin foo"));
     try std.testing.expect(CargoTool.sanitizeCargoArgs("--features bar"));
+}
+
+// ── Tokenizer Tests ───────────────────────────────────────────────────
+
+test "Tokenizer handles simple args" {
+    const input = "--release --bins";
+    var tokenizer = CargoTool.Tokenizer.init(input);
+
+    const first = tokenizer.next();
+    try std.testing.expect(first != null);
+    try std.testing.expectEqualStrings("--release", first.?);
+
+    const second = tokenizer.next();
+    try std.testing.expect(second != null);
+    try std.testing.expectEqualStrings("--bins", second.?);
+
+    const third = tokenizer.next();
+    try std.testing.expect(third == null);
+}
+
+test "Tokenizer handles double quoted args" {
+    const input = "--features \"default feature\"";
+    var tokenizer = CargoTool.Tokenizer.init(input);
+
+    const first = tokenizer.next();
+    try std.testing.expect(first != null);
+    try std.testing.expectEqualStrings("--features", first.?);
+
+    const second = tokenizer.next();
+    try std.testing.expect(second != null);
+    try std.testing.expectEqualStrings("default feature", second.?);
+
+    const third = tokenizer.next();
+    try std.testing.expect(third == null);
+}
+
+test "Tokenizer handles single quoted args" {
+    const input = "--target 'x86_64-unknown-linux-gnu'";
+    var tokenizer = CargoTool.Tokenizer.init(input);
+
+    const first = tokenizer.next();
+    try std.testing.expect(first != null);
+    try std.testing.expectEqualStrings("--target", first.?);
+
+    const second = tokenizer.next();
+    try std.testing.expect(second != null);
+    try std.testing.expectEqualStrings("x86_64-unknown-linux-gnu", second.?);
+
+    const third = tokenizer.next();
+    try std.testing.expect(third == null);
+}
+
+test "Tokenizer handles escaped spaces" {
+    const input = "--bin\\ name test";
+    var tokenizer = CargoTool.Tokenizer.init(input);
+
+    const first = tokenizer.next();
+    try std.testing.expect(first != null);
+    try std.testing.expectEqualStrings("--bin name", first.?);
+
+    const second = tokenizer.next();
+    try std.testing.expect(second != null);
+    try std.testing.expectEqualStrings("test", second.?);
+
+    const third = tokenizer.next();
+    try std.testing.expect(third == null);
+}
+
+test "Tokenizer handles mixed quotes and spaces" {
+    const input = "--release --features \"feat1 feat2\" --bin myapp";
+    var tokenizer = CargoTool.Tokenizer.init(input);
+
+    try std.testing.expectEqualStrings("--release", tokenizer.next().?);
+    try std.testing.expectEqualStrings("--features", tokenizer.next().?);
+    try std.testing.expectEqualStrings("feat1 feat2", tokenizer.next().?);
+    try std.testing.expectEqualStrings("--bin", tokenizer.next().?);
+    try std.testing.expectEqualStrings("myapp", tokenizer.next().?);
+    try std.testing.expect(tokenizer.next() == null);
+}
+
+test "Tokenizer handles equals flags" {
+    const input = "-Doptimize=ReleaseFast --target=x86_64-linux";
+    var tokenizer = CargoTool.Tokenizer.init(input);
+
+    try std.testing.expectEqualStrings("-Doptimize=ReleaseFast", tokenizer.next().?);
+    try std.testing.expectEqualStrings("--target=x86_64-linux", tokenizer.next().?);
+    try std.testing.expect(tokenizer.next() == null);
+}
+
+test "Tokenizer handles complex real-world cargo args" {
+    const input = "--release --features \"tokio rustls\" --target \"x86_64-unknown-linux-musl\" --no-default-features";
+    var tokenizer = CargoTool.Tokenizer.init(input);
+
+    try std.testing.expectEqualStrings("--release", tokenizer.next().?);
+    try std.testing.expectEqualStrings("--features", tokenizer.next().?);
+    try std.testing.expectEqualStrings("tokio rustls", tokenizer.next().?);
+    try std.testing.expectEqualStrings("--target", tokenizer.next().?);
+    try std.testing.expectEqualStrings("x86_64-unknown-linux-musl", tokenizer.next().?);
+    try std.testing.expectEqualStrings("--no-default-features", tokenizer.next().?);
+    try std.testing.expect(tokenizer.next() == null);
+}
+
+// ── Agent Integration Tests ───────────────────────────────────────
+
+test "cargo tool can be used by agent - tool invocation" {
+    var ct = CargoTool{ .workspace_dir = "/tmp" };
+    const t = ct.tool();
+
+    // Simulate agent calling the tool with JSON arguments
+    const parsed = try root.parseTestArgs("{\"operation\": \"version\"}");
+    defer parsed.deinit();
+
+    // This will fail because "version" isn't a valid cargo operation,
+    // but it validates that the tool can be invoked by the agent
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    defer result.deinit(std.testing.allocator);
+
+    // Should fail gracefully with "Unknown operation" not a crash
+    try std.testing.expect(!result.success);
+    try std.testing.expect(result.error_msg != null);
+}
+
+test "cargo tool validates operation parameter" {
+    var ct = CargoTool{ .workspace_dir = "/tmp" };
+    const t = ct.tool();
+
+    // Test with missing operation (agent error case)
+    {
+        const parsed = try root.parseTestArgs("{}");
+        defer parsed.deinit();
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        defer result.deinit(std.testing.allocator);
+
+        try std.testing.expect(!result.success);
+        try std.testing.expect(result.error_msg != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Missing") != null);
+    }
+
+    // Test with invalid operation (agent error case)
+    {
+        const parsed = try root.parseTestArgs("{\"operation\": \"invalid_op\"}");
+        defer parsed.deinit();
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        defer result.deinit(std.testing.allocator);
+
+        try std.testing.expect(!result.success);
+        try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown") != null);
+    }
+}
+
+test "cargo tool handles new operation correctly" {
+    var ct = CargoTool{ .workspace_dir = "/tmp" };
+    const t = ct.tool();
+
+    // Test new operation without package_name
+    {
+        const parsed = try root.parseTestArgs("{\"operation\": \"new\"}");
+        defer parsed.deinit();
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        defer result.deinit(std.testing.allocator);
+
+        try std.testing.expect(!result.success);
+    }
+
+    // Test new operation with package_name (validation only, won't actually create)
+    {
+        const parsed = try root.parseTestArgs("{\"operation\": \"new\", \"package_name\": \"test_project\", \"args\": \"--lib\"}");
+        defer parsed.deinit();
+        // We can't actually test this without creating files, but we can validate the parameters parse correctly
+        _ = parsed.parsed;
+    }
+}
+
+test "cargo tool supports all documented operations" {
+    var ct = CargoTool{ .workspace_dir = "/tmp" };
+    const t = ct.tool();
+
+    const operations = [_][]const u8{
+        "build", "test", "run", "check", "clean",
+        "doc", "init", "update", "clippy", "fmt"
+    };
+
+    for (operations) |op| {
+        const json = try std.fmt.allocPrint(std.testing.allocator, "{{\"operation\": \"{s}\"}}", .{op});
+        defer std.testing.allocator.free(json);
+
+        const parsed = try root.parseTestArgs(json);
+        defer parsed.deinit();
+
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        defer result.deinit(std.testing.allocator);
+
+        // Operations will fail without a real Rust project, but they should be recognized
+        // (not return "Unknown operation")
+        if (!result.success) {
+            if (result.error_msg) |err| {
+                try std.testing.expect(std.mem.indexOf(u8, err, "Unknown") == null);
+            }
+        }
+    }
+}
+
+test "cargo tool prevents command injection via args" {
+    var ct = CargoTool{ .workspace_dir = "/tmp" };
+    const t = ct.tool();
+
+    const injection_attempts = [_][]const u8{
+        "{\"operation\": \"build\", \"args\": \"--release; rm -rf /tmp\"}",
+        "{\"operation\": \"test\", \"args\": \"--verbose | cat /etc/passwd\"}",
+        "{\"operation\": \"run\", \"args\": \"--release $(whoami)\"}",
+        "{\"operation\": \"check\", \"args\": \"--release `evil_command`\"}",
+    };
+
+    for (injection_attempts) |injection| {
+        const parsed = try root.parseTestArgs(injection);
+        defer parsed.deinit();
+
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        defer result.deinit(std.testing.allocator);
+
+        try std.testing.expect(!result.success);
+        try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
+    }
+}
+
+test "cargo tool tool_metadata" {
+    var ct = CargoTool{ .workspace_dir = "/tmp" };
+    const t = ct.tool();
+
+    // Verify tool metadata is correct
+    try std.testing.expectEqualStrings("cargo_operations", t.name());
+
+    const desc = t.description();
+    try std.testing.expect(desc.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, desc, "Cargo") != null);
+
+    const schema = t.parametersJson();
+    try std.testing.expect(schema.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "operation") != null);
+    try std.testing.expect(std.mem.indexOf(u8, schema, "build") != null);
 }
