@@ -1201,8 +1201,31 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedToolCall {
     // 1. Greedy Name Extraction
     const tool_name: []const u8 = blk: {
-        // SPECIAL CASE 0: MiniMax invoke format {"invoke name": "tool", "arguments": {...}}
-        // This must be checked FIRST before {"name": patterns
+        // SPECIAL CASE 0: MiniMax invoke format {"invoke name="tool", "arguments": {...}}
+        // This must be checked FIRST - handles {"invoke name= (equals, no colon)
+        if (std.mem.indexOf(u8, inner, "{\"invoke name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 13..]; // Skip past {"invoke name=
+                // Look for quoted tool name
+                if (after.len > 0 and after[0] == '"') {
+                    if (std.mem.indexOfScalar(u8, after[1..], '"')) |q_end| {
+                        const name_candidate = after[1 .. q_end + 1];
+                        // Verify it's followed by comma and "arguments" (JSON format)
+                        const name_end = idx + 13 + q_end + 2;
+                        if (name_end < inner.len) {
+                            const after_name = inner[name_end..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '"')) {
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 1: MiniMax invoke format {"invoke name": "tool", "arguments": {...}}
+        // This handles {"invoke name": (colon format)
         if (std.mem.indexOf(u8, inner, "{\"invoke name\":")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
                 const after = inner[idx + 14..]; // Skip past {"invoke name":
@@ -1224,8 +1247,9 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 1: Valid JSON format {"name": "tool", "arguments": {...}}
+        // SPECIAL CASE 2: Valid JSON format {"name": "tool", "arguments": {...}}
         // This must be checked before the > marker check
+        // NOTE: There's a duplicate check below - this handles standard JSON format
         if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
                 const after = inner[idx + 8 ..]; // Skip past {"name":
@@ -1247,7 +1271,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 2: MiniMax format starts with {"name": "tool_name">
+        // SPECIAL CASE 3: MiniMax format starts with {"name": "tool_name">
         // This must be checked first to avoid matching parameter names
         if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
@@ -1265,7 +1289,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 3: MiniMax invoke format {"invoke name=tool_name" or {"invoke name=tool_name, ...}
+        // SPECIAL CASE 4: MiniMax invoke format {"invoke name=tool_name" or {"invoke name=tool_name, ...}
         if (std.mem.indexOf(u8, inner, "{\"invoke name=")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
                 const after = inner[idx + 13..]; // Skip past {"invoke name=
@@ -1286,7 +1310,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 4: MiniMax format {"name=tool_name> (no quotes, no colon)
+        // SPECIAL CASE 5: MiniMax format {"name=tool_name> (no quotes, no colon)
         if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
                 const after = inner[idx + 7 ..]; // Skip past {"name=
@@ -1300,7 +1324,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 5: Malformed JSON format {"name="tool_name", "arguments": {...}}
+        // SPECIAL CASE 6: Malformed JSON format {"name="tool_name", "arguments": {...}}
         // This is a hybrid of JSON and MiniMax formats
         if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
