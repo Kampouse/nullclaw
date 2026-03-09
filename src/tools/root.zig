@@ -394,11 +394,9 @@ pub fn allTools(
     try list.append(allocator, zig_build_tool.tool());
 
     // Tools without workspace_dir
-    // TEMPORARILY DISABLED: self_diagnose tool causes gateway to stop after 5 seconds
-    // TODO: Investigate and fix the self_diagnose tool
-    // const sdt = try allocator.create(self_diagnose.SelfDiagnoseTool);
-    // sdt.* = .{};
-    // try list.append(allocator, sdt.tool());
+    const sdt = try allocator.create(self_diagnose.SelfDiagnoseTool);
+    sdt.* = .{};
+    try list.append(allocator, sdt.tool());
 
     const sut = try allocator.create(self_update.SelfUpdateTool);
     sut.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
