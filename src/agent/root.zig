@@ -1022,7 +1022,9 @@ pub const Agent = struct {
             }
 
             // Determine display text
-            const display_text = if (parsed_text.len > 0) parsed_text else response_text;
+            // IMPORTANT: When there are tool calls, NEVER show raw response_text to user
+            // Only show parsed_text (which has tool calls removed) or nothing
+            const display_text = if (parsed_text.len > 0) parsed_text else "";
 
             if (parsed_calls.len == 0) {
                 // Guardrail: if the model promises "I'll try/check now" but emits no
@@ -1120,9 +1122,11 @@ pub const Agent = struct {
                 return final_text;
             }
 
-            // There are tool calls — show minimal status to user, execute tools, then return final answer.
+            // There are tool calls — execute tools, then return final answer.
+            // DO NOT show any intermediary text to the user (including tool calls)
+            // The user should only see the final response AFTER tools have executed.
             // In tests, avoid corrupting the test runner protocol.
-            if (!builtin.is_test and display_text.len > 0 and parsed_calls.len > 0 and !is_streaming) {
+            if (false) { // Disabled - no intermediary text shown to users
                 // Only show a brief "thinking" indicator, not the full text
                 // The actual text content will be incorporated into the final response
                 var out_buf: [256]u8 = undefined;

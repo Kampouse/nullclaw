@@ -815,9 +815,9 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
     // Event bus (created before gateway+scheduler so all threads can publish)
     var event_bus = bus_mod.Bus.init();
 
-    // Spawn gateway thread
+    // Spawn gateway thread with larger stack for TLS operations (8MB)
     state.markRunning("gateway");
-    const gw_thread = std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus }) catch |err| {
+    const gw_thread = std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus }) catch |err| {
         state.markError("gateway", @errorName(err));
         try stdout.print("Failed to spawn gateway: {}\n", .{err});
         return err;

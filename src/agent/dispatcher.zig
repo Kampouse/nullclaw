@@ -199,57 +199,96 @@ pub fn parseXmlToolCalls(
     }
 
     // Special case 3: Check for malformed MiniMax format at the start.
-    // This format starts with {"name": or {"name= or {"invoke name= and ends with </minimax:tool_call>
+    // This format starts with {"name": or {"name= or {"invoke name= or {"invoke name": and ends with </minimax:tool_call>
     const mini_max_pattern_colon = "{\"name\":";
     const mini_max_pattern_equals = "{\"name=";
     const mini_max_pattern_invoke = "{\"invoke name=";
+    const mini_max_pattern_invoke_colon = "{\"invoke name\":";
     const start_idx = blk: {
         if (std.mem.indexOf(u8, remaining, mini_max_pattern_colon)) |idx| break :blk idx;
         if (std.mem.indexOf(u8, remaining, mini_max_pattern_equals)) |idx| break :blk idx;
         if (std.mem.indexOf(u8, remaining, mini_max_pattern_invoke)) |idx| break :blk idx;
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_invoke_colon)) |idx| break :blk idx;
         break :blk null;
     };
 
     if (start_idx) |idx| {
-        if (std.mem.indexOf(u8, remaining, "\">")) |_| {
-            if (std.mem.indexOf(u8, remaining, "</invoke>")) |_| {
-                if (std.mem.indexOf(u8, remaining, "</minimax:tool_call>")) |mini_end| {
-                    // Found MiniMax hybrid format
-                    const content_start = idx;
-                    const content_end = mini_end + "</minimax:tool_call>".len;
-                    const mini_max_content = remaining[content_start..content_end];
+        // Check for the closing tag (either </minimax:tool_call> or standalone format)
+        if (std.mem.indexOf(u8, remaining, "</minimax:tool_call>")) |mini_end| {
+            // Found MiniMax hybrid format with closing tag
+            const content_start = idx;
+            const content_end = mini_end + "</minimax:tool_call>".len;
+            const mini_max_content = remaining[content_start..content_end];
 
-                    // Determine format type for logging
-                    const format_type = if (std.mem.indexOf(u8, mini_max_content, "{\"name\":")) |_| "colon"
-                                         else if (std.mem.indexOf(u8, mini_max_content, "{\"name=")) |_| "equals"
-                                         else if (std.mem.indexOf(u8, mini_max_content, "{\"invoke name=")) |_| "invoke"
-                                         else "unknown";
+            // Determine format type for logging
+            const format_type = if (std.mem.indexOf(u8, mini_max_content, "{\"name\":")) |_| "colon"
+                                 else if (std.mem.indexOf(u8, mini_max_content, "{\"name=")) |_| "equals"
+                                 else if (std.mem.indexOf(u8, mini_max_content, "{\"invoke name\":")) |_| "invoke-colon"
+                                 else if (std.mem.indexOf(u8, mini_max_content, "{\"invoke name=")) |_| "invoke"
+                                 else "unknown";
 
-                    log.debug("Detected MiniMax tool call (format: {s})", .{format_type});
-                    log.debug("Raw MiniMax content: {s}", .{mini_max_content});
+            log.debug("Detected MiniMax tool call (format: {s})", .{format_type});
+            log.debug("Raw MiniMax content: {s}", .{mini_max_content});
 
-                    // Parse using hybrid tag parser
-                    if (parseHybridTagCall(allocator, mini_max_content)) |call| {
-                        // Check for duplicate
-                        if (!isDuplicate.check(allocator, &seen_calls, call)) {
-                            log.info("✓ Parsed MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                            try isDuplicate.mark(allocator, &seen_calls, call);
-                            try calls.append(allocator, call);
+            // Parse using hybrid tag parser
+            if (parseHybridTagCall(allocator, mini_max_content)) |call| {
+                // Check for duplicate
+                if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                    log.info("✓ Parsed MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                    try isDuplicate.mark(allocator, &seen_calls, call);
+                    try calls.append(allocator, call);
 
-                            // Capture text before the tool call
-                            const before = std.mem.trim(u8, remaining[0..content_start], " \t\r\n");
-                            if (before.len > 0) {
-                                try text_parts.append(allocator, before);
-                            }
-                        } else {
-                            log.warn("Skipping duplicate MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                        }
-                        // Skip this entire block in remaining
-                        remaining = remaining[content_end..];
-                    } else |err| {
-                        log.warn("Failed to parse MiniMax tool call: {}", .{err});
-                        // If parsing fails, just continue normally
+                    // Capture text before the tool call
+                    const before = std.mem.trim(u8, remaining[0..content_start], " \t\r\n");
+                    if (before.len > 0) {
+                        try text_parts.append(allocator, before);
                     }
+                } else {
+                    log.warn("Skipping duplicate MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                }
+                // Skip this entire block in remaining
+                remaining = remaining[content_end..];
+            } else |err| {
+                log.warn("Failed to parse MiniMax tool call: {}", .{err});
+                // If parsing fails, just continue normally
+            }
+        } else {
+            // Fallback: MiniMax format without closing tag - try to parse the JSON object
+            // Find the end of the JSON object by matching braces
+            var depth: usize = 1;
+            var content_end: usize = idx;
+            while (content_end < remaining.len and depth > 0) : (content_end += 1) {
+                if (remaining[content_end] == '{') depth += 1;
+                if (remaining[content_end] == '}') depth -= 1;
+            }
+
+            if (depth == 0 and content_end > idx + 10) {
+                // Found complete JSON object
+                const mini_max_content = remaining[idx..content_end];
+
+                log.debug("Detected MiniMax tool call without closing tag", .{});
+                log.debug("Raw MiniMax content: {s}", .{mini_max_content});
+
+                // Parse using hybrid tag parser
+                if (parseHybridTagCall(allocator, mini_max_content)) |call| {
+                    // Check for duplicate
+                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                        log.info("✓ Parsed MiniMax tool call (no closing tag): name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        try isDuplicate.mark(allocator, &seen_calls, call);
+                        try calls.append(allocator, call);
+
+                        // Capture text before the tool call
+                        const before = std.mem.trim(u8, remaining[0..idx], " \t\r\n");
+                        if (before.len > 0) {
+                            try text_parts.append(allocator, before);
+                        }
+                    } else {
+                        log.warn("Skipping duplicate MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                    }
+                    // Skip this entire block in remaining
+                    remaining = remaining[content_end..];
+                } else |err| {
+                    log.warn("Failed to parse MiniMax tool call (no closing tag): {}", .{err});
                 }
             }
         }
@@ -1162,6 +1201,29 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedToolCall {
     // 1. Greedy Name Extraction
     const tool_name: []const u8 = blk: {
+        // SPECIAL CASE 0: MiniMax invoke format {"invoke name": "tool", "arguments": {...}}
+        // This must be checked FIRST before {"name": patterns
+        if (std.mem.indexOf(u8, inner, "{\"invoke name\":")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 14..]; // Skip past {"invoke name":
+                if (std.mem.indexOfScalar(u8, after, '"')) |q1| {
+                    if (std.mem.indexOfScalar(u8, after[q1 + 1 ..], '"')) |q2| {
+                        const name_candidate = std.mem.trim(u8, after[q1 + 1 .. q1 + 1 + q2], " \t\r\n");
+                        // Check if followed by comma and "arguments" (valid JSON format)
+                        const name_end = idx + 14 + q1 + 1 + q2 + 1;
+                        if (name_end < inner.len) {
+                            const after_name = inner[name_end..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '}')) {
+                                // Valid JSON format with "arguments" key
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // SPECIAL CASE 1: Valid JSON format {"name": "tool", "arguments": {...}}
         // This must be checked before the > marker check
         if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
@@ -1203,7 +1265,28 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 3: MiniMax format {"name=tool_name> (no quotes, no colon)
+        // SPECIAL CASE 3: MiniMax invoke format {"invoke name=tool_name" or {"invoke name=tool_name, ...}
+        if (std.mem.indexOf(u8, inner, "{\"invoke name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 13..]; // Skip past {"invoke name=
+                // Look for quoted tool name followed by comma or closing brace
+                if (after.len > 0 and after[0] == '"') {
+                    if (std.mem.indexOfScalarPos(u8, after, 1, '"')) |q_end| {
+                        const name_candidate = after[1..q_end];
+                        if (name_candidate.len > 0) {
+                            // Check if followed by comma, closing brace, or >
+                            const after_name = after[q_end + 1 ..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '}' or trimmed[0] == '>')) {
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 4: MiniMax format {"name=tool_name> (no quotes, no colon)
         if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
                 const after = inner[idx + 7 ..]; // Skip past {"name=
@@ -1217,7 +1300,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
             }
         }
 
-        // SPECIAL CASE 3: Malformed JSON format {"name="tool_name", "arguments": {...}}
+        // SPECIAL CASE 5: Malformed JSON format {"name="tool_name", "arguments": {...}}
         // This is a hybrid of JSON and MiniMax formats
         if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
             if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped

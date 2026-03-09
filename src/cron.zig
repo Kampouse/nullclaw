@@ -756,6 +756,7 @@ pub const CronScheduler = struct {
                     }) catch |err| {
                         log.err("cron job '{s}' failed to start: {}", .{ job.id, err });
                         job.last_status = "error";
+                        job.owns_last_status = false;
                         job.last_run_secs = now;
                         job.last_output = null;
                         // Deliver error notification
@@ -772,6 +773,7 @@ pub const CronScheduler = struct {
                     };
                     job.last_run_secs = now;
                     job.last_status = if (success) "ok" else "error";
+                    job.owns_last_status = false;
 
                     // Store and deliver stdout
                     if (job.last_output) |old| self.allocator.free(old);
@@ -791,6 +793,7 @@ pub const CronScheduler = struct {
                         // Keep unit tests deterministic: no subprocess or network side effects.
                         job.last_run_secs = now;
                         job.last_status = "ok";
+                        job.owns_last_status = false;
 
                         if (job.last_output) |old| self.allocator.free(old);
                         job.last_output = self.allocator.dupe(u8, agent_output) catch null;
@@ -803,6 +806,7 @@ pub const CronScheduler = struct {
                             log.err("cron agent job '{s}' execution failed: {s}", .{ job.id, @errorName(err) });
                             job.last_run_secs = now;
                             job.last_status = "error";
+                        job.owns_last_status = false;
                             if (job.last_output) |old| self.allocator.free(old);
                             job.last_output = std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch "error: allocation failed";
                             if (out_bus) |b| {

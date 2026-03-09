@@ -2595,7 +2595,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     .web_search_provider = cfg.http_request.search_provider,
                     .web_search_fallback_providers = cfg.http_request.search_fallback_providers,
                     .browser_enabled = cfg.browser.enabled,
-                    .screenshot_enabled = true,
+                    .screenshot_enabled = false,
                     .agents = cfg.agents,
                     .fallback_api_key = resolved_api_key,
                     .allowed_paths = cfg.autonomy.allowed_paths,
