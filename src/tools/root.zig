@@ -346,6 +346,7 @@ pub fn allTools(
         tools_config: @import("../config.zig").ToolsConfig = .{},
         policy: ?*const @import("../security/policy.zig").SecurityPolicy = null,
         gork_config: ?@import("../config_types.zig").GorkConfig = null,
+        repo_dir: ?[]const u8 = null,
     },
 ) ![]Tool {
     var list: std.ArrayList(Tool) = .{};
@@ -399,7 +400,11 @@ pub fn allTools(
     try list.append(allocator, sdt.tool());
 
     const sut = try allocator.create(self_update.SelfUpdateTool);
-    sut.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
+    // Use configurable repository directory for self_update tool
+    // Falls back to current directory (.) if not explicitly configured
+    // The workspace_dir points to ~/.nullclaw/workspace, which is not the git repo
+    const repo_path = opts.repo_dir orelse ".";
+    sut.* = .{ .workspace_dir = repo_path, .allowed_paths = opts.allowed_paths };
     try list.append(allocator, sut.tool());
 
     const it = try allocator.create(image.ImageInfoTool);
