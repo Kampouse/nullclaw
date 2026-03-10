@@ -178,6 +178,66 @@ pub fn buildSessionKeyWithScope(
     });
 }
 
+/// Build session key into provided buffer (zero-allocation, hot path).
+/// Returns the written slice (borrowed from buffer) or error.NoSpaceLeft.
+/// Max key length: ~256 bytes. Use 512-byte buffer for safety.
+pub fn buildSessionKeyBuf(
+    buf: []u8,
+    agent_id: []const u8,
+    channel: []const u8,
+    peer: ?PeerRef,
+) error{NoSpaceLeft}![]u8 {
+    return buildSessionKeyWithScopeBuf(buf, agent_id, channel, peer, .per_channel_peer, null, &.{});
+}
+
+/// Build session key with scope into buffer (zero-allocation, hot path).
+pub fn buildSessionKeyWithScopeBuf(
+    buf: []u8,
+    agent_id: []const u8,
+    channel: []const u8,
+    peer: ?PeerRef,
+    dm_scope: config_types.DmScope,
+    account_id: ?[]const u8,
+    identity_links: []const config_types.IdentityLink,
+) error{NoSpaceLeft}![]u8 {
+    var norm_buf: [64]u8 = undefined;
+    const norm_agent = normalizeId(&norm_buf, agent_id);
+
+    if (peer) |p| {
+        const kind_str = switch (p.kind) {
+            .direct => "direct",
+            .group => "group",
+            .channel => "channel",
+        };
+
+        // Groups and channels always use per-channel-peer scope
+        if (p.kind != .direct) {
+            return std.fmt.bufPrint(buf, "agent:{s}:{s}:{s}:{s}", .{
+                norm_agent, channel, kind_str, p.id,
+            }) catch error.NoSpaceLeft;
+        }
+
+        // Resolve identity links for DM peers
+        const resolved_peer = resolveLinkedPeerId(p.id, identity_links);
+
+        return switch (dm_scope) {
+            .main => std.fmt.bufPrint(buf, "agent:{s}:main", .{norm_agent}) catch error.NoSpaceLeft,
+            .per_peer => std.fmt.bufPrint(buf, "agent:{s}:direct:{s}", .{
+                norm_agent, resolved_peer,
+            }) catch error.NoSpaceLeft,
+            .per_channel_peer => std.fmt.bufPrint(buf, "agent:{s}:{s}:direct:{s}", .{
+                norm_agent, channel, resolved_peer,
+            }) catch error.NoSpaceLeft,
+            .per_account_channel_peer => std.fmt.bufPrint(buf, "agent:{s}:{s}:{s}:direct:{s}", .{
+                norm_agent, channel, account_id orelse "default", resolved_peer,
+            }) catch error.NoSpaceLeft,
+        };
+    }
+    return std.fmt.bufPrint(buf, "agent:{s}:{s}:none:none", .{
+        norm_agent, channel,
+    }) catch error.NoSpaceLeft;
+}
+
 /// Build the main session key for an agent: `agent:{id}:main`.
 pub fn buildMainSessionKey(allocator: std.mem.Allocator, agent_id: []const u8) ![]u8 {
     var norm_buf: [64]u8 = undefined;
@@ -185,9 +245,21 @@ pub fn buildMainSessionKey(allocator: std.mem.Allocator, agent_id: []const u8) !
     return std.fmt.allocPrint(allocator, "agent:{s}:main", .{norm_agent});
 }
 
+/// Build main session key into buffer (zero-allocation).
+pub fn buildMainSessionKeyBuf(buf: []u8, agent_id: []const u8) error{NoSpaceLeft}![]u8 {
+    var norm_buf: [64]u8 = undefined;
+    const norm_agent = normalizeId(&norm_buf, agent_id);
+    return std.fmt.bufPrint(buf, "agent:{s}:main", .{norm_agent}) catch error.NoSpaceLeft;
+}
+
 /// Append `:thread:{threadId}` to a base session key.
 pub fn buildThreadSessionKey(allocator: std.mem.Allocator, base_key: []const u8, thread_id: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "{s}:thread:{s}", .{ base_key, thread_id });
+}
+
+/// Build thread session key into buffer (zero-allocation).
+pub fn buildThreadSessionKeyBuf(buf: []u8, base_key: []const u8, thread_id: []const u8) error{NoSpaceLeft}![]u8 {
+    return std.fmt.bufPrint(buf, "{s}:thread:{s}", .{ base_key, thread_id }) catch error.NoSpaceLeft;
 }
 
 /// Strip `:thread:{threadId}` suffix to get the parent session key.
@@ -943,6 +1015,72 @@ test "buildThreadSessionKey" {
     const key = try buildThreadSessionKey(allocator, "agent:bot1:discord:direct:user42", "thread99");
     defer allocator.free(key);
     try std.testing.expectEqualStrings("agent:bot1:discord:direct:user42:thread:thread99", key);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Zero-Allocation Session Key Tests (Hot Path Optimizations)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test "buildSessionKeyBuf — with peer" {
+    var buf: [512]u8 = undefined;
+    const key = try buildSessionKeyBuf(&buf, "bot1", "discord", PeerRef{ .kind = .direct, .id = "user42" });
+    try std.testing.expectEqualStrings("agent:bot1:discord:direct:user42", key);
+}
+
+test "buildSessionKeyBuf — without peer" {
+    var buf: [512]u8 = undefined;
+    const key = try buildSessionKeyBuf(&buf, "bot1", "telegram", null);
+    try std.testing.expectEqualStrings("agent:bot1:telegram:none:none", key);
+}
+
+test "buildSessionKeyBuf — buffer too small" {
+    var buf: [10]u8 = undefined;
+    const result = buildSessionKeyBuf(&buf, "bot1", "discord", PeerRef{ .kind = .direct, .id = "user42" });
+    try std.testing.expectError(error.NoSpaceLeft, result);
+}
+
+test "buildMainSessionKeyBuf" {
+    var buf: [128]u8 = undefined;
+    const key = try buildMainSessionKeyBuf(&buf, "My Bot");
+    try std.testing.expectEqualStrings("agent:my-bot:main", key);
+}
+
+test "buildThreadSessionKeyBuf" {
+    var buf: [256]u8 = undefined;
+    const key = try buildThreadSessionKeyBuf(&buf, "agent:bot1:discord:direct:user42", "thread99");
+    try std.testing.expectEqualStrings("agent:bot1:discord:direct:user42:thread:thread99", key);
+}
+
+test "buildSessionKeyWithScopeBuf — main scope" {
+    var buf: [512]u8 = undefined;
+    const key = try buildSessionKeyWithScopeBuf(
+        &buf,
+        "bot1",
+        "discord",
+        PeerRef{ .kind = .direct, .id = "user42" },
+        .main,
+        null,
+        &.{},
+    );
+    try std.testing.expectEqualStrings("agent:bot1:main", key);
+}
+
+test "buildSessionKeyWithScopeBuf — identity link resolves peer" {
+    const links = [_]config_types.IdentityLink{
+        .{ .canonical = "bob", .peers = &.{ "discord:alice", "telegram:bob" } },
+    };
+    var buf: [512]u8 = undefined;
+    const key = try buildSessionKeyWithScopeBuf(
+        &buf,
+        "bot1",
+        "telegram",
+        PeerRef{ .kind = .direct, .id = "discord:alice" },
+        .per_channel_peer,
+        null,
+        &links,
+    );
+    // When peer matches a linked identity, use canonical
+    try std.testing.expectEqualStrings("agent:bot1:telegram:direct:bob", key);
 }
 
 test "resolveThreadParentSessionKey — has thread suffix" {
