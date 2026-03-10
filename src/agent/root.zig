@@ -1376,6 +1376,8 @@ pub const Agent = struct {
     }
 
     fn executeTool(self: *Agent, tool_allocator: std.mem.Allocator, call: ParsedToolCall) ToolExecutionResult {
+        std.debug.print("[TRACE] executeTool: start, tool={s}\n", .{call.name});
+
         // Policy gate: check autonomy and rate limit
         if (self.policy) |pol| {
             if (!pol.canAct()) {
@@ -1398,9 +1400,12 @@ pub const Agent = struct {
         }
 
         const trimmed_call_name = std.mem.trim(u8, call.name, " \t\r\n");
+        std.debug.print("[TRACE] executeTool: trimmed_name={s}\n", .{trimmed_call_name});
 
         for (self.tools) |t| {
             if (std.ascii.eqlIgnoreCase(t.name(), trimmed_call_name)) {
+                std.debug.print("[TRACE] executeTool: found tool, parsing arguments\n", .{});
+
                 // Parse arguments JSON to ObjectMap ONCE
                 const parsed = std.json.parseFromSlice(
                     std.json.Value,
@@ -1408,6 +1413,7 @@ pub const Agent = struct {
                     call.arguments_json,
                     .{},
                 ) catch {
+                    std.debug.print("[TRACE] executeTool: JSON parse failed\n", .{});
                     return .{
                         .name = call.name,
                         .output = "Invalid arguments JSON",
@@ -1416,6 +1422,8 @@ pub const Agent = struct {
                     };
                 };
                 defer parsed.deinit();
+
+                std.debug.print("[TRACE] executeTool: JSON parsed successfully\n", .{});
 
                 const args: std.json.ObjectMap = switch (parsed.value) {
                     .object => |o| o,
@@ -1440,7 +1448,9 @@ pub const Agent = struct {
                     }
                 }
 
+                std.debug.print("[TRACE] executeTool: calling tool.execute\n", .{});
                 const result = t.execute(tool_allocator, args) catch |err| {
+                    std.debug.print("[TRACE] executeTool: tool.execute failed: {}\n", .{err});
                     return .{
                         .name = call.name,
                         .output = @errorName(err),
@@ -1448,6 +1458,7 @@ pub const Agent = struct {
                         .tool_call_id = call.tool_call_id,
                     };
                 };
+                std.debug.print("[TRACE] executeTool: tool.execute returned successfully\n", .{});
                 return .{
                     .name = call.name,
                     .output = if (result.success) result.output else (result.error_msg orelse result.output),
@@ -1457,6 +1468,7 @@ pub const Agent = struct {
             }
         }
 
+        std.debug.print("[TRACE] executeTool: tool not found\n", .{});
         return .{
             .name = call.name,
             .output = "Unknown tool",

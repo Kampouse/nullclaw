@@ -30,6 +30,8 @@ pub const SelfUpdateTool = struct {
     }
 
     fn executeGit(allocator: std.mem.Allocator, args: []const []const u8, cwd: []const u8) ![]const u8 {
+        std.debug.print("[TRACE] executeGit: start, cwd={s}\n", .{cwd});
+
         var argv_buf: [32][]const u8 = undefined;
         argv_buf[0] = "git";
         const arg_count = @min(args.len, argv_buf.len - 1);
@@ -37,19 +39,25 @@ pub const SelfUpdateTool = struct {
             argv_buf[i] = a;
         }
 
+        std.debug.print("[TRACE] executeGit: calling process_util.run\n", .{});
         const result = try process_util.run(allocator, argv_buf[0 .. arg_count + 1], .{ .cwd = cwd });
+        std.debug.print("[TRACE] executeGit: process_util.run returned\n", .{});
         defer result.deinit(allocator);
 
         if (!result.success) {
+            std.debug.print("[TRACE] executeGit: command failed\n", .{});
             return error.GitCommandFailed;
         }
 
+        std.debug.print("[TRACE] executeGit: returning stdout\n", .{});
         return allocator.dupe(u8, result.stdout);
     }
 
     fn getCurrentBranch(allocator: std.mem.Allocator, repo_dir: []const u8) ![]const u8 {
+        std.debug.print("[TRACE] getCurrentBranch: start\n", .{});
         const output = try executeGit(allocator, &.{ "rev-parse", "--abbrev-ref", "HEAD" }, repo_dir);
         defer allocator.free(output);
+        std.debug.print("[TRACE] getCurrentBranch: returning\n", .{});
         return std.mem.trim(u8, output, &std.ascii.whitespace);
     }
 
@@ -88,25 +96,23 @@ pub const SelfUpdateTool = struct {
         const pid = std.os.linux.getpid();
         const ppid = std.os.linux.getppid();
 
-        const header = std.fmt.allocPrint(
-            allocator,
+        const header = std.fmt.allocPrint(allocator,
             \\🔄 Restarting agent...
             \\   Current PID: {d}
             \\   Parent PID: {d}
             \\
-        , .{pid, ppid}) catch return ToolResult.fail("Failed to allocate output");
+        , .{ pid, ppid }) catch return ToolResult.fail("Failed to allocate output");
         defer allocator.free(header);
 
         // Provide instructions for manual restart since we don't use shell
-        const instructions = std.fmt.allocPrint(
-            allocator,
+        const instructions = std.fmt.allocPrint(allocator,
             \\{s}
             \\Manual restart required (no shell dependencies):
             \\1. Current agent (PID {d}) has been updated
             \\2. Stop the current process
             \\3. Start the new binary: zig-out/bin/nullclaw
             \\Or use your process manager (systemd, supervisor, etc.)
-        , .{header, pid}) catch return ToolResult.fail("Failed to allocate output");
+        , .{ header, pid }) catch return ToolResult.fail("Failed to allocate output");
 
         return ToolResult{ .success = true, .output = instructions, .owns_output = true };
     }
@@ -118,18 +124,16 @@ pub const SelfUpdateTool = struct {
         const pid = std.os.linux.getpid();
         const ppid = std.os.linux.getppid();
 
-        const output = std.fmt.allocPrint(
-            allocator,
+        const output = std.fmt.allocPrint(allocator,
             \\Initiating restart via process management
             \\Current PID: {d}
             \\Parent PID: {d}
             \\A new process will be spawned and current process will exit
-        , .{pid, ppid}) catch return ToolResult.fail("Failed to allocate output");
+        , .{ pid, ppid }) catch return ToolResult.fail("Failed to allocate output");
 
         // In a real implementation, this would use fork() and exec()
         // For now, provide instructions for manual restart
-        const instructions = std.fmt.allocPrint(
-            allocator,
+        const instructions = std.fmt.allocPrint(allocator,
             \\{s}
             \\
             \\Manual restart required:
@@ -137,7 +141,7 @@ pub const SelfUpdateTool = struct {
             \\2. Stop current process (PID {d})
             \\3. Start new binary: zig-out/bin/nullclaw
             \\Or use your process manager (systemd, supervisor, etc.)
-        , .{output, pid}) catch return ToolResult.fail("Failed to allocate output");
+        , .{ output, pid }) catch return ToolResult.fail("Failed to allocate output");
 
         return ToolResult{ .success = true, .output = instructions, .owns_output = true };
     }
@@ -163,8 +167,7 @@ pub const SelfUpdateTool = struct {
         defer version_result.deinit(allocator);
 
         if (!version_result.success) {
-            const err_msg = std.fmt.allocPrint(
-                allocator,
+            const err_msg = std.fmt.allocPrint(allocator,
                 \\❌ Health check FAILED!
                 \\   The new binary is not healthy
                 \\   Exit code: {}
@@ -184,8 +187,7 @@ pub const SelfUpdateTool = struct {
         defer help_result.deinit(allocator);
 
         if (!help_result.success) {
-            const err_msg = std.fmt.allocPrint(
-                allocator,
+            const err_msg = std.fmt.allocPrint(allocator,
                 \\❌ Help check FAILED!
                 \\   The new binary may have issues
                 \\   Error: {s}
@@ -195,13 +197,12 @@ pub const SelfUpdateTool = struct {
 
         // Check if help output contains expected content
         const has_basic_help = std.mem.indexOf(u8, help_result.stdout, "usage") != null or
-                              std.mem.indexOf(u8, help_result.stdout, "help") != null or
-                              std.mem.indexOf(u8, help_result.stdout, "Usage") != null or
-                              std.mem.indexOf(u8, help_result.stdout, "Help") != null;
+            std.mem.indexOf(u8, help_result.stdout, "help") != null or
+            std.mem.indexOf(u8, help_result.stdout, "Usage") != null or
+            std.mem.indexOf(u8, help_result.stdout, "Help") != null;
 
         if (!has_basic_help and help_result.stdout.len < 10) {
-            const err_msg = std.fmt.allocPrint(
-                allocator,
+            const err_msg = std.fmt.allocPrint(allocator,
                 \\❌ Health check FAILED!
                 \\   The new binary produced unexpected output
                 \\   Output: {s}
@@ -209,8 +210,7 @@ pub const SelfUpdateTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         }
 
-        const output = std.fmt.allocPrint(
-            allocator,
+        const output = std.fmt.allocPrint(allocator,
             \\✅ Health check PASSED!
             \\   The new binary is healthy and ready to use
             \\
@@ -227,22 +227,31 @@ pub const SelfUpdateTool = struct {
     }
 
     pub fn execute(self: *const SelfUpdateTool, allocator: std.mem.Allocator, args: JsonObjectMap) ToolResult {
+        std.debug.print("[TRACE] self_update.execute: start\n", .{});
+
         const operation_obj = args.get("operation");
         const operation = if (operation_obj) |op| op.string else "status";
+        std.debug.print("[TRACE] self_update.execute: operation={s}\n", .{operation});
 
         // Determine working directory
         const cwd_opt = args.get("cwd");
         const repo_dir = if (cwd_opt) |cwd| cwd.string else self.workspace_dir;
+        std.debug.print("[TRACE] self_update.execute: repo_dir={s}\n", .{repo_dir});
 
         // Resolve and validate path
+        std.debug.print("[TRACE] self_update.execute: resolving path\n", .{});
         const resolved_repo_dir = resolvePathAlloc(allocator, repo_dir) catch |err| {
+            std.debug.print("[TRACE] self_update.execute: path resolution failed: {}\n", .{err});
             const err_msg = std.fmt.allocPrint(allocator, "Failed to resolve repository path: {}", .{err}) catch return ToolResult.fail("Failed to resolve repository path");
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         };
         defer allocator.free(resolved_repo_dir);
+        std.debug.print("[TRACE] self_update.execute: resolved_repo_dir={s}\n", .{resolved_repo_dir});
 
         // Security check
+        std.debug.print("[TRACE] self_update.execute: checking path security\n", .{});
         if (!isResolvedPathAllowed(allocator, resolved_repo_dir, self.workspace_dir, self.allowed_paths)) {
+            std.debug.print("[TRACE] self_update.execute: path not allowed\n", .{});
             const err_msg = std.fmt.allocPrint(allocator, "Path '{s}' is not allowed", .{resolved_repo_dir}) catch return ToolResult.fail("Path not allowed");
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         }
@@ -250,12 +259,16 @@ pub const SelfUpdateTool = struct {
         const working_dir = resolved_repo_dir;
 
         const trimmed_op = std.mem.trim(u8, operation, &std.ascii.whitespace);
+        std.debug.print("[TRACE] self_update.execute: trimmed_op={s}\n", .{trimmed_op});
 
         if (std.mem.eql(u8, trimmed_op, "status")) {
+            std.debug.print("[TRACE] self_update.execute: calling showStatus\n", .{});
             return self.showStatus(allocator, working_dir);
         } else if (std.mem.eql(u8, trimmed_op, "check")) {
+            std.debug.print("[TRACE] self_update.execute: calling checkForUpdates\n", .{});
             return self.checkForUpdates(allocator, working_dir, args);
         } else if (std.mem.eql(u8, trimmed_op, "pull")) {
+            std.debug.print("[TRACE] self_update.execute: calling pullUpdates\n", .{});
             return self.pullUpdates(allocator, working_dir, args);
         } else if (std.mem.eql(u8, trimmed_op, "compile")) {
             return self.compileAgent(allocator, working_dir);
@@ -297,8 +310,7 @@ pub const SelfUpdateTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         };
 
-        const output = std.fmt.allocPrint(
-            allocator,
+        const output = std.fmt.allocPrint(allocator,
             \\Agent Status
             \\============
             \\Current Branch: {s}
@@ -334,8 +346,7 @@ pub const SelfUpdateTool = struct {
         };
 
         if (std.mem.eql(u8, current_commit, remote_commit)) {
-            const output = std.fmt.allocPrint(
-                allocator,
+            const output = std.fmt.allocPrint(allocator,
                 \\Update Check Results
                 \\====================
                 \\
@@ -360,8 +371,7 @@ pub const SelfUpdateTool = struct {
                 warning = "\\⚠️  WARNING: You have uncommitted changes\\n   These changes may be lost during pull/update operations\\n   Consider committing or stashing them first\\n\\n";
             }
 
-            const output = std.fmt.allocPrint(
-                allocator,
+            const output = std.fmt.allocPrint(allocator,
                 \\Update Check Results
                 \\====================
                 \\
@@ -406,8 +416,7 @@ pub const SelfUpdateTool = struct {
         };
         defer allocator.free(pull_output);
 
-        const output = std.fmt.allocPrint(
-            allocator,
+        const output = std.fmt.allocPrint(allocator,
             \\✅ Successfully pulled latest changes
             \\   Branch: {s}
             \\
@@ -425,8 +434,7 @@ pub const SelfUpdateTool = struct {
         defer build_result.deinit(allocator);
 
         if (!build_result.success) {
-            const err_msg = std.fmt.allocPrint(
-                allocator,
+            const err_msg = std.fmt.allocPrint(allocator,
                 \\❌ Build failed!
                 \\   Exit code: {}
                 \\   Error output:
@@ -435,8 +443,7 @@ pub const SelfUpdateTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         }
 
-        const output = std.fmt.allocPrint(
-            allocator,
+        const output = std.fmt.allocPrint(allocator,
             \\✅ Build successful!
             \\   Agent has been recompiled
             \\
@@ -461,8 +468,7 @@ pub const SelfUpdateTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         }
 
-        const output = std.fmt.allocPrint(
-            allocator,
+        const output = std.fmt.allocPrint(allocator,
             \\🎉 Full update completed successfully!
             \\   Restart the agent to use the new version
         , .{}) catch return ToolResult.fail("Failed to allocate output");
@@ -499,8 +505,7 @@ pub const SelfUpdateTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         }
 
-        const output = std.fmt.allocPrint(
-            allocator,
+        const output = std.fmt.allocPrint(allocator,
             \\🎉 Full update with restart completed successfully!
             \\   ✅ Updates pulled
             \\   ✅ Agent compiled

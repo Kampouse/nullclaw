@@ -39,22 +39,31 @@ pub fn run(
     argv: []const []const u8,
     opts: RunOptions,
 ) !RunResult {
+    std.debug.print("[TRACE] process_util.run: start\n", .{});
+
     // CRITICAL: std.Options.debug_io uses a .failing allocator (see Io/Threaded.zig:1622)
     // This causes OutOfMemory when std.process.run creates internal ArenaAllocator.
     // Use util.createProcessIo() to get a proper Io instance with page_allocator.
     const util = @import("../util.zig");
+
+    std.debug.print("[TRACE] process_util.run: calling createProcessIo\n", .{});
     const spawn_io = util.createProcessIo();
+    std.debug.print("[TRACE] process_util.run: createProcessIo returned\n", .{});
 
     // Use std.process.run with our custom Io and allocator
     // Convert our ?[]const u8 cwd to std.process.Child.Cwd format
     const cwd_option: std.process.Child.Cwd = if (opts.cwd) |path| .{ .path = path } else .inherit;
+
+    std.debug.print("[TRACE] process_util.run: calling std.process.run\n", .{});
     const result = try std.process.run(allocator, spawn_io, .{
         .argv = argv,
         .cwd = cwd_option,
         .stdout_limit = .limited(opts.max_output_bytes),
         .stderr_limit = .limited(opts.max_output_bytes),
     });
+    std.debug.print("[TRACE] process_util.run: std.process.run returned\n", .{});
 
+    std.debug.print("[TRACE] process_util.run: returning result\n", .{});
     return switch (result.term) {
         .exited => |code| .{
             .stdout = result.stdout,

@@ -1,0 +1,3 @@
+run agent -m "test"
+bt
+quit
