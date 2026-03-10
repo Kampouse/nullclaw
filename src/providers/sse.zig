@@ -82,7 +82,9 @@ pub fn curlStream(
     callback: root.StreamCallback,
     ctx: *anyopaque,
 ) !root.StreamChatResult {
+    std.debug.print("[TRACE] sse.curlStream: START\n", .{});
     _ = timeout_secs;
+    std.debug.print("[TRACE] sse.curlStream: START\n", .{});
     const sse = @import("../sse_client.zig");
 
     // Build headers array
@@ -113,22 +115,35 @@ pub fn curlStream(
     const headers_slice = header_buf[0..n_headers];
 
     // Create SSE connection and connect
+    std.debug.print("[TRACE] sse.curlStream: creating SSE connection\n", .{});
     var conn = try sse.SseConnection.initAndConnect(allocator, url, headers_slice, body);
-    defer conn.deinit();
+    std.debug.print("[TRACE] sse.curlStream: SSE connection created, setting up defer for conn.deinit\n", .{});
+    defer {
+        std.debug.print("[TRACE] sse.curlStream: DEFER - starting conn.deinit()\n", .{});
+        conn.deinit();
+        std.debug.print("[TRACE] sse.curlStream: DEFER - conn.deinit() completed\n", .{});
+    }
 
     var accumulated_content = std.ArrayList(u8).initCapacity(allocator, 4096) catch return error.OutOfMemory;
-    defer accumulated_content.deinit(allocator);
+    defer {
+        std.debug.print("[TRACE] sse.curlStream: DEFER - starting accumulated_content.deinit\n", .{});
+        accumulated_content.deinit(allocator);
+        std.debug.print("[TRACE] sse.curlStream: DEFER - accumulated_content.deinit completed\n", .{});
+    }
     var total_tokens: u32 = 0;
     var line_count: usize = 0;
 
     // Read and parse SSE events
+    std.debug.print("[TRACE] sse.curlStream: starting read loop\n", .{});
     var line_buf: [4096]u8 = undefined;
     while (true) {
         const line_len = conn.readLine(&line_buf) catch |err| switch (err) {
             error.ConnectionClosed => {
+                std.debug.print("[TRACE] sse.curlStream: ConnectionClosed, breaking\n", .{});
                 break;
             },
             else => {
+                std.debug.print("[TRACE] sse.curlStream: readLine error: {}\n", .{err});
                 return err;
             },
         };
@@ -140,8 +155,7 @@ pub fn curlStream(
 
         const line = line_buf[0..line_len];
         line_count += 1;
-        if (line_count <= 10) {
-        }
+        if (line_count <= 10) {}
 
         const result = try parseSseLine(allocator, line);
 
@@ -157,22 +171,26 @@ pub fn curlStream(
             },
             .done => {
                 // Send final chunk
+                std.debug.print("[TRACE] sse.curlStream: received [DONE], sending final chunk\n", .{});
                 callback(ctx, root.StreamChunk.finalChunk());
+                std.debug.print("[TRACE] sse.curlStream: final chunk sent, breaking loop\n", .{});
                 break;
             },
             .skip => {},
         }
     }
 
-
+    std.debug.print("[TRACE] sse.curlStream: loop exited, building result\n", .{});
+    const owned_content = try accumulated_content.toOwnedSlice(allocator);
+    std.debug.print("[TRACE] sse.curlStream: content owned, tokens={d}\n", .{total_tokens});
+    std.debug.print("[TRACE] sse.curlStream: about to return result (defers will run now)\n", .{});
     return .{
-        .content = try accumulated_content.toOwnedSlice(allocator),
+        .content = owned_content,
         .usage = .{ .total_tokens = total_tokens },
         .model = "",
     };
 }
 pub fn parseAnthropicSseLine(allocator: std.mem.Allocator, line: []const u8, current_event: []const u8) !AnthropicSseResult {
-
     const trimmed = std.mem.trim(u8, line, " \t\r\n");
 
     // Handle event lines
@@ -255,7 +273,12 @@ pub fn curlStreamAnthropic(
     callback: root.StreamCallback,
     ctx: *anyopaque,
 ) !root.StreamChatResult {
-    _ = allocator; _ = url; _ = body; _ = headers; _ = callback; _ = ctx;
+    _ = allocator;
+    _ = url;
+    _ = body;
+    _ = headers;
+    _ = callback;
+    _ = ctx;
     return error.NotSupported;
 }
 

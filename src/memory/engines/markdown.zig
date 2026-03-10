@@ -139,15 +139,17 @@ pub const MarkdownMemory = struct {
             all.deinit(allocator);
         }
 
-        var seen_root_paths: std.StringHashMapUnmanaged(void) = .empty;
-        defer seen_root_paths.deinit(allocator);
+        // Track seen paths manually to avoid StringHashMap key management issues
+        var seen_path_1: bool = false;
+        var seen_path_2: bool = false;
 
         const root_candidates = [_]struct {
             filename: []const u8,
             label: []const u8,
+            seen: *bool,
         }{
-            .{ .filename = "MEMORY.md", .label = "MEMORY" },
-            .{ .filename = "memory.md", .label = "memory" },
+            .{ .filename = "MEMORY.md", .label = "MEMORY", .seen = &seen_path_1 },
+            .{ .filename = "memory.md", .label = "memory", .seen = &seen_path_2 },
         };
 
         for (root_candidates) |candidate| {
@@ -157,14 +159,10 @@ pub const MarkdownMemory = struct {
             const content = std.Io.Dir.cwd().readFileAlloc(io, root_path, allocator, .limited(1024 * 1024)) catch continue;
             defer allocator.free(content);
 
-            // TODO: Zig 0.16.0 - realpathAlloc might not be available
-            const canonical = root_path;
-            if (seen_root_paths.contains(canonical)) {
+            if (candidate.seen.*) {
                 continue;
             }
-            // Duplicate the key since root_path will be freed
-            const key_copy = try allocator.dupe(u8, canonical);
-            try seen_root_paths.put(allocator, key_copy, {});
+            candidate.seen.* = true;
 
             const entries = try parseEntries(content, candidate.label, .core, allocator);
             defer allocator.free(entries);
@@ -473,7 +471,7 @@ test "markdown accepts session_id param" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 
@@ -503,7 +501,7 @@ test "markdown reads memory.md when MEMORY.md is absent" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 
@@ -544,7 +542,7 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 
@@ -571,7 +569,7 @@ test "markdown get returns latest matching entry for duplicate key" {
     const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 

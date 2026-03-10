@@ -195,14 +195,16 @@ fn categorizeTool(name: []const u8) []const u8 {
         std.mem.eql(u8, name, "file_read") or
         std.mem.eql(u8, name, "file_write") or
         std.mem.eql(u8, name, "file_edit") or
-        std.mem.eql(u8, name, "git")) {
+        std.mem.eql(u8, name, "git"))
+    {
         return "core";
     }
     if (std.mem.eql(u8, name, "cargo_operations") or
-        std.mem.eql(u8, name, "zig_build_operations")) {
+        std.mem.eql(u8, name, "zig_build_operations"))
+    {
         return "package_managers";
     }
-    if (std.mem.eql(u8, name, "self_diagnose")) {
+    if (std.mem.eql(u8, name, "agent_health")) {
         return "diagnostics";
     }
     if (std.mem.startsWith(u8, name, "memory_")) {
@@ -486,7 +488,7 @@ test "categorizeTool returns correct categories" {
     try std.testing.expectEqualStrings("core", categorizeTool("git"));
     try std.testing.expectEqualStrings("package_managers", categorizeTool("cargo_operations"));
     try std.testing.expectEqualStrings("package_managers", categorizeTool("zig_build_operations"));
-    try std.testing.expectEqualStrings("diagnostics", categorizeTool("self_diagnose"));
+    try std.testing.expectEqualStrings("diagnostics", categorizeTool("agent_health"));
     try std.testing.expectEqualStrings("memory", categorizeTool("memory_store"));
     try std.testing.expectEqualStrings("memory", categorizeTool("memory_recall"));
     try std.testing.expectEqualStrings("advanced", categorizeTool("gork"));
@@ -568,4 +570,3 @@ test "buildSummaryText memory leak check" {
     }
     try std.testing.expect(true); // If we got here, no leaks
 }
-

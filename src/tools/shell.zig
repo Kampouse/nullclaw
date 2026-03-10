@@ -43,9 +43,14 @@ pub const ShellTool = struct {
     }
 
     pub fn execute(self: *ShellTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+        std.debug.print("[TRACE] shell.execute: start\n", .{});
+
         // Parse the command from the pre-parsed JSON object
-        const command = root.getString(args, "command") orelse
+        const command = root.getString(args, "command") orelse {
+            std.debug.print("[TRACE] shell.execute: missing command parameter\n", .{});
             return ToolResult.fail("Missing 'command' parameter");
+        };
+        std.debug.print("[TRACE] shell.execute: command={s}\n", .{command});
 
         // Validate command against security policy
         if (self.policy) |pol| {
@@ -390,4 +395,23 @@ test "shell ApprovalRequired propagates oom for error message allocation" {
         error.OutOfMemory,
         st.execute(failing.allocator(), parsed.parsed.value.object),
     );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DEMO TESTS - Intentional failures and leaks for testing
+// These verify that the test system detects issues
+// ═══════════════════════════════════════════════════════════════
+
+test "shell DEMO intentional failure to verify detection" {
+    std.debug.print("\n❌ This test is supposed to FAIL!\n", .{});
+    std.testing.expect(false) catch |err| {
+        return err;
+    };
+}
+
+test "shell DEMO intentional leak to verify detection" {
+    std.debug.print("\n⚠️  This test is leaking 100 bytes on purpose!\n", .{});
+    const leaked = std.testing.allocator.alloc(u8, 100) catch unreachable;
+    _ = leaked; // Use it so compiler doesn't optimize away
+    // Intentionally NOT freeing - this will leak!
 }

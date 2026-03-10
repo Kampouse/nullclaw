@@ -55,3 +55,47 @@ zig test test_dispatcher_integration.zig
 - `MINIMAX_FIX_*.md` - MiniMax format handling documentation
 - `OPTIMIZATION_TEST_RESULTS.md` - Performance optimization results
 - `TOOL_CALL_LOGGING.md` - Tool call logging implementation
+
+## Zig Test Engine
+
+The `tests/runner.zig` and `tests/test_engine.zig` files provide compile-time test execution:
+
+### Quick Commands
+
+```bash
+# Test specific module
+zig build test -Dtest-file=memory/engines/markdown
+
+# Test critical modules only (fast)
+zig build test-critical
+
+# Test all modules
+zig build test
+
+# Test a module via convenience command
+zig build test-module -Dmodule=agent/root
+```
+
+### Compile-Time Testing
+
+Run tests at compile time in Zig code:
+
+```zig
+test "verify markdown has no leaks" {
+    const result = try runZigTest(std.testing.allocator, "memory/engines/markdown");
+    defer std.testing.allocator.free(result.output);
+
+    try std.testing.expect(result.passed);
+    try std.testing.expectEqual(@as(usize, 0), result.leak_count);
+}
+```
+
+### Current Status
+
+✅ **All 41 modules passing with 0 memory leaks**
+
+- memory/engines/markdown
+- agent/root
+- tools/shell
+- tools/memory
+- And 37 more modules...

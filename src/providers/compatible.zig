@@ -445,6 +445,7 @@ pub const OpenAiCompatibleProvider = struct {
         callback: root.StreamCallback,
         callback_ctx: *anyopaque,
     ) anyerror!root.StreamChatResult {
+        std.debug.print("[TRACE] compatible.streamChatImpl: START\n", .{});
         const self: *OpenAiCompatibleProvider = @ptrCast(@alignCast(ptr));
         const effective_model = self.normalizeProviderModel(model);
 
@@ -465,7 +466,10 @@ pub const OpenAiCompatibleProvider = struct {
         else
             null;
 
-        return sse.curlStream(allocator, url, body, auth_hdr, &.{}, request.timeout_secs, callback, callback_ctx);
+        std.debug.print("[TRACE] compatible.streamChatImpl: calling sse.curlStream\n", .{});
+        const result = sse.curlStream(allocator, url, body, auth_hdr, &.{}, request.timeout_secs, callback, callback_ctx);
+        std.debug.print("[TRACE] compatible.streamChatImpl: sse.curlStream returned\n", .{});
+        return result;
     }
 
     fn supportsStreamingImpl(_: *anyopaque) bool {

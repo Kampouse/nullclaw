@@ -30,18 +30,25 @@ const CliStreamCtx = struct {
 };
 
 fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
-    if (event.stage != .chunk or event.text.len == 0) return;
+    std.debug.print("[TRACE] cliStreamSinkCallback: stage={}\n", .{event.stage});
+    if (event.stage != .chunk or event.text.len == 0) {
+        std.debug.print("[TRACE] cliStreamSinkCallback: skipping (chunk={}\n", .{event.text.len});
+        return;
+    }
     // Write directly to stdout file descriptor without buffering.
     // For streaming responses, we want chunks to appear immediately, not buffered.
     // std.c.write is used here instead of buffered I/O to avoid delay.
     // Errors are intentionally ignored as stdout write failures are not recoverable.
     _ = std.c.write(1, event.text.ptr, event.text.len);
+    std.debug.print("[TRACE] cliStreamSinkCallback: wrote {} bytes\n", .{event.text.len});
 }
 
 /// Streaming callback that forwards provider chunks into unified stream sink events.
 fn cliStreamCallback(ctx_ptr: *anyopaque, chunk: providers.StreamChunk) void {
+    std.debug.print("[TRACE] cliStreamCallback: received chunk, is_final={}\n", .{chunk.is_final});
     const stream_ctx: *CliStreamCtx = @ptrCast(@alignCast(ctx_ptr));
     streaming.forwardProviderChunk(stream_ctx.sink, chunk);
+    std.debug.print("[TRACE] cliStreamCallback: forwarded chunk\n", .{});
 }
 
 fn hasOpenAiCodexCredential(allocator: std.mem.Allocator) bool {

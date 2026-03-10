@@ -649,6 +649,7 @@ pub const Agent = struct {
     /// Execute a single conversation turn: send messages to LLM, parse tool calls,
     /// execute tools, and loop until a final text response is produced.
     pub fn turn(self: *Agent, user_message: []const u8) ![]const u8 {
+        std.debug.print("[TRACE] turn: START\n", .{});
         self.context_was_compacted = false;
         commands.refreshSubagentToolContext(self);
 
@@ -811,6 +812,7 @@ pub const Agent = struct {
             var response: ChatResponse = undefined;
             var response_attempt: u32 = 1;
             if (is_streaming) {
+                std.debug.print("[TRACE] turn: calling streamChat\n", .{});
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, true);
                 const stream_result = self.provider.streamChat(
                     self.allocator,
@@ -828,6 +830,7 @@ pub const Agent = struct {
                     self.stream_callback.?,
                     self.stream_ctx.?,
                 ) catch |err| {
+                    std.debug.print("[TRACE] turn: streamChat ERROR: {}\n", .{err});
                     const fail_duration: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, timer_start)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
@@ -839,12 +842,14 @@ pub const Agent = struct {
                     self.observer.recordEvent(&fail_event);
                     return err;
                 };
+                std.debug.print("[TRACE] turn: streamChat completed successfully\n", .{});
                 response = ChatResponse{
                     .content = stream_result.content,
                     .tool_calls = &.{},
                     .usage = stream_result.usage,
                     .model = stream_result.model,
                 };
+                std.debug.print("[TRACE] turn: streaming response constructed\n", .{});
             } else {
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, false);
                 response = self.provider.chat(
@@ -943,7 +948,9 @@ pub const Agent = struct {
                     };
                 };
             }
+            std.debug.print("[TRACE] turn: before logLlmResponse\n", .{});
             self.logLlmResponse(iteration + 1, response_attempt, &response);
+            std.debug.print("[TRACE] turn: after logLlmResponse\n", .{});
 
             const duration_ms: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, timer_start)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
             const resp_event = ObserverEvent{ .llm_response = .{
@@ -986,10 +993,13 @@ pub const Agent = struct {
                 if (free_assistant_history and assistant_history_content.len > 0) self.allocator.free(assistant_history_content);
             }
 
+            std.debug.print("[TRACE] turn: parsing tool calls, use_native={}\n", .{use_native});
+
             if (use_native) {
                 // Provider returned structured tool_calls — convert them
                 parsed_calls = try dispatcher.parseStructuredToolCalls(self.allocator, response.tool_calls);
                 free_parsed_calls = true;
+                std.debug.print("[TRACE] turn: parsed structured tool calls, count={d}\n", .{parsed_calls.len});
 
                 if (parsed_calls.len == 0) {
                     // Structured calls were empty (e.g. all had empty names) — try XML fallback
@@ -1010,6 +1020,7 @@ pub const Agent = struct {
                     parsed_calls,
                 );
                 free_assistant_history = true;
+                std.debug.print("[TRACE] turn: built assistant history with tool calls\n", .{});
             } else {
                 // No native tool calls — parse response text for XML tool calls
                 const xml_parsed = try dispatcher.parseToolCalls(self.allocator, response_text);
@@ -1019,7 +1030,10 @@ pub const Agent = struct {
                 free_parsed_text = true;
                 // For XML path, store the raw response text as history
                 assistant_history_content = response_text;
+                std.debug.print("[TRACE] turn: parsed XML tool calls, count={d}\n", .{parsed_calls.len});
             }
+
+            std.debug.print("[TRACE] turn: total parsed_calls count={d}\n", .{parsed_calls.len});
 
             // Determine display text
             // IMPORTANT: When there are tool calls, NEVER show raw response_text to user
@@ -1137,6 +1151,8 @@ pub const Agent = struct {
                 w.flush() catch {};
             }
 
+            std.debug.print("[TRACE] turn: appending assistant message to history\n", .{});
+
             // Record assistant message with tool calls in history.
             // Native path (free_assistant_history=true): transfer ownership directly to avoid
             // a redundant allocation; clear the flag so the outer defer does not double-free.
@@ -1152,6 +1168,8 @@ pub const Agent = struct {
                 .content = assistant_content,
             });
 
+            std.debug.print("[TRACE] turn: history append complete, starting tool execution loop\n", .{});
+
             // Execute each tool call
             var results_buf: std.ArrayListUnmanaged(ToolExecutionResult) = .empty;
             defer results_buf.deinit(self.allocator);
@@ -1163,7 +1181,11 @@ pub const Agent = struct {
                 log.info("tool-call batch session=0x{x} count={d}", .{ session_hash, parsed_calls.len });
             }
 
+            std.debug.print("[TRACE] turn: entering tool execution loop, parsed_calls.len={d}\n", .{parsed_calls.len});
+
             for (parsed_calls, 0..) |call, idx| {
+                std.debug.print("[TRACE] turn: iteration {d}, tool={s}\n", .{ idx, call.name });
+
                 if (self.log_tool_calls) {
                     log.info(
                         "tool-call start session=0x{x} index={d} name={s} id={s}",
@@ -1171,19 +1193,27 @@ pub const Agent = struct {
                     );
                 }
 
+                std.debug.print("[TRACE] turn: recording tool_call_start event\n", .{});
                 const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
                 self.observer.recordEvent(&tool_start_event);
+                std.debug.print("[TRACE] turn: tool_call_start event recorded\n", .{});
 
                 const tool_timer = 0; // TODO: Zig 0.16.0 - util.timestampUnix() API changed
-                const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call))
-                    ToolExecutionResult{
+
+                std.debug.print("[TRACE] turn: checking should_skip_tools_memory_store_duplicate\n", .{});
+                const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call)) blk: {
+                    std.debug.print("[TRACE] turn: skipping duplicate memory_store\n", .{});
+                    break :blk ToolExecutionResult{
                         .name = call.name,
                         .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
                         .success = true,
                         .tool_call_id = call.tool_call_id,
-                    }
-                else
-                    self.executeTool(arena, call);
+                    };
+                } else blk: {
+                    std.debug.print("[TRACE] turn: calling executeTool for tool={s}\n", .{call.name});
+                    break :blk self.executeTool(arena, call);
+                };
+                std.debug.print("[TRACE] turn: executeTool returned for tool={s}\n", .{call.name});
                 const tool_duration: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, tool_timer)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
 
                 if (self.log_tool_calls) {
@@ -1459,10 +1489,13 @@ pub const Agent = struct {
                     };
                 };
                 std.debug.print("[TRACE] executeTool: tool.execute returned successfully\n", .{});
+                const output = if (result.success) result.output else (result.error_msg orelse result.output);
+                const success = result.success;
+                result.deinit(tool_allocator);
                 return .{
                     .name = call.name,
-                    .output = if (result.success) result.output else (result.error_msg orelse result.output),
-                    .success = result.success,
+                    .output = output,
+                    .success = success,
                     .tool_call_id = call.tool_call_id,
                 };
             }
@@ -3985,10 +4018,7 @@ test "Agent tool loop frees dynamic tool outputs" {
         }
 
         pub fn execute(_: *Self, allocator: std.mem.Allocator, _: tools_mod.JsonObjectMap) !tools_mod.ToolResult {
-            return .{
-                .success = true,
-                .output = try allocator.dupe(u8, "dynamic-tool-output"),
-            };
+            return tools_mod.ToolResult.okAlloc(allocator, "dynamic-tool-output");
         }
     };
 
