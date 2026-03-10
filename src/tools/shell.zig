@@ -396,22 +396,3 @@ test "shell ApprovalRequired propagates oom for error message allocation" {
         st.execute(failing.allocator(), parsed.parsed.value.object),
     );
 }
-
-// ═══════════════════════════════════════════════════════════════
-// DEMO TESTS - Intentional failures and leaks for testing
-// These verify that the test system detects issues
-// ═══════════════════════════════════════════════════════════════
-
-test "shell DEMO intentional failure to verify detection" {
-    std.debug.print("\n❌ This test is supposed to FAIL!\n", .{});
-    std.testing.expect(false) catch |err| {
-        return err;
-    };
-}
-
-test "shell DEMO intentional leak to verify detection" {
-    std.debug.print("\n⚠️  This test is leaking 100 bytes on purpose!\n", .{});
-    const leaked = std.testing.allocator.alloc(u8, 100) catch unreachable;
-    _ = leaked; // Use it so compiler doesn't optimize away
-    // Intentionally NOT freeing - this will leak!
-}

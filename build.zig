@@ -753,23 +753,6 @@ pub fn build(b: *std.Build) void {
             subsystem_step.dependOn(&lib_run.step);
             subsystem_step.dependOn(&exe_run.step);
         }
-
-        // Add a summary step that runs after all tests
-        const summary_mod = b.createModule(.{
-            .root_source_file = b.path("test_summary.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-
-        const summary_exe = b.addExecutable(.{
-            .name = "test_summary",
-            .root_module = summary_mod,
-        });
-
-        const summary_run = b.addRunArtifact(summary_exe);
-        const summary_step = b.step("test-summary", "Show test failure/leak summary");
-        summary_step.dependOn(&summary_run.step);
-        auto_discovery_step.dependOn(summary_step);
     }
 }
 
