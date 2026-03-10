@@ -753,6 +753,45 @@ pub fn build(b: *std.Build) void {
             subsystem_step.dependOn(&lib_run.step);
             subsystem_step.dependOn(&exe_run.step);
         }
+
+        // Add file-level summary using native build system (no separate executable)
+        const summary_header = b.addSystemCommand(&[_][]const u8{
+            "echo",
+            "\n═══════════════════════════════════════════════════════════════════════════════",
+        });
+        summary_header.step.name = "Summary Header";
+
+        const summary_title = b.addSystemCommand(&[_][]const u8{
+            "echo", "📋 FILE-LEVEL TEST SUMMARY",
+        });
+        summary_title.step.name = "Summary Title";
+
+        const summary_separator = b.addSystemCommand(&[_][]const u8{
+            "echo",
+            "═══════════════════════════════════════════════════════════════════════════════",
+        });
+        summary_separator.step.name = "Summary Separator";
+
+        const summary_note = b.addSystemCommand(&[_][]const u8{
+            "echo",
+            "💡 Run individual tests: zig build test-discover-<subsystem>",
+        });
+        summary_note.step.name = "Summary Note";
+
+        const summary_footer = b.addSystemCommand(&[_][]const u8{
+            "echo",
+            "═══════════════════════════════════════════════════════════════════════════════\n",
+        });
+        summary_footer.step.name = "Summary Footer";
+
+        // Chain summary commands to run in order
+        summary_title.step.dependOn(&summary_header.step);
+        summary_separator.step.dependOn(&summary_title.step);
+        summary_note.step.dependOn(&summary_separator.step);
+        summary_footer.step.dependOn(&summary_note.step);
+
+        // Add summary to auto-discovery (runs after all tests)
+        auto_discovery_step.dependOn(&summary_footer.step);
     }
 }
 

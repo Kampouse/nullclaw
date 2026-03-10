@@ -37,8 +37,9 @@ pub const RateTracker = struct {
     /// Record an action. Returns true if the action is allowed (within limit),
     /// false if rate-limited.
     pub fn recordAction(self: *RateTracker) !bool {
+        const now = std.Io.Clock.real.now(io).nanoseconds;
         self.prune();
-        try self.timestamps.append(self.allocator, 0);
+        try self.timestamps.append(self.allocator, now);
         return self.timestamps.items.len <= self.max_actions;
     }
 

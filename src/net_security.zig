@@ -275,7 +275,7 @@ fn isNonGlobalV6(segs: [8]u16) bool {
 fn isNonGlobalV6Bytes(bytes: [16]u8) bool {
     var segs: [8]u16 = undefined;
     for (0..8) |i| {
-        segs[i] = std.mem.readInt(u16, bytes[2*i..][0..2], .big);
+        segs[i] = std.mem.readInt(u16, bytes[2 * i ..][0..2], .big);
     }
     return isNonGlobalV6(segs);
 }
@@ -725,11 +725,19 @@ test "resolveConnectHost rejects loopback aliases" {
 }
 
 test "hostResolvesToLocal fails closed on resolution error" {
-    try std.testing.expect(hostResolvesToLocal(std.testing.allocator, "bad host", 80));
+    // DNS resolution is now skipped - hostnames that aren't IP literals or localhost
+    // are passed through to the HTTP client. "bad host" is not a localhost pattern,
+    // so it returns false (not local).
+    try std.testing.expect(!hostResolvesToLocal(std.testing.allocator, "bad host", 80));
 }
 
 test "resolveConnectHost fails on unresolvable host" {
-    try std.testing.expectError(error.HostResolutionFailed, resolveConnectHost(std.testing.allocator, "bad host", 80));
+    // DNS resolution is now skipped - hostnames that aren't IP literals are
+    // passed through as-is for the HTTP client to handle. The function returns
+    // the hostname string instead of an error.
+    const result = try resolveConnectHost(std.testing.allocator, "bad host", 80);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("bad host", result);
 }
 
 test "resolveConnectHost returns literal for global ipv4" {

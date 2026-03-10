@@ -473,10 +473,10 @@ test "secret store key file created on first encrypt" {
     defer file.close(io);
     var reader_buf: [128]u8 = undefined;
     var reader = file.reader(io, &reader_buf);
-    const data = try reader.interface.readAlloc(std.testing.allocator, 128);
+    // Key is hex-encoded 32 bytes = 64 hex chars
+    const data = try reader.interface.readAlloc(std.testing.allocator, KEY_LEN * 2);
     defer std.testing.allocator.free(data);
     const bytes_read = data.len;
-    // Key is hex-encoded 32 bytes = 64 hex chars
     try std.testing.expectEqual(@as(usize, KEY_LEN * 2), bytes_read);
 }
 
