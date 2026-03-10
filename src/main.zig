@@ -81,6 +81,12 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
 
     const allocator = std.heap.smp_allocator;
 
+    // Initialize tracing system FIRST
+    yc.trace_simple.init(allocator, .info);
+    defer yc.trace_simple.deinit();
+
+    yc.trace_simple.info(.daemon, "NullClaw starting", .{});
+
     // Zig 0.16.0: Use Args from minimal parameter
     var args_iter = std.process.Args.Iterator.init(minimal.args);
 

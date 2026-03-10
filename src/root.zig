@@ -5,6 +5,10 @@
 //!   hardware, health, heartbeat, memory, observability,
 //!   onboard, providers, security, skills, tools
 
+// Tracing system
+pub const trace = @import("trace.zig");
+pub const trace_simple = @import("trace_simple.zig");
+
 // Shared utilities
 pub const json_util = @import("json_util.zig");
 pub const http_util = @import("http_util.zig");

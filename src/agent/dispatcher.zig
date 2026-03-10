@@ -1,5 +1,6 @@
 const std = @import("std");
 const providers = @import("../providers/root.zig");
+const trace = @import("../trace_simple.zig");
 const log = std.log.scoped(.dispatcher);
 
 // ═══════════════════════════════════════════════════════════════════════════

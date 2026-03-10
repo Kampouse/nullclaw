@@ -22,6 +22,7 @@ const channel_adapters = @import("channel_adapters.zig");
 const heartbeat_mod = @import("heartbeat.zig");
 const onboard = @import("onboard.zig");
 const streaming = @import("streaming.zig");
+const trace = @import("trace.zig");
 
 const log = std.log.scoped(.daemon);
 
@@ -766,9 +767,29 @@ fn inboundDispatcherThread(
 /// shutdown is requested (Ctrl+C signal or explicit request).
 /// `host` and `port` are CLI-parsed values that override `config.gateway`.
 pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16) !void {
+    var main_span = trace.startSpan(.daemon, "run") orelse {
+        // Continue without tracing if it fails
+        return runInternal(allocator, config, host, port, null);
+    };
+    defer main_span.end();
+    
+    trace.info(.daemon, "Starting daemon on {s}:{}", .{ host, port });
+    
+    return runInternal(allocator, config, host, port, &main_span);
+}
+
+fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16, main_span: ?*trace.Span) !void {
+    _ = main_span;
+    
     // Ensure lifecycle parity: workspace bootstrap files must exist
     // even when users skip onboard and start runtime directly.
-    try onboard.scaffoldWorkspace(allocator, config.workspace_dir, &onboard.ProjectContext{});
+    {
+        var onboard_span = trace.startSpan(.config, "scaffold_workspace");
+        defer if (onboard_span) |*s| s.end();
+        
+        try onboard.scaffoldWorkspace(allocator, config.workspace_dir, &onboard.ProjectContext{});
+        trace.info(.daemon, "Workspace scaffolded", .{});
+    }
 
     health.markComponentOk("daemon");
     shutdown_requested.store(false, .release);
@@ -804,11 +825,19 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
     config.printModelConfig();
     try stdout.print("  Ctrl+C to stop\n\n", .{});
     try stdout.flush();
+    
+    trace.info(.daemon, "Components: gateway={}, channels={}, heartbeat={}, scheduler={}", .{
+        true,
+        has_supervised_channels,
+        config.heartbeat.enabled,
+        config.scheduler.enabled,
+    });
 
     // Write initial state file
     const state_path = try stateFilePath(allocator, config);
     defer allocator.free(state_path);
     writeStateFile(allocator, state_path, &state) catch |err| {
+        trace.warn(.daemon, "Could not write state file: {}", .{err});
         try stdout.print("Warning: could not write state file: {}\n", .{err});
     };
 
@@ -816,12 +845,17 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
     var event_bus = bus_mod.Bus.init();
 
     // Spawn gateway thread with larger stack for TLS operations (8MB)
+    var gw_span = (trace.startSpan(.gateway, "start") catch null);
+    defer if (gw_span) |*s| trace.endSpan(s);
+    
     state.markRunning("gateway");
     const gw_thread = std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus }) catch |err| {
         state.markError("gateway", @errorName(err));
+        trace.err(.gateway, "Failed to spawn: {}", .{err});
         try stdout.print("Failed to spawn gateway: {}\n", .{err});
         return err;
     };
+    trace.info(.gateway, "Thread spawned on {s}:{}", .{ host, port });
 
     // Spawn heartbeat thread
     var hb_thread: ?std.Thread = null;
