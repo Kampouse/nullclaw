@@ -782,21 +782,23 @@ test "all tools includes extras when enabled" {
     });
     defer deinitTools(std.testing.allocator, tools);
 
-    // Order: shell, file_read, file_write, file_edit, git, cargo, image_info,
+    // Order: shell, file_read, file_write, file_edit, git, cargo, zig_build,
+    //        self_diagnose, self_update, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
     //        delegate, schedule, spawn, http_request, web_search, web_fetch,
-    //        browser = 18
-    try std.testing.expectEqual(@as(usize, 18), tools.len);
+    //        browser = 21
+    try std.testing.expectEqual(@as(usize, 21), tools.len);
 }
 
 test "all tools excludes extras when disabled" {
     const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{});
     defer deinitTools(std.testing.allocator, tools);
 
-    // Order: shell, file_read, file_write, file_edit, git, cargo, image_info,
+    // Order: shell, file_read, file_write, file_edit, git, cargo, zig_build,
+    //        self_diagnose, self_update, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        delegate, schedule, spawn = 14
-    try std.testing.expectEqual(@as(usize, 14), tools.len);
+    //        delegate, schedule, spawn = 17
+    try std.testing.expectEqual(@as(usize, 17), tools.len);
 }
 
 test "all tools wires http and web_search config into tool instances" {

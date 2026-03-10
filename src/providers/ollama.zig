@@ -277,7 +277,7 @@ pub const OllamaProvider = struct {
     fn looksLikeDirectToolCall(json: []const u8) bool {
         const trimmed = std.mem.trim(u8, json, " \t\r\n");
         return std.mem.startsWith(u8, trimmed, "{\"name\":") and
-               std.mem.indexOf(u8, trimmed, "\"arguments\":") != null;
+            std.mem.indexOf(u8, trimmed, "\"arguments\":") != null;
     }
 
     /// Convert a direct tool call JSON to OpenAI format for the agent loop
@@ -294,11 +294,7 @@ pub const OllamaProvider = struct {
         defer allocator.free(args_str);
 
         // Format as OpenAI tool call
-        return try std.fmt.allocPrint(
-            allocator,
-            "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}",
-            .{ name, args_str }
-        );
+        return try std.fmt.allocPrint(allocator, "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}", .{ name, args_str });
     }
 
     /// Check if content looks like XML tool call: <invoke name="..."><parameter name="...">...</parameter></invoke>
@@ -306,8 +302,8 @@ pub const OllamaProvider = struct {
         const trimmed = std.mem.trim(u8, content, " \t\r\n");
         // Check for various XML tool call formats
         const has_invoke = std.mem.indexOf(u8, trimmed, "<invoke") != null or
-                           std.mem.indexOf(u8, trimmed, "{\"invoke") != null or
-                           std.mem.indexOf(u8, trimmed, "<invoke>") != null;
+            std.mem.indexOf(u8, trimmed, "{\"invoke") != null or
+            std.mem.indexOf(u8, trimmed, "<invoke>") != null;
         const has_parameter = std.mem.indexOf(u8, trimmed, "<parameter") != null;
         return has_invoke and has_parameter;
     }
@@ -379,11 +375,7 @@ pub const OllamaProvider = struct {
         defer allocator.free(args_str);
 
         // Format as OpenAI tool call
-        return try std.fmt.allocPrint(
-            allocator,
-            "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}",
-            .{ tool_name, args_str }
-        );
+        return try std.fmt.allocPrint(allocator, "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}", .{ tool_name, args_str });
     }
 
     /// Create a Provider interface from this OllamaProvider.
@@ -448,7 +440,7 @@ pub const OllamaProvider = struct {
     }
 
     fn supportsNativeToolsImpl(_: *anyopaque) bool {
-        return true;  // Ollama supports tool calling via tools parameter
+        return true; // Ollama supports tool calling via tools parameter
     }
 
     fn supportsVisionImpl(_: *anyopaque) bool {
@@ -583,10 +575,10 @@ test "parseResponse empty content" {
     try std.testing.expectEqualStrings("", result);
 }
 
-test "supportsNativeTools returns false" {
+test "supportsNativeTools returns true" {
     var p = OllamaProvider.init(std.testing.allocator, null);
     const prov = p.provider();
-    try std.testing.expect(!prov.supportsNativeTools());
+    try std.testing.expect(prov.supportsNativeTools());
 }
 
 // ─── Tool Call Tests ─────────────────────────────────────────────────────────

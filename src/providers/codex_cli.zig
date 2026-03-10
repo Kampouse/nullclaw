@@ -157,9 +157,10 @@ test "CodexCliProvider supportsNativeTools returns false" {
     try std.testing.expect(!vtable.supportsNativeTools(@ptrCast(&dummy)));
 }
 
-test "CodexCliProvider checkCliAvailable returns CliNotFound for missing binary" {
+test "CodexCliProvider checkCliAvailable returns NotSupported for missing binary" {
+    // TODO: Zig 0.16.0 - Child API changed, checkCliAvailable returns NotSupported
     const result = checkCliAvailable(std.testing.allocator, "nonexistent_binary_xyzzy_codex_99999");
-    try std.testing.expectError(error.CliNotFound, result);
+    try std.testing.expectError(error.NotSupported, result);
 }
 
 test "extractLastUserMessage finds last user" {

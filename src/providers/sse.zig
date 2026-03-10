@@ -193,6 +193,9 @@ pub fn curlStream(
 pub fn parseAnthropicSseLine(allocator: std.mem.Allocator, line: []const u8, current_event: []const u8) !AnthropicSseResult {
     const trimmed = std.mem.trim(u8, line, " \t\r\n");
 
+    // Empty lines are skipped
+    if (trimmed.len == 0) return .skip;
+
     // Handle event lines
     const event_prefix = "event: ";
     if (std.mem.startsWith(u8, trimmed, event_prefix)) {
@@ -200,7 +203,9 @@ pub fn parseAnthropicSseLine(allocator: std.mem.Allocator, line: []const u8, cur
         return .{ .event = event_name };
     }
 
+    // Handle data lines
     const data_prefix = "data: ";
+    if (!std.mem.startsWith(u8, trimmed, data_prefix)) return .skip;
     const data = trimmed[data_prefix.len..];
 
     if (std.mem.eql(u8, current_event, "message_stop")) return .done;

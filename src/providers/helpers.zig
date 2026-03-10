@@ -108,7 +108,7 @@ pub fn buildRequestBody(allocator: std.mem.Allocator, model: []const u8, prompt:
     try json_util.appendJsonString(&buf, allocator, model);
     try buf.appendSlice(allocator, ",\"messages\":[{\"role\":\"user\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, prompt);
-    try buf.appendSlice(allocator, "}}],\"temperature\":");
+    try buf.appendSlice(allocator, "}],\"temperature\":");
     var temp_buf: [32]u8 = undefined;
     const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.1}", .{temperature}) catch unreachable;
     try buf.appendSlice(allocator, temp_str);
@@ -116,7 +116,7 @@ pub fn buildRequestBody(allocator: std.mem.Allocator, model: []const u8, prompt:
     var tokens_buf: [16]u8 = undefined;
     const tokens_str = std.fmt.bufPrint(&tokens_buf, "{d}", .{max_tokens}) catch unreachable;
     try buf.appendSlice(allocator, tokens_str);
-    try buf.appendSlice(allocator, "}}");
+    try buf.appendSlice(allocator, "}");
     return try buf.toOwnedSlice(allocator);
 }
 
@@ -124,13 +124,13 @@ pub fn buildRequestBody(allocator: std.mem.Allocator, model: []const u8, prompt:
 pub fn buildRequestBodyWithSystem(allocator: std.mem.Allocator, model: []const u8, system: []const u8, prompt: []const u8, temperature: f64, max_tokens: u32) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    try buf.appendSlice(allocator, "{\"model\":\"");
-    try buf.appendSlice(allocator, model);
-    try buf.appendSlice(allocator, "\",\"messages\":[{\"role\":\"system\",\"content\":");
+    try buf.appendSlice(allocator, "{\"model\":");
+    try json_util.appendJsonString(&buf, allocator, model);
+    try buf.appendSlice(allocator, ",\"messages\":[{\"role\":\"system\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, system);
     try buf.appendSlice(allocator, "},{\"role\":\"user\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, prompt);
-    try buf.appendSlice(allocator, "}}],\"temperature\":");
+    try buf.appendSlice(allocator, "}],\"temperature\":");
     var temp_buf: [32]u8 = undefined;
     const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.1}", .{temperature}) catch unreachable;
     try buf.appendSlice(allocator, temp_str);
@@ -138,7 +138,7 @@ pub fn buildRequestBodyWithSystem(allocator: std.mem.Allocator, model: []const u
     var tokens_buf: [16]u8 = undefined;
     const tokens_str = std.fmt.bufPrint(&tokens_buf, "{d}", .{max_tokens}) catch unreachable;
     try buf.appendSlice(allocator, tokens_str);
-    try buf.appendSlice(allocator, "}}");
+    try buf.appendSlice(allocator, "}");
     return try buf.toOwnedSlice(allocator);
 }
 
