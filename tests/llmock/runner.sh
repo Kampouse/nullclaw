@@ -88,6 +88,9 @@ if [ -n "$1" ]; then
     if [ "$1" = "tool-calls" ]; then
         log_info "Running tool calling test..."
         $ZIG build test-tool-calls 2>&1
+    elif [ "$1" = "comprehensive" ]; then
+        log_info "Running comprehensive integration tests..."
+        $ZIG build test-comprehensive 2>&1
     else
         log_error "Unknown test: $1"
         exit 1

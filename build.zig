@@ -837,6 +837,28 @@ pub fn build(b: *std.Build) void {
         const tool_call_test_run = b.addRunArtifact(tool_call_test_exe);
         tool_call_test_step.dependOn(&tool_call_test_run.step);
         
+        // Comprehensive integration tests
+        const comprehensive_test_step = b.step("test-comprehensive", "Run comprehensive integration tests (requires mock server)");
+        
+        const comprehensive_test_exe = b.addExecutable(.{
+            .name = "nullclaw-comprehensive-tests",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/integration/comprehensive_tests.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "nullclaw", .module = lib_mod.? },
+                },
+            }),
+        });
+        
+        if (sqlite3) |lib| {
+            comprehensive_test_exe.root_module.linkLibrary(lib);
+        }
+        
+        const comprehensive_test_run = b.addRunArtifact(comprehensive_test_exe);
+        comprehensive_test_step.dependOn(&comprehensive_test_run.step);
+        
         // Mock server for testing
         const mock_server_step = b.step("mock-server", "Start mock HTTP server for testing");
         
