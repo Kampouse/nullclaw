@@ -37,6 +37,101 @@ const log = std.log.scoped(.channel_loop);
 const TELEGRAM_OFFSET_STORE_VERSION: i64 = 1;
 
 // ════════════════════════════════════════════════════════════════════════════
+// Message Classification (Hybrid Strategy)
+// ════════════════════════════════════════════════════════════════════════════
+
+const MessageClass = enum {
+    /// Independent query - can be processed in parallel (no context needed)
+    /// Examples: "/status", "BTC price?", "What's 2+2?"
+    independent,
+    
+    /// Conversational - needs sequential processing (context-dependent)
+    /// Examples: "And tomorrow?", "What about that?", "Continue"
+    conversational,
+};
+
+/// Classify a message as independent or conversational
+fn classifyMessage(content: []const u8) MessageClass {
+    const trimmed = std.mem.trim(u8, content, " \t\r\n");
+    
+    // Empty message → conversational (will error anyway)
+    if (trimmed.len == 0) return .conversational;
+    
+    // 1. Commands are always independent
+    if (std.mem.startsWith(u8, trimmed, "/")) return .independent;
+    
+    const lower = std.ascii.allocLowerString(std.heap.page_allocator, trimmed) catch return .conversational;
+    defer std.heap.page_allocator.free(lower);
+    
+    // 2. Check for context-dependent keywords at START of message
+    const context_starters = [_][]const u8{
+        "and ", "and\t", "and\n",  // "And tomorrow?" but not "Android"
+        "also ", "also\t",
+        "too",                     // "me too"
+        "continue",
+        "go on",
+        "keep going",
+        "what about",
+        "how about",
+        "what else",
+        "tell me more",
+        "why",                     // Usually follow-up
+        "how so",
+        "what do you mean",
+        "i mean",
+        "i meant",
+        "actually",
+        "wait",
+        "sorry",
+        "nevermind",
+        "forget it",
+    };
+    
+    for (context_starters) |starter| {
+        if (std.mem.startsWith(u8, lower, starter)) {
+            return .conversational;
+        }
+    }
+    
+    // 3. Pronoun detection (context references)
+    const pronouns = [_][]const u8{
+        " it ", " it?", " it.", " it!", "\nit", "\tit",
+        " that ", " that?", " that.", " that!",
+        " this ", " this?", " this.", " this!",
+        " he ", " he?", " he.", " he!",
+        " she ", " she?", " she.", " she!",
+        " they ", " they?", " they.", " they!",
+        " them ", " them?", " them.", " them!",
+    };
+    
+    for (pronouns) |pronoun| {
+        if (std.mem.indexOf(u8, lower, pronoun) != null) {
+            return .conversational;
+        }
+    }
+    
+    // 4. Questions are usually independent (unless they start with follow-up words)
+    if (std.mem.indexOfScalar(u8, trimmed, '?') != null) {
+        // Has question mark - likely independent
+        // Exception: if it STARTS with "and", "also", etc. (already checked above)
+        return .independent;
+    }
+    
+    // 5. Currency symbols indicate independent queries
+    if (std.mem.indexOfAny(u8, trimmed, "$€£¥₿") != null) {
+        return .independent;
+    }
+    
+    // 6. Short follow-ups (< 10 chars, no question mark)
+    if (trimmed.len < 10) {
+        return .conversational;
+    }
+    
+    // 7. Default: conversational (safer)
+    return .conversational;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Telegram Worker Pool Types
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -49,6 +144,7 @@ const TelegramWorkerMessage = struct {
     is_group: bool,
     message_id: ?i64,
     account_id: []const u8,
+    message_class: MessageClass, // Added: classification
     
     pub fn deinit(self: *const TelegramWorkerMessage, allocator: std.mem.Allocator) void {
         allocator.free(self.sender);
@@ -88,9 +184,15 @@ const TelegramWorkerHandler = struct {
             break :blk route.session_key;
         };
 
-        // Acquire per-session lock (ensures conversation order)
-        const session_lock = self.session_locks.acquire(session_key);
-        defer self.session_locks.release(session_lock);
+        // Hybrid strategy: only lock for conversational messages
+        // Independent queries can run in parallel (no session lock)
+        const needs_lock = msg.message_class == .conversational;
+        
+        var session_lock: ?*std.Io.Mutex = null;
+        if (needs_lock) {
+            session_lock = self.session_locks.acquire(session_key);
+        }
+        defer if (session_lock) |lock| self.session_locks.release(lock);
 
         // Start typing indicator
         self.tg_ptr.startTyping(msg.sender) catch {};
@@ -621,6 +723,9 @@ pub fn runTelegramLoop(
                 continue;
             }
 
+            // Classify message for hybrid processing
+            const msg_class = classifyMessage(msg.content);
+            
             // Clone message data for worker pool
             const worker_msg = TelegramWorkerMessage{
                 .sender = allocator.dupe(u8, msg.sender) catch {
@@ -646,7 +751,13 @@ pub fn runTelegramLoop(
                     msg.deinit(allocator);
                     continue;
                 },
+                .message_class = msg_class,
             };
+
+            // Log classification (debug)
+            if (msg_class == .independent) {
+                log.debug("Message classified as independent: {s}", .{msg.content[0..@min(msg.content.len, 50)]});
+            }
 
             // Enqueue for worker pool processing
             if (loop_state.worker_pool) |pool| {
@@ -1391,4 +1502,50 @@ test "telegram offset persistence helper retries after write failure" {
     try std.testing.expectEqual(@as(i64, 101), persisted_update_id);
     const restored = loadTelegramUpdateOffset(allocator, &cfg, "main", "12345:test-token");
     try std.testing.expectEqual(@as(?i64, 101), restored);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Message Classification Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+test "classifyMessage: commands are independent" {
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("/start"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("/status"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("/help"));
+}
+
+test "classifyMessage: price queries are independent" {
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("What's BTC price?"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("BTC?"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("How much is $100 in EUR?"));
+}
+
+test "classifyMessage: follow-ups are conversational" {
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("And tomorrow?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("What about that?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Continue"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Go on"));
+}
+
+test "classifyMessage: pronoun references are conversational" {
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("What is it?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Who is he?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Explain that"));
+}
+
+test "classifyMessage: short messages are conversational" {
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Ok"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Yes"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("No"));
+}
+
+test "classifyMessage: mixed patterns" {
+    // Has "and" at start → conversational
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("And BTC price?"));
+    
+    // Short question with currency → independent
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("Price?"));
+    
+    // Normal question → independent
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("What is Bitcoin?"));
 }
