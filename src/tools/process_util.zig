@@ -26,7 +26,9 @@ pub const RunResult = struct {
 /// Options for running a child process.
 pub const RunOptions = struct {
     cwd: ?[]const u8 = null,
-    env_map: ?*anyopaque = null, // Ignored in Zig 0.16.0 - environment inherited from parent
+    /// Environment map to pass to the child process.
+    /// If null, the child inherits the parent's environment.
+    env_map: ?*const std.process.Environ.Map = null,
     max_output_bytes: usize = 1_048_576,
 };
 
@@ -55,12 +57,17 @@ pub fn run(
     const cwd_option: std.process.Child.Cwd = if (opts.cwd) |path| .{ .path = path } else .inherit;
 
     std.debug.print("[TRACE] process_util.run: calling std.process.run\n", .{});
-    const result = try std.process.run(allocator, spawn_io, .{
+
+    // Build the std.process.run options
+    const run_opts = std.process.RunOptions{
         .argv = argv,
         .cwd = cwd_option,
         .stdout_limit = .limited(opts.max_output_bytes),
         .stderr_limit = .limited(opts.max_output_bytes),
-    });
+        .environ_map = opts.env_map,
+    };
+
+    const result = try std.process.run(allocator, spawn_io, run_opts);
     std.debug.print("[TRACE] process_util.run: std.process.run returned\n", .{});
 
     std.debug.print("[TRACE] process_util.run: returning result\n", .{});

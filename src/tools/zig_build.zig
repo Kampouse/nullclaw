@@ -129,9 +129,45 @@ pub const ZigBuildTool = struct {
             argv_buf[i] = a;
         }
 
+        // Set up environment with ZIG_CACHE_DIR
+        // Create environment map from current process environment
+        const current_env = createCurrentEnvironment();
+        var env_map = try std.process.Environ.createMap(current_env, allocator);
+        defer env_map.deinit();
+
+        // Set ZIG_CACHE_DIR to a subdirectory within the workspace
+        // This ensures zig has write access and doesn't use system directories
+        const cache_dir = try std.fs.path.join(allocator, &.{ self.workspace_dir, ".nullclaw", "zig-cache" });
+        defer allocator.free(cache_dir);
+        try env_map.put("ZIG_CACHE_DIR", cache_dir);
+
         const proc = @import("process_util.zig");
-        const result = try proc.run(allocator, argv_buf[0 .. arg_count + 1], .{ .cwd = zig_cwd });
+        const result = try proc.run(allocator, argv_buf[0 .. arg_count + 1], .{
+            .cwd = zig_cwd,
+            .env_map = &env_map,
+        });
         return .{ .stdout = result.stdout, .stderr = result.stderr, .success = result.success };
+    }
+
+    /// Create an Environ for the current process environment.
+    /// This handles the platform-specific differences between POSIX and Windows.
+    fn createCurrentEnvironment() std.process.Environ {
+        const builtin = @import("builtin");
+        if (builtin.os.tag == .windows) {
+            // Windows uses GlobalBlock with use_global = true
+            return .{ .block = .{ .use_global = true } };
+        } else {
+            // POSIX systems: use std.c.environ to get the environment
+            // std.c.environ is [*:null]const ?[*:0]const u8
+            // We need to count entries and create a [:null]const ?[*:0]const u8 slice
+            const env_ptr = std.c.environ;
+            var count: usize = 0;
+            while (env_ptr[count] != null) : (count += 1) {}
+
+            // Create the sentinel-terminated slice
+            const env_slice: [:null]const ?[*:0]const u8 = env_ptr[0..count :null];
+            return .{ .block = .{ .slice = env_slice } };
+        }
     }
 
     fn runZigOp(self: *ZigBuildTool, allocator: std.mem.Allocator, zig_cwd: []const u8, args: []const []const u8, extra_args: ?[]const u8) !ToolResult {
