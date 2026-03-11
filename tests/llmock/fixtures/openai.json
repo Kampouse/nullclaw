@@ -1,6 +1,18 @@
 {
   "fixtures": [
     {
+      "match": { "userMessage": "weather" },
+      "response": {
+        "toolCalls": [
+          { "name": "get_weather", "arguments": "{\"location\":\"Tokyo, Japan\"}" }
+        ]
+      }
+    },
+    {
+      "match": { "predicate": "(req) => req.messages.some(m => m.role === 'tool')" },
+      "response": { "content": "The weather in Tokyo is currently sunny with a temperature of 22°C. Perfect day to be outside!" }
+    },
+    {
       "match": { "userMessage": "hello" },
       "response": { "content": "Hello! I'm a mock assistant for testing NullClaw runtime." }
     },

@@ -71,8 +71,8 @@ fi
 log_info "llmock server started at http://localhost:$PORT"
 
 # Set environment variables for Zig tests
-export OPENAI_BASE_URL="http://localhost:$PORT/v1"
-export ANTHROPIC_BASE_URL="http://localhost:$PORT/v1"
+export OPENAI_BASE_URL="http://localhost:$PORT/v1/chat/completions"
+export ANTHROPIC_BASE_URL="http://localhost:$PORT/v1/messages"
 export GEMINI_BASE_URL="http://localhost:$PORT/v1beta"
 export OPENAI_API_KEY="mock-key"
 export ANTHROPIC_API_KEY="mock-key"
@@ -87,10 +87,15 @@ log_info "  GEMINI_BASE_URL=$GEMINI_BASE_URL"
 log_info "Running Zig integration tests..."
 
 if [ -n "$1" ]; then
-    # Run specific test file (not supported with build system)
-    log_error "Specific test files not supported with integration tests"
-    log_info "Run all integration tests with: ./tests/llmock/runner.sh"
-    exit 1
+    # Run specific test
+    cd "$PROJECT_ROOT"
+    if [ "$1" = "tool-calls" ]; then
+        /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build test-tool-calls 2>&1
+    else
+        log_error "Unknown test: $1"
+        log_info "Available tests: tool-calls, all"
+        exit 1
+    fi
 else
     # Run all integration tests using zig build with correct Zig version
     cd "$PROJECT_ROOT"

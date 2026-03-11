@@ -814,6 +814,28 @@ pub fn build(b: *std.Build) void {
         
         const integration_test_run = b.addRunArtifact(integration_test_exe);
         integration_test_step.dependOn(&integration_test_run.step);
+        
+        // Tool call test
+        const tool_call_test_step = b.step("test-tool-calls", "Run tool calling integration tests");
+        
+        const tool_call_test_exe = b.addExecutable(.{
+            .name = "nullclaw-tool-call-test",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/integration/tool_call_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "nullclaw", .module = lib_mod.? },
+                },
+            }),
+        });
+        
+        if (sqlite3) |lib| {
+            tool_call_test_exe.root_module.linkLibrary(lib);
+        }
+        
+        const tool_call_test_run = b.addRunArtifact(tool_call_test_exe);
+        tool_call_test_step.dependOn(&tool_call_test_run.step);
     }
 }
 

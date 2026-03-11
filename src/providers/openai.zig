@@ -18,15 +18,39 @@ const TokenUsage = root.TokenUsage;
 /// - Authorization: Bearer <key>
 pub const OpenAiProvider = struct {
     api_key: ?[]const u8,
+    base_url: []const u8,
     allocator: std.mem.Allocator,
     http_client: std.http.Client,
 
-    const BASE_URL = "https://api.openai.com/v1/chat/completions";
+    const DEFAULT_BASE_URL = "https://api.openai.com/v1/chat/completions";
 
     pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) OpenAiProvider {
         const io = @import("../http_util.zig").getThreadedIo();
+        
+        // Check for OPENAI_BASE_URL environment variable (for testing)
+        const env_base_url: ?[]const u8 = if (std.c.getenv("OPENAI_BASE_URL")) |url| 
+            std.mem.span(url) 
+        else 
+            null;
+        
+        const base_url: []const u8 = if (env_base_url) |env_url|
+            env_url
+        else
+            DEFAULT_BASE_URL;
+        
         return .{
             .api_key = api_key,
+            .base_url = base_url,
+            .allocator = allocator,
+            .http_client = .{ .allocator = allocator, .io = io },
+        };
+    }
+    
+    pub fn initWithBaseUrl(allocator: std.mem.Allocator, api_key: ?[]const u8, base_url: []const u8) OpenAiProvider {
+        const io = @import("../http_util.zig").getThreadedIo();
+        return .{
+            .api_key = api_key,
+            .base_url = base_url,
             .allocator = allocator,
             .http_client = .{ .allocator = allocator, .io = io },
         };
@@ -200,7 +224,7 @@ pub const OpenAiProvider = struct {
         var auth_hdr_buf: [512]u8 = undefined;
         const auth_hdr = std.fmt.bufPrint(&auth_hdr_buf, "Authorization: Bearer {s}", .{api_key}) catch return error.OpenAiApiError;
 
-        return sse.curlStream(allocator, BASE_URL, body, auth_hdr, &.{}, request.timeout_secs, callback, callback_ctx);
+        return sse.curlStream(allocator, self.base_url, body, auth_hdr, &.{}, request.timeout_secs, callback, callback_ctx);
     }
 
     fn supportsStreamingImpl(_: *anyopaque) bool {
@@ -224,7 +248,7 @@ pub const OpenAiProvider = struct {
         var auth_hdr_buf: [512]u8 = undefined;
         const auth_hdr = std.fmt.bufPrint(&auth_hdr_buf, "Authorization: Bearer {s}", .{api_key}) catch return error.OpenAiApiError;
 
-        const resp_body = self.httpPost(allocator, BASE_URL, body, &.{auth_hdr}, 0) catch return error.OpenAiApiError;
+        const resp_body = self.httpPost(allocator, self.base_url, body, &.{auth_hdr}, 0) catch return error.OpenAiApiError;
         defer allocator.free(resp_body);
 
         return parseTextResponse(allocator, resp_body);
@@ -246,7 +270,7 @@ pub const OpenAiProvider = struct {
         var auth_hdr_buf: [512]u8 = undefined;
         const auth_hdr = std.fmt.bufPrint(&auth_hdr_buf, "Authorization: Bearer {s}", .{api_key}) catch return error.OpenAiApiError;
 
-        const resp_body = self.httpPost(allocator, BASE_URL, body, &.{auth_hdr}, request.timeout_secs) catch return error.OpenAiApiError;
+        const resp_body = self.httpPost(allocator, self.base_url, body, &.{auth_hdr}, request.timeout_secs) catch return error.OpenAiApiError;
         defer allocator.free(resp_body);
 
         return parseNativeResponse(allocator, resp_body);
