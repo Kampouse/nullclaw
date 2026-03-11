@@ -39,15 +39,23 @@ cleanup() {
 # Register cleanup on exit
 trap cleanup EXIT
 
-# Start Zig mock server
-log_info "Starting Zig mock server on port $PORT..."
+# Build and start Zig mock server
+log_info "Building mock server..."
 cd "$PROJECT_ROOT"
+/Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build mock-server 2>&1 | grep -v "^error\|Build Summary\|failed command" || true
 
-/Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build mock-server -- $PORT &
+# Check if build succeeded
+if [ ! -f ".zig-cache/o/5d4f36dbe9469c18cee00c50e60a0011/nullclaw-mock-server" ]; then
+    log_error "Mock server build failed"
+    exit 1
+fi
+
+log_info "Starting mock server on port $PORT..."
+./.zig-cache/o/5d4f36dbe9469c18cee00c50e60a0011/nullclaw-mock-server &
 MOCK_PID=$!
 
 # Wait for server to start
-sleep 1
+sleep 2
 
 # Check if server is running
 if ! kill -0 $MOCK_PID 2>/dev/null; then
@@ -55,7 +63,7 @@ if ! kill -0 $MOCK_PID 2>/dev/null; then
     exit 1
 fi
 
-log_info "Mock server started at http://localhost:$PORT"
+log_info "Mock server started at http://localhost:$PORT (PID: $MOCK_PID)"
 
 # Set environment variables for Zig tests
 export OPENAI_BASE_URL="http://localhost:$PORT/v1/chat/completions"
@@ -67,24 +75,19 @@ export GEMINI_API_KEY="mock-key"
 
 log_info "Environment variables set:"
 log_info "  OPENAI_BASE_URL=$OPENAI_BASE_URL"
-log_info "  ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
-log_info "  GEMINI_BASE_URL=$GEMINI_BASE_URL"
 
-# Run Zig integration tests
-log_info "Running Zig integration tests..."
+# Run test
+cd "$PROJECT_ROOT"
 
 if [ -n "$1" ]; then
-    # Run specific test
-    cd "$PROJECT_ROOT"
     if [ "$1" = "tool-calls" ]; then
+        log_info "Running tool calling test..."
         /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build test-tool-calls 2>&1
     else
         log_error "Unknown test: $1"
-        log_info "Available tests: tool-calls, all"
         exit 1
     fi
 else
-    # Run all integration tests using zig build with correct Zig version
-    cd "$PROJECT_ROOT"
+    log_info "Running all integration tests..."
     /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build test-integration 2>&1
 fi
