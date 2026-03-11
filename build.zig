@@ -840,6 +840,12 @@ pub fn build(b: *std.Build) void {
         // Mock server for testing
         const mock_server_step = b.step("mock-server", "Start mock HTTP server for testing");
         
+        const http_util_mod = b.createModule(.{
+            .root_source_file = b.path("src/http_util.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        
         const mock_server_exe = b.addExecutable(.{
             .name = "nullclaw-mock-server",
             .root_module = b.createModule(.{
@@ -847,11 +853,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = optimize,
                 .imports = &.{
-                    .{ .name = "compat", .module = b.createModule(.{
-                        .root_source_file = b.path("src/compat.zig"),
-                        .target = target,
-                        .optimize = optimize,
-                    })},
+                    .{ .name = "http_util", .module = http_util_mod },
                 },
             }),
         });
