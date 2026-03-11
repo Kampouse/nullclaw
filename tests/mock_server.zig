@@ -136,6 +136,7 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     const has_malformed = std.mem.indexOf(u8, body, "test malformed") != null;
     const has_ratelimit = std.mem.indexOf(u8, body, "test ratelimit") != null;
     const has_empty = std.mem.indexOf(u8, body, "test empty") != null;
+    const has_streamfail = std.mem.indexOf(u8, body, "test streamfail") != null;
     
     // Error scenarios
     if (has_malformed) {
@@ -152,6 +153,12 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     if (has_empty) {
         // Return empty body
         try sendRaw(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n", io);
+        return;
+    }
+    
+    if (has_streamfail and is_streaming) {
+        // Stream a few chunks then close connection abruptly
+        try sendStreamFail(stream, io);
         return;
     }
     
@@ -388,4 +395,40 @@ fn sendRaw(stream: *std.Io.net.Stream, response: []const u8, io: std.Io) !void {
     
     try std.Io.Writer.writeAll(&conn_writer.interface, response);
     try std.Io.Writer.flush(&conn_writer.interface);
+}
+
+/// Send SSE stream that fails mid-way (simulates connection drop)
+fn sendStreamFail(stream: *std.Io.net.Stream, io: std.Io) !void {
+    var write_buf: [16384]u8 = undefined;
+    var conn_writer = stream.writer(io, &write_buf);
+    
+    // Send SSE headers
+    try std.Io.Writer.writeAll(&conn_writer.interface, 
+        "HTTP/1.1 200 OK\r\n" ++
+        "Content-Type: text/event-stream\r\n" ++
+        "Cache-Control: no-cache\r\n" ++
+        "Connection: keep-alive\r\n" ++
+        "\r\n"
+    );
+    try std.Io.Writer.flush(&conn_writer.interface);
+    
+    // Send 2 chunks then abort (don't send [DONE])
+    var delta_buf: [256]u8 = undefined;
+    
+    // Chunk 1
+    const chunk1 = std.fmt.bufPrint(&delta_buf, 
+        \\{{"id":"chatcmpl-mock","object":"chat.completion.chunk","choices":[{{"delta":{{"content":"Start"}}}}]}}
+    , .{}) catch return error.BufferTooSmall;
+    try std.Io.Writer.print(&conn_writer.interface, "data: {s}\n\n", .{chunk1});
+    try std.Io.Writer.flush(&conn_writer.interface);
+    
+    // Chunk 2
+    const chunk2 = std.fmt.bufPrint(&delta_buf, 
+        \\{{"id":"chatcmpl-mock","object":"chat.completion.chunk","choices":[{{"delta":{{"content":" mid"}}}}]}}
+    , .{}) catch return error.BufferTooSmall;
+    try std.Io.Writer.print(&conn_writer.interface, "data: {s}\n\n", .{chunk2});
+    try std.Io.Writer.flush(&conn_writer.interface);
+    
+    // Then just close - client should detect incomplete stream
+    // (No [DONE] marker, no final chunk with finish_reason)
 }
