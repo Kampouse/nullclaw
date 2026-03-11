@@ -133,6 +133,27 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     const has_weather = std.mem.indexOf(u8, body, "weather") != null;
     const has_hello = std.mem.indexOf(u8, body, "hello") != null;
     const has_error_msg = std.mem.indexOf(u8, body, "test error") != null;
+    const has_malformed = std.mem.indexOf(u8, body, "test malformed") != null;
+    const has_ratelimit = std.mem.indexOf(u8, body, "test ratelimit") != null;
+    const has_empty = std.mem.indexOf(u8, body, "test empty") != null;
+    
+    // Error scenarios
+    if (has_malformed) {
+        // Return malformed JSON
+        try sendRaw(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{invalid json}", io);
+        return;
+    }
+    
+    if (has_ratelimit) {
+        try sendError(stream, 429, "Rate limit exceeded. Please retry after 60 seconds.", io);
+        return;
+    }
+    
+    if (has_empty) {
+        // Return empty body
+        try sendRaw(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n", io);
+        return;
+    }
     
     if (has_error_msg) {
         try sendError(stream, 500, "Mock error", io);
@@ -358,5 +379,13 @@ fn send404(stream: *std.Io.net.Stream, io: std.Io) !void {
         "{\"error\":\"Not found\"}"
     );
     
+    try std.Io.Writer.flush(&conn_writer.interface);
+}
+
+fn sendRaw(stream: *std.Io.net.Stream, response: []const u8, io: std.Io) !void {
+    var write_buf: [4096]u8 = undefined;
+    var conn_writer = stream.writer(io, &write_buf);
+    
+    try std.Io.Writer.writeAll(&conn_writer.interface, response);
     try std.Io.Writer.flush(&conn_writer.interface);
 }
