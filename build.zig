@@ -793,8 +793,8 @@ pub fn build(b: *std.Build) void {
         // Add summary to auto-discovery (runs after all tests)
         auto_discovery_step.dependOn(&summary_footer.step);
         
-        // ---------- Integration Tests with llmock ----------
-        const integration_test_step = b.step("test-integration", "Run integration tests with llmock mock server");
+        // ---------- Integration Tests with mock server ----------
+        const integration_test_step = b.step("test-integration", "Run integration tests with mock server mock server");
         
         const integration_test_exe = b.addExecutable(.{
             .name = "nullclaw-integration-tests",

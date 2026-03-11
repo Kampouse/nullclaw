@@ -2,8 +2,8 @@ const std = @import("std");
 const providers = @import("providers");
 const OpenAiProvider = providers.openai.OpenAiProvider;
 
-// Integration tests for NullClaw providers with llmock
-// Run with: ./tests/llmock/runner.sh tests/integration/provider_test.zig
+// Integration tests for NullClaw providers with mock server
+// Run with: ./tests/mock server/runner.sh tests/integration/provider_test.zig
 
 test "OpenAI provider: basic chat with mock server" {
     const allocator = std.testing.allocator;

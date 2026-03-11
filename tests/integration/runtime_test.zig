@@ -4,7 +4,7 @@ const OpenAiProvider = providers.openai.OpenAiProvider;
 const ChatMessage = providers.ChatMessage;
 const ChatRequest = providers.ChatRequest;
 
-// Integration tests for NullClaw runtime with llmock
+// Integration tests for NullClaw runtime with mock server
 // Tests the provider layer with mock server
 
 test "Runtime: provider basic chat" {

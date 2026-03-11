@@ -1,6 +1,6 @@
 #!/bin/bash
 # NullClaw Integration Test Runner with native Zig mock server
-# Usage: ./tests/llmock/runner.sh [test-name]
+# Usage: ./tests/mock server/runner.sh [test-name]
 
 set -e
 

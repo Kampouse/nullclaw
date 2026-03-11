@@ -6,7 +6,7 @@ const Provider = providers.Provider;
 const ChatMessage = providers.ChatMessage;
 const ChatRequest = providers.ChatRequest;
 
-// Simple integration test runner for NullClaw runtime with llmock
+// Simple integration test runner for NullClaw runtime with mock server
 // Run with: zig run tests/integration/runtime_main.zig
 
 pub fn main() !void {
@@ -14,7 +14,7 @@ pub fn main() !void {
     
     std.debug.print("\n", .{});
     std.debug.print("╔══════════════════════════════════════════════════════════╗\n", .{});
-    std.debug.print("║  NullClaw Integration Tests with llmock                  ║\n", .{});
+    std.debug.print("║  NullClaw Integration Tests with mock server                  ║\n", .{});
     std.debug.print("╚══════════════════════════════════════════════════════════╝\n", .{});
     std.debug.print("\n", .{});
     

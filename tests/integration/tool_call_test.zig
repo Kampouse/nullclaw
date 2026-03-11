@@ -7,15 +7,15 @@ const ChatMessage = providers.ChatMessage;
 const ChatRequest = providers.ChatRequest;
 const ToolSpec = providers.ToolSpec;
 
-// Tool calling test with llmock
-// Run with: ./tests/llmock/runner.sh tool-calls
+// Tool calling test with mock server
+// Run with: ./tests/mock server/runner.sh tool-calls
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
     
     std.debug.print("\n", .{});
     std.debug.print("╔══════════════════════════════════════════════════════════╗\n", .{});
-    std.debug.print("║  Tool Calling Test with llmock                           ║\n", .{});
+    std.debug.print("║  Tool Calling Test with mock server                           ║\n", .{});
     std.debug.print("╚══════════════════════════════════════════════════════════╝\n", .{});
     std.debug.print("\n", .{});
     
