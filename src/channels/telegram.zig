@@ -457,8 +457,11 @@ pub const TelegramChannel = struct {
     reply_in_private: bool = true,
     interactive: config_types.TelegramInteractiveConfig = .{},
     transcriber: ?voice.Transcriber = null,
-    last_update_id: i64,
+    last_update_id: i64 = 0,
     proxy: ?[]const u8,
+
+    // Persistent HTTP client for connection reuse (no TLS handshake per request)
+    http_client: ?std.http.Client = null,
 
     // Pending media group messages (buffered across poll cycles until group is complete)
     pending_media_messages: std.ArrayListUnmanaged(root.ChannelMessage) = .empty,
@@ -490,14 +493,17 @@ pub const TelegramChannel = struct {
         group_allow_from: []const []const u8,
         group_policy: []const u8,
     ) TelegramChannel {
+        const http_io = root.http_util.getThreadedIo();
+        const client: std.http.Client = .{ .allocator = allocator, .io = http_io };
+
         return .{
             .allocator = allocator,
             .bot_token = bot_token,
             .allow_from = allow_from,
             .group_allow_from = group_allow_from,
             .group_policy = group_policy,
-            .last_update_id = 0,
             .proxy = null,
+            .http_client = client,
         };
     }
 
@@ -516,6 +522,25 @@ pub const TelegramChannel = struct {
         return ch;
     }
 
+    pub fn deinit(self: *TelegramChannel) void {
+        if (self.http_client) |*client| {
+            client.deinit();
+            self.http_client = null;
+        }
+        self.deinitPendingInteractions();
+        // Clean up pending media messages
+        for (self.pending_media_messages.items) |msg| {
+            var tmp = msg;
+            tmp.deinit(self.allocator);
+        }
+        self.pending_media_messages.deinit(self.allocator);
+        for (self.pending_media_group_ids.items) |mg| {
+            if (mg) |s| self.allocator.free(s);
+        }
+        self.pending_media_group_ids.deinit(self.allocator);
+        self.pending_media_received_at.deinit(self.allocator);
+    }
+
     pub fn channelName(_: *TelegramChannel) []const u8 {
         return "telegram";
     }
@@ -526,6 +551,72 @@ pub const TelegramChannel = struct {
         const w = fbs.writer();
         try w.print("https://api.telegram.org/bot{s}/{s}", .{ self.bot_token, method });
         return fbs.getWritten();
+    }
+
+    /// Fast API POST using persistent HTTP client (connection reuse, no TLS handshake per call).
+    /// Returns allocated response body - caller must free with given allocator.
+    pub fn apiPostAlloc(self: *TelegramChannel, allocator: std.mem.Allocator, method: []const u8, body: []const u8) ![]u8 {
+        if (self.http_client == null) return error.HttpClientNotInitialized;
+        const client = &self.http_client.?;
+
+        var url_buf: [512]u8 = undefined;
+        const url = try self.apiUrl(&url_buf, method);
+
+        const uri = try std.Uri.parse(url);
+
+        var req = try client.request(.POST, uri, .{
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        defer req.deinit();
+
+        const body_dup = try allocator.dupe(u8, body);
+        defer allocator.free(body_dup);
+        try req.sendBodyComplete(body_dup);
+
+        var redirect_buf: [4096]u8 = undefined;
+        var response = try req.receiveHead(&redirect_buf);
+
+        // Read response body
+        var transfer_buf: [16384]u8 = undefined;
+        const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+        var response_body = std.ArrayListUnmanaged(u8){};
+        errdefer response_body.deinit(allocator);
+
+        while (true) {
+            body_reader.fill(4096) catch |err| {
+                if (err == error.EndOfStream) {
+                    const buffered = body_reader.bufferedLen();
+                    if (buffered == 0) break;
+                    const data = try body_reader.take(buffered);
+                    try response_body.appendSlice(allocator, data);
+                    break;
+                }
+                return err;
+            };
+
+            const buffered = body_reader.bufferedLen();
+            if (buffered == 0) break;
+
+            const data = try body_reader.take(buffered);
+            if (data.len == 0) break;
+            try response_body.appendSlice(allocator, data);
+        }
+
+        return response_body.toOwnedSlice(allocator);
+    }
+
+    /// Fast API POST using self.allocator (convenience wrapper).
+    pub fn apiPost(self: *TelegramChannel, method: []const u8, body: []const u8) ![]u8 {
+        return self.apiPostAlloc(self.allocator, method, body);
+    }
+
+    /// Fast API POST that returns void (fire-and-forget for non-critical calls like typing).
+    pub fn apiPostVoid(self: *TelegramChannel, method: []const u8, body: []const u8) void {
+        const result = self.apiPost(method, body) catch return;
+        self.allocator.free(result);
     }
 
     /// Build a sendMessage JSON body.
@@ -683,34 +774,12 @@ pub const TelegramChannel = struct {
         if (builtin.is_test) return;
         if (chat_id.len == 0) return;
 
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "sendChatAction") catch return;
-
         // Build JSON body
         var body_buf: [256]u8 = undefined;
         const body = std.fmt.bufPrint(&body_buf, "{{\"chat_id\":\"{s}\",\"action\":\"typing\"}}", .{chat_id}) catch return;
 
-        // Use curl subprocess - avoids Zig 0.16 TLS crash in spawned threads
-        // This is safe because curl handles TLS in its own process
-        var argv: [9][]const u8 = undefined;
-        argv[0] = "curl";
-        argv[1] = "-s";
-        argv[2] = "-X";
-        argv[3] = "POST";
-        argv[4] = "-H";
-        argv[5] = "Content-Type: application/json";
-        argv[6] = "-d";
-        argv[7] = body;
-        argv[8] = url;
-
-        // Use new Zig 0.16 process API
-        var child = std.process.spawn(io, .{
-            .argv = &argv,
-            .stdin = .ignore,
-            .stdout = .ignore,
-            .stderr = .ignore,
-        }) catch return;
-        _ = child.wait(io) catch return;
+        // Use persistent HTTP client (fast, no curl spawn)
+        self.apiPostVoid("sendChatAction", body);
     }
 
     pub fn startTyping(self: *TelegramChannel, chat_id: []const u8) !void {
@@ -1187,9 +1256,6 @@ pub const TelegramChannel = struct {
             return error.EmptyMessage;
         }
 
-        var url_buf: [512]u8 = undefined;
-        const url = try self.apiUrl(&url_buf, "sendMessage");
-
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
 
@@ -1201,7 +1267,7 @@ pub const TelegramChannel = struct {
         try appendRawReplyMarkup(&body_list, self.allocator, reply_markup_json);
         try body_list.appendSlice(self.allocator, "}");
 
-        const resp = try root.http_util.curlPostWithProxy(self.allocator, url, body_list.items, &.{}, self.proxy, "30");
+        const resp = try self.apiPost("sendMessage", body_list.items);
         defer self.allocator.free(resp);
         return parseSentMessageMeta(self.allocator, resp) orelse .{};
     }
@@ -1659,14 +1725,11 @@ pub const TelegramChannel = struct {
         return fbs.getWritten();
     }
 
-    /// Poll for updates using long-polling (getUpdates) via curl.
+    /// Poll for updates using long-polling (getUpdates) via persistent HTTP client.
     /// Returns a slice of ChannelMessages allocated on the given allocator.
     /// Voice and audio messages are automatically transcribed via Groq Whisper
     /// when a Groq API key is configured (config or GROQ_API_KEY env var).
     pub fn pollUpdates(self: *TelegramChannel, allocator: std.mem.Allocator) ![]root.ChannelMessage {
-        var url_buf: [512]u8 = undefined;
-        const url = try self.apiUrl(&url_buf, "getUpdates");
-
         self.maybeSweepTempMediaFiles();
         self.cleanupExpiredInteractions();
 
@@ -1686,10 +1749,7 @@ pub const TelegramChannel = struct {
         var body_buf: [256]u8 = undefined;
         const body = try buildGetUpdatesBody(&body_buf, self.last_update_id, poll_timeout);
 
-        var timeout_buf: [16]u8 = undefined;
-        const timeout_str = std.fmt.bufPrint(&timeout_buf, "{d}", .{poll_timeout + 15}) catch "45";
-
-        const resp_body = try root.http_util.curlPostWithProxy(allocator, url, body, &.{}, self.proxy, timeout_str);
+        const resp_body = try self.apiPostAlloc(allocator, "getUpdates", body);
         defer allocator.free(resp_body);
 
         // Parse JSON response to extract messages
