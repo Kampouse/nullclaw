@@ -27,6 +27,7 @@ const subagent_mod = @import("subagent.zig");
 const agent_routing = @import("agent_routing.zig");
 const provider_runtime = @import("providers/runtime_bundle.zig");
 const worker_pool_mod = @import("worker_pool.zig");
+const Spinlock = @import("spinlock.zig").Spinlock;
 
 const signal = @import("channels/signal.zig");
 const matrix = @import("channels/matrix.zig");
@@ -44,7 +45,7 @@ const MessageClass = enum {
     /// Independent query - can be processed in parallel (no context needed)
     /// Examples: "/status", "BTC price?", "What's 2+2?"
     independent,
-    
+
     /// Conversational - needs sequential processing (context-dependent)
     /// Examples: "And tomorrow?", "What about that?", "Continue"
     conversational,
@@ -53,21 +54,21 @@ const MessageClass = enum {
 /// Classify a message as independent or conversational
 fn classifyMessage(content: []const u8) MessageClass {
     const trimmed = std.mem.trim(u8, content, " \t\r\n");
-    
+
     // Empty message → conversational (will error anyway)
     if (trimmed.len == 0) return .conversational;
-    
+
     // 1. Commands are always independent
     if (std.mem.startsWith(u8, trimmed, "/")) return .independent;
-    
+
     const lower = std.ascii.allocLowerString(std.heap.page_allocator, trimmed) catch return .conversational;
     defer std.heap.page_allocator.free(lower);
-    
+
     // 2. Check for context-dependent keywords at START of message
     const context_starters = [_][]const u8{
-        "and ", "and\t", "and\n",  // "And tomorrow?" but not "Android"
+        "and ",  "and\t",  "and\n", // "And tomorrow?" but not "Android"
         "also ", "also\t",
-        "too",                     // "me too"
+        "too", // "me too"
         "continue",
         "go on",
         "keep going",
@@ -75,7 +76,7 @@ fn classifyMessage(content: []const u8) MessageClass {
         "how about",
         "what else",
         "tell me more",
-        "why",                     // Usually follow-up
+        "why", // Usually follow-up
         "how so",
         "what do you mean",
         "i mean",
@@ -86,47 +87,45 @@ fn classifyMessage(content: []const u8) MessageClass {
         "nevermind",
         "forget it",
     };
-    
+
     for (context_starters) |starter| {
         if (std.mem.startsWith(u8, lower, starter)) {
             return .conversational;
         }
     }
-    
+
     // 3. Pronoun detection (context references)
     const pronouns = [_][]const u8{
-        " it ", " it?", " it.", " it!", "\nit", "\tit",
-        " that ", " that?", " that.", " that!",
-        " this ", " this?", " this.", " this!",
-        " he ", " he?", " he.", " he!",
-        " she ", " she?", " she.", " she!",
-        " they ", " they?", " they.", " they!",
-        " them ", " them?", " them.", " them!",
+        " it ",   " it?",   " it.",   " it!",   "\nit",   "\tit",
+        " that ", " that?", " that.", " that!", " this ", " this?",
+        " this.", " this!", " he ",   " he?",   " he.",   " he!",
+        " she ",  " she?",  " she.",  " she!",  " they ", " they?",
+        " they.", " they!", " them ", " them?", " them.", " them!",
     };
-    
+
     for (pronouns) |pronoun| {
         if (std.mem.indexOf(u8, lower, pronoun) != null) {
             return .conversational;
         }
     }
-    
+
     // 4. Questions are usually independent (unless they start with follow-up words)
     if (std.mem.indexOfScalar(u8, trimmed, '?') != null) {
         // Has question mark - likely independent
         // Exception: if it STARTS with "and", "also", etc. (already checked above)
         return .independent;
     }
-    
+
     // 5. Currency symbols indicate independent queries
     if (std.mem.indexOfAny(u8, trimmed, "$€£¥₿") != null) {
         return .independent;
     }
-    
+
     // 6. Short follow-ups (< 10 chars, no question mark)
     if (trimmed.len < 10) {
         return .conversational;
     }
-    
+
     // 7. Default: conversational (safer)
     return .conversational;
 }
@@ -145,7 +144,7 @@ const TelegramWorkerMessage = struct {
     message_id: ?i64,
     account_id: []const u8,
     message_class: MessageClass, // Added: classification
-    
+
     pub fn deinit(self: *const TelegramWorkerMessage, allocator: std.mem.Allocator) void {
         allocator.free(self.sender);
         if (self.sender_first_name) |name| allocator.free(name);
@@ -172,7 +171,7 @@ const TelegramWorkerHandler = struct {
         var key_buf: [256]u8 = undefined;
         var routed_session_key: ?[]const u8 = null;
         defer if (routed_session_key) |key| self.allocator.free(key);
-        
+
         const session_key = blk: {
             const route = agent_routing.resolveRouteWithSession(self.allocator, .{
                 .channel = "telegram",
@@ -187,8 +186,8 @@ const TelegramWorkerHandler = struct {
         // Hybrid strategy: only lock for conversational messages
         // Independent queries can run in parallel (no session lock)
         const needs_lock = msg.message_class == .conversational;
-        
-        var session_lock: ?*std.Io.Mutex = null;
+
+        var session_lock: ?*Spinlock = null;
         if (needs_lock) {
             session_lock = self.session_locks.acquire(session_key);
         }
@@ -666,35 +665,10 @@ pub fn runTelegramLoop(
 
     // Initialize worker pool if not already done
     if (loop_state.worker_pool == null) {
-        // Create session lock manager
-        const session_locks = allocator.create(worker_pool_mod.SessionLockManager) catch {
-            log.warn("Failed to create SessionLockManager, falling back to sequential processing", .{});
-            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
-            return;
-        };
-        session_locks.* = worker_pool_mod.SessionLockManager.init(allocator);
-        loop_state.session_locks = session_locks;
-
-        // Create worker pool
-        const handler = TelegramWorkerHandler{
-            .tg_ptr = tg_ptr,
-            .runtime = runtime,
-            .config = config,
-            .session_locks = session_locks,
-            .allocator = allocator,
-        };
-
-        const pool = allocator.create(TelegramWorkerPool) catch {
-            log.warn("Failed to create WorkerPool, falling back to sequential processing", .{});
-            return;
-        };
-        pool.* = TelegramWorkerPool.init(allocator, handler, loop_state.worker_count) catch {
-            allocator.destroy(pool);
-            log.warn("Failed to initialize WorkerPool, falling back to sequential processing", .{});
-            return;
-        };
-        loop_state.worker_pool = pool;
-        log.info("Telegram worker pool started with {} workers", .{loop_state.worker_count});
+        log.info("Worker pool disabled - using sequential processing", .{});
+        // Force sequential processing for debugging
+        runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+        return;
     }
 
     // Update activity timestamp at start
@@ -704,7 +678,6 @@ pub fn runTelegramLoop(
         const messages = tg_ptr.pollUpdates(allocator) catch |err| {
             log.warn("Telegram poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
-            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
             continue;
         };
 
@@ -725,7 +698,7 @@ pub fn runTelegramLoop(
 
             // Classify message for hybrid processing
             const msg_class = classifyMessage(msg.content);
-            
+
             // Clone message data for worker pool
             const worker_msg = TelegramWorkerMessage{
                 .sender = allocator.dupe(u8, msg.sender) catch {
@@ -816,7 +789,6 @@ fn runTelegramLoopSequential(
         const messages = tg_ptr.pollUpdates(allocator) catch |err| {
             log.warn("Telegram poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
-            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
             continue;
         };
 
@@ -943,7 +915,6 @@ pub fn runSignalLoop(
         const messages = sg_ptr.pollMessages(allocator) catch |err| {
             log.warn("Signal poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
-            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
             continue;
         };
 
@@ -1157,7 +1128,6 @@ pub fn runMatrixLoop(
         const messages = mx_ptr.pollMessages(allocator) catch |err| {
             log.warn("Matrix poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
-            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
             continue;
         };
 
@@ -1542,10 +1512,10 @@ test "classifyMessage: short messages are conversational" {
 test "classifyMessage: mixed patterns" {
     // Has "and" at start → conversational
     try std.testing.expectEqual(MessageClass.conversational, classifyMessage("And BTC price?"));
-    
+
     // Short question with currency → independent
     try std.testing.expectEqual(MessageClass.independent, classifyMessage("Price?"));
-    
+
     // Normal question → independent
     try std.testing.expectEqual(MessageClass.independent, classifyMessage("What is Bitcoin?"));
 }

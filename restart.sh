@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # NullClaw rebuild and restart script
-# Makes it easy to apply code changes and restart the agent
+# Makes it easy to apply code changes and restart the Telegram bot
 
 set -e
 
@@ -32,7 +32,7 @@ done
 # Show help and exit
 if [ "$SHOW_HELP" = true ]; then
     cat << EOF
-NullClaw Rebuild & Restart Script
+NullClaw Rebuild & Restart Script (Telegram Bot)
 
 Usage:
   $0 [OPTIONS]
@@ -40,11 +40,11 @@ Usage:
 Options:
   -h, --help       Show this help message
   -d, --debug      Build in debug mode (larger binary, faster compile)
-  -n, --no-start   Build but don't start the agent
+  -n, --no-start   Build but don't start the bot
 
 Examples:
-  $0                    Build release and start agent (default)
-  $0 --debug            Build debug and start agent
+  $0                    Build release and start Telegram bot (default)
+  $0 --debug            Build debug and start Telegram bot
   $0 -n                 Build release, don't start
   $0 --debug -n         Build debug, don't start
 
@@ -111,18 +111,18 @@ fi
 echo -e "${GREEN}✓ All nullclaw processes stopped${NC}"
 echo ""
 
-# Step 4: Start new agent (optional)
+# Step 4: Start Telegram bot (optional)
 if [ "$NO_START" = true ]; then
-    echo -e "${BLUE}== Skipping agent start (as requested) ==${NC}"
+    echo -e "${BLUE}== Skipping bot start (as requested) ==${NC}"
     echo ""
     echo "To start manually:"
+    echo "  ./zig-out/bin/nullclaw channel start telegram"
     echo "  ./zig-out/bin/nullclaw agent"
-    echo "  ./zig-out/bin/nullclaw gateway"
 else
-    echo -e "${YELLOW}→ Step 4: Starting agent...${NC}"
-    echo -e "${BLUE}Agent starting... (Ctrl+C to stop)${NC}"
+    echo -e "${YELLOW}→ Step 4: Starting Telegram bot...${NC}"
+    echo -e "${BLUE}Telegram bot starting... (Ctrl+C to stop)${NC}"
     echo ""
 
-    # Start agent
-    exec ./zig-out/bin/nullclaw agent
+    # Start Telegram bot
+    exec ./zig-out/bin/nullclaw channel start telegram
 fi

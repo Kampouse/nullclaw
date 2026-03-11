@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const Atomic = @import("portable_atomic.zig").Atomic;
+const Spinlock = @import("spinlock.zig").Spinlock;
 
 const log = std.log.scoped(.worker_pool);
 
@@ -24,39 +25,41 @@ pub fn MessageQueue(comptime T: type) type {
         const Self = @This();
 
         items: std.ArrayListUnmanaged(T) = .empty,
-        mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
+        mutex: Spinlock = Spinlock.init(),
         closed: Atomic(bool) = Atomic(bool).init(false),
 
         /// Enqueue an item (non-blocking)
         pub fn enqueue(self: *Self, allocator: std.mem.Allocator, item: T) !void {
-            self.mutex.lockUncancelable(std.Options.debug_io);
-            defer self.mutex.unlock(std.Options.debug_io);
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
             if (self.closed.load(.acquire)) return error.QueueClosed;
 
             try self.items.append(allocator, item);
         }
 
-        /// Dequeue an item (polling with sleep)
+        /// Dequeue an item (polling with spin wait)
         /// Returns null if queue is closed and empty
         pub fn dequeue(self: *Self) ?T {
             while (!self.closed.load(.acquire)) {
-                self.mutex.lockUncancelable(std.Options.debug_io);
-                defer self.mutex.unlock(std.Options.debug_io);
-
+                self.mutex.lock();
                 if (self.items.items.len > 0) {
-                    return self.items.orderedRemove(0);
+                    const item = self.items.orderedRemove(0);
+                    self.mutex.unlock();
+                    return item;
                 }
+                self.mutex.unlock();
 
-                // Drop lock and sleep briefly before retry
-                self.mutex.unlock(std.Options.debug_io);
-                std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = 10_000_000 }, .real) catch {}; // 10ms
-                self.mutex.lockUncancelable(std.Options.debug_io);
+                // Spin wait with hint to reduce CPU usage
+                var i: usize = 0;
+                while (i < 1000) : (i += 1) {
+                    std.atomic.spinLoopHint();
+                }
             }
 
             // Queue closed, return any remaining items
-            self.mutex.lockUncancelable(std.Options.debug_io);
-            defer self.mutex.unlock(std.Options.debug_io);
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
             if (self.items.items.len > 0) {
                 return self.items.orderedRemove(0);
@@ -71,14 +74,14 @@ pub fn MessageQueue(comptime T: type) type {
 
         /// Get current queue length (approximate, for monitoring)
         pub fn len(self: *Self) usize {
-            self.mutex.lockUncancelable(std.Options.debug_io);
-            defer self.mutex.unlock(std.Options.debug_io);
+            self.mutex.lock();
+            defer self.mutex.unlock();
             return self.items.items.len;
         }
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-            self.mutex.lockUncancelable(std.Options.debug_io);
-            defer self.mutex.unlock(std.Options.debug_io);
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
             self.items.deinit(allocator);
         }
@@ -92,8 +95,8 @@ pub fn MessageQueue(comptime T: type) type {
 pub const SessionLockManager = struct {
     const Self = @This();
 
-    locks: std.StringHashMapUnmanaged(*std.Io.Mutex) = .empty,
-    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
+    locks: std.StringHashMapUnmanaged(*Spinlock) = .empty,
+    mutex: Spinlock = Spinlock.init(),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Self {
@@ -103,8 +106,8 @@ pub const SessionLockManager = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.mutex.lockUncancelable(std.Options.debug_io);
-        defer self.mutex.unlock(std.Options.debug_io);
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         var iter = self.locks.iterator();
         while (iter.next()) |entry| {
@@ -116,31 +119,30 @@ pub const SessionLockManager = struct {
 
     /// Acquire lock for a session (creates if not exists)
     /// Returns the lock, caller must call release()
-    pub fn acquire(self: *Self, session_key: []const u8) *std.Io.Mutex {
-        self.mutex.lockUncancelable(std.Options.debug_io);
-        defer self.mutex.unlock(std.Options.debug_io);
+    pub fn acquire(self: *Self, session_key: []const u8) *Spinlock {
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const gop = self.locks.getOrPut(self.allocator, session_key) catch @panic("SessionLockManager OOM");
         if (!gop.found_existing) {
-            const lock_ptr = self.allocator.create(std.Io.Mutex) catch @panic("SessionLockManager OOM");
-            lock_ptr.* = .{ .state = .init(.unlocked) };
+            const lock_ptr = self.allocator.create(Spinlock) catch @panic("SessionLockManager OOM");
+            lock_ptr.* = Spinlock.init();
             gop.value_ptr.* = lock_ptr;
-            
+
             // Store owned key
             const key_owned = self.allocator.dupe(u8, session_key) catch @panic("SessionLockManager OOM");
             gop.key_ptr.* = key_owned;
         }
 
         const lock = gop.value_ptr.*;
-        self.mutex.unlock(std.Options.debug_io);
-        lock.lockUncancelable(std.Options.debug_io);
+        lock.lock();
         return lock;
     }
 
     /// Release lock for a session
-    pub fn release(self: *Self, lock: *std.Io.Mutex) void {
+    pub fn release(self: *Self, lock: *Spinlock) void {
         _ = self; // Not used, but matches API symmetry
-        lock.unlock(std.Options.debug_io);
+        lock.unlock();
     }
 };
 
@@ -278,19 +280,19 @@ test "WorkerPool - parallel processing" {
 
     const TestHandler = struct {
         processed: *usize,
-        mutex: *std.Io.Mutex,
+        mutex: *Spinlock,
 
         pub fn process(self: @This(), msg: TestMessage) !void {
-            self.mutex.lockUncancelable(std.Options.debug_io);
+            self.mutex.lock();
             self.processed.* += 1;
-            self.mutex.unlock(std.Options.debug_io);
+            self.mutex.unlock();
 
             _ = msg;
         }
     };
 
     var processed: usize = 0;
-    var mutex: std.Io.Mutex = .{ .state = .init(.unlocked) };
+    var mutex: Spinlock = Spinlock.init();
     
     const handler = TestHandler{
         .processed = &processed,
