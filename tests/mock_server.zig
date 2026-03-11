@@ -115,6 +115,10 @@ fn handleConnection(stream: *std.Io.net.Stream, io: std.Io) !void {
 }
 
 fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io) !void {
+    // Check for streaming request
+    const is_streaming = std.mem.indexOf(u8, body, "\"stream\":true") != null or
+        std.mem.indexOf(u8, body, "\"stream\": true") != null;
+    
     // Check for tool request
     const has_tools = std.mem.indexOf(u8, body, "\"tools\"") != null;
     
@@ -128,6 +132,12 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     
     if (has_error_msg) {
         try sendError(stream, 500, "Mock error", io);
+        return;
+    }
+    
+    // Handle streaming request
+    if (is_streaming) {
+        try sendStreamingResponse(stream, "Hello! Mock assistant here.", io);
         return;
     }
     
@@ -160,6 +170,57 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
         \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Default mock response."},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
     ;
     try sendJson(stream, response, io);
+}
+
+/// Send SSE streaming response (OpenAI format)
+fn sendStreamingResponse(stream: *std.Io.net.Stream, content: []const u8, io: std.Io) !void {
+    var write_buf: [16384]u8 = undefined;
+    var conn_writer = stream.writer(io, &write_buf);
+    
+    // Send SSE headers
+    try std.Io.Writer.writeAll(&conn_writer.interface, 
+        "HTTP/1.1 200 OK\r\n" ++
+        "Content-Type: text/event-stream\r\n" ++
+        "Cache-Control: no-cache\r\n" ++
+        "Connection: keep-alive\r\n" ++
+        "Access-Control-Allow-Origin: *\r\n" ++
+        "\r\n"
+    );
+    try std.Io.Writer.flush(&conn_writer.interface);
+    
+    // Split content into chunks for realistic streaming
+    const chunk_size = 5;
+    var pos: usize = 0;
+    var chunk_idx: usize = 0;
+    
+    while (pos < content.len) {
+        const end = @min(pos + chunk_size, content.len);
+        const chunk = content[pos..end];
+        
+        // Build SSE event with OpenAI streaming format
+        // Format: data: {...}\n\n
+        var delta_buf: [1024]u8 = undefined;
+        const delta_with_chunk = std.fmt.bufPrint(&delta_buf, 
+            \\{{"id":"chatcmpl-mock","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{{"index":0,"delta":{{"content":"{s}"}},"finish_reason":null}}]}}
+        , .{chunk}) catch continue;
+        
+        try std.Io.Writer.print(&conn_writer.interface, "data: {s}\n\n", .{delta_with_chunk});
+        try std.Io.Writer.flush(&conn_writer.interface);
+        
+        pos = end;
+        chunk_idx += 1;
+    }
+    
+    // Send final chunk with finish_reason
+    const final_chunk = 
+        \\{"id":"chatcmpl-mock","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+    ;
+    try std.Io.Writer.print(&conn_writer.interface, "data: {s}\n\n", .{final_chunk});
+    try std.Io.Writer.flush(&conn_writer.interface);
+    
+    // Send [DONE] marker
+    try std.Io.Writer.writeAll(&conn_writer.interface, "data: [DONE]\n\n");
+    try std.Io.Writer.flush(&conn_writer.interface);
 }
 
 fn handleAnthropicMessages(stream: *std.Io.net.Stream, body: []const u8, io: std.Io) !void {
