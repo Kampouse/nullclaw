@@ -1235,8 +1235,13 @@ pub const Agent = struct {
             }
 
             // Format tool results, scrub credentials, add reflection prompt, and add to history
+            std.debug.print("[DEBUG] Formatting tool results for {d} tools\n", .{results_buf.items.len});
             const formatted_results = try dispatcher.formatToolResults(arena, results_buf.items);
+            std.debug.print("[DEBUG] Tool results formatted, length={d}\n", .{formatted_results.len});
+
             const scrubbed_results = try providers.scrubToolOutput(arena, formatted_results);
+            std.debug.print("[DEBUG] Tool results scrubbed, length={d}\n", .{scrubbed_results.len});
+
             const with_reflection = try std.fmt.allocPrint(
                 arena,
                 "{s}\n\nReflect on the tool results above and decide your next steps. " ++
@@ -1244,10 +1249,13 @@ pub const Agent = struct {
                     "If a tool failed due to a transient issue (timeout/network/rate-limit), proactively retry up to 2 times with adjusted parameters before giving up.",
                 .{scrubbed_results},
             );
+            std.debug.print("[DEBUG] Reflection prompt created, appending to history\n", .{});
+
             try self.history.append(self.allocator, .{
                 .role = .user,
                 .content = try self.allocator.dupe(u8, with_reflection),
             });
+            std.debug.print("[DEBUG] History append complete, trimming history\n", .{});
 
             self.trimHistory();
 

@@ -367,7 +367,56 @@ pub const OpenAiCompatibleProvider = struct {
                 if (msg_obj.get("content")) |c| {
                     if (c == .string) {
                         content = try allocator.dupe(u8, c.string);
+                    } else if (c == .array) {
+                        // Handle content as an array (e.g., [{"type": "text", "text": "..."}])
+                        for (c.array.items) |part| {
+                            if (part == .object) {
+                                if (part.object.get("type")) |t| {
+                                    if (t == .string and std.mem.eql(u8, t.string, "text")) {
+                                        if (part.object.get("text")) |text| {
+                                            if (text == .string) {
+                                                if (content == null) {
+                                                    content = try allocator.dupe(u8, text.string);
+                                                } else {
+                                                    // Concatenate multiple text parts
+                                                    const old = content.?;
+                                                    const new_len = old.len + text.string.len;
+                                                    const combined = try allocator.alloc(u8, new_len);
+                                                    @memcpy(combined[0..old.len], old);
+                                                    @memcpy(combined[old.len..], text.string);
+                                                    allocator.free(old);
+                                                    content = combined;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+                }
+
+                // Debug logging to help diagnose content parsing issues
+                if (content == null) {
+                    log.debug("Parsed response with null content. Message keys: ", .{});
+                    var key_iter = msg_obj.iterator();
+                    while (key_iter.next()) |entry| {
+                        log.debug("  - {s}", .{entry.key_ptr.*});
+                    }
+                    // Log the content field value/type if it exists
+                    if (msg_obj.get("content")) |c| {
+                        if (c == .string) {
+                            log.debug("  content is string, length={d}", .{c.string.len});
+                        } else if (c == .array) {
+                            log.debug("  content is array, length={d}", .{c.array.items.len});
+                        } else if (c == .null) {
+                            log.debug("  content is explicitly null", .{});
+                        } else {
+                            log.debug("  content is other type", .{});
+                        }
+                    }
+                } else {
+                    log.debug("Parsed response with content length: {d}", .{content.?.len});
                 }
 
                 var tool_calls_list: std.ArrayListUnmanaged(ToolCall) = .empty;
