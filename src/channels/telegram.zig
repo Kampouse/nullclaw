@@ -2326,6 +2326,27 @@ pub const TelegramChannel = struct {
 /// Handles: code blocks, inline code, bold, italic, strikethrough,
 /// links, headers, bullet lists. Escapes HTML entities.
 pub fn markdownToTelegramHtml(allocator: std.mem.Allocator, md: []const u8) ![]u8 {
+    // Fast path: if no markdown symbols, just escape HTML and return
+    const has_markdown = blk: {
+        // Check for common markdown symbols
+        for (md) |c| {
+            switch (c) {
+                '*', '_', '`', '#', '~', '[', ']', '!', '-', '|' => break :blk true,
+                else => {},
+            }
+        }
+        break :blk false;
+    };
+    
+    if (!has_markdown) {
+        // No markdown - just escape HTML entities
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer buf.deinit(allocator);
+        try appendHtmlEscaped(&buf, allocator, md);
+        return buf.toOwnedSlice(allocator);
+    }
+    
+    // Slow path: full markdown parsing
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
 
