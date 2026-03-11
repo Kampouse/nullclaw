@@ -3,6 +3,10 @@
 //! Contains `ChannelRuntime` (shared dependencies for message processing)
 //! and `runTelegramLoop` (the polling thread function spawned by the
 //! daemon supervisor).
+//!
+//! Uses worker pool for parallel message processing:
+//!   - Poll thread: enqueue messages (non-blocking)
+//!   - Worker threads: process messages (parallel, per-session locking)
 
 const std = @import("std");
 const util = @import("util.zig");
@@ -22,6 +26,7 @@ const security = @import("security/policy.zig");
 const subagent_mod = @import("subagent.zig");
 const agent_routing = @import("agent_routing.zig");
 const provider_runtime = @import("providers/runtime_bundle.zig");
+const worker_pool_mod = @import("worker_pool.zig");
 
 const signal = @import("channels/signal.zig");
 const matrix = @import("channels/matrix.zig");
@@ -30,6 +35,91 @@ const Atomic = @import("portable_atomic.zig").Atomic;
 
 const log = std.log.scoped(.channel_loop);
 const TELEGRAM_OFFSET_STORE_VERSION: i64 = 1;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Telegram Worker Pool Types
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Message context for worker pool processing
+const TelegramWorkerMessage = struct {
+    sender: []const u8,
+    sender_first_name: ?[]const u8,
+    sender_id: []const u8,
+    content: []const u8,
+    is_group: bool,
+    message_id: ?i64,
+    account_id: []const u8,
+    
+    pub fn deinit(self: *const TelegramWorkerMessage, allocator: std.mem.Allocator) void {
+        allocator.free(self.sender);
+        if (self.sender_first_name) |name| allocator.free(name);
+        allocator.free(self.sender_id);
+        allocator.free(self.content);
+        allocator.free(self.account_id);
+    }
+};
+
+/// Handler for worker pool message processing
+const TelegramWorkerHandler = struct {
+    tg_ptr: *telegram.TelegramChannel,
+    runtime: *ChannelRuntime,
+    config: *const Config,
+    session_locks: *worker_pool_mod.SessionLockManager,
+    allocator: std.mem.Allocator,
+
+    pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
+        defer msg.deinit(self.allocator);
+
+        const reply_to_id: ?i64 = if (msg.is_group or self.tg_ptr.reply_in_private) msg.message_id else null;
+
+        // Build session key
+        var key_buf: [256]u8 = undefined;
+        var routed_session_key: ?[]const u8 = null;
+        defer if (routed_session_key) |key| self.allocator.free(key);
+        
+        const session_key = blk: {
+            const route = agent_routing.resolveRouteWithSession(self.allocator, .{
+                .channel = "telegram",
+                .account_id = msg.account_id,
+                .peer = .{ .kind = if (msg.is_group) .group else .direct, .id = msg.sender },
+            }, self.config.agent_bindings, self.config.agents, self.config.session) catch break :blk std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ msg.account_id, msg.sender }) catch msg.sender;
+            self.allocator.free(route.main_session_key);
+            routed_session_key = route.session_key;
+            break :blk route.session_key;
+        };
+
+        // Acquire per-session lock (ensures conversation order)
+        const session_lock = self.session_locks.acquire(session_key);
+        defer self.session_locks.release(session_lock);
+
+        // Start typing indicator
+        self.tg_ptr.startTyping(msg.sender) catch {};
+        defer self.tg_ptr.stopTyping(msg.sender) catch {};
+
+        // Process message through agent
+        const reply = self.runtime.session_mgr.processMessage(session_key, msg.content, null) catch |err| {
+            log.err("Agent error: {}", .{err});
+            const err_msg: []const u8 = switch (err) {
+                error.CurlFailed, error.CurlReadError, error.CurlWaitError, error.CurlWriteError => "Network error. Please try again.",
+                error.ProviderDoesNotSupportVision => "The current provider does not support image input. Switch to a vision-capable provider or remove [IMAGE:] attachments.",
+                error.NoResponseContent => "Model returned an empty response. Please retry or /new for a fresh session.",
+                error.AllProvidersFailed => "All configured providers failed for this request. Check model/provider compatibility and credentials.",
+                error.OutOfMemory => "Out of memory.",
+                else => "An error occurred. Try again or /new for a fresh session.",
+            };
+            self.tg_ptr.sendMessageWithReply(msg.sender, err_msg, reply_to_id) catch |send_err| log.err("failed to send error reply: {}", .{send_err});
+            return;
+        };
+        defer self.allocator.free(reply);
+
+        // Send reply
+        self.tg_ptr.sendAssistantMessageWithReply(msg.sender, msg.sender_id, msg.is_group, reply, reply_to_id) catch |err| {
+            log.warn("Send error: {}", .{err});
+        };
+    }
+};
+
+const TelegramWorkerPool = worker_pool_mod.WorkerPool(TelegramWorkerMessage, TelegramWorkerHandler);
 
 fn extractTelegramBotId(bot_token: []const u8) ?[]const u8 {
     const colon_pos = std.mem.indexOfScalar(u8, bot_token, ':') orelse return null;
@@ -232,12 +322,39 @@ pub const TelegramLoopState = struct {
     stop_requested: Atomic(bool),
     /// Thread handle for join().
     thread: ?std.Thread = null,
+    /// Worker pool for parallel message processing (optional, nil = sequential mode)
+    worker_pool: ?*TelegramWorkerPool = null,
+    /// Session locks for per-session serialization
+    session_locks: ?*worker_pool_mod.SessionLockManager = null,
+    /// Config for worker count (default: 4)
+    worker_count: usize = 4,
 
     pub fn init() TelegramLoopState {
         return .{
             .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
+    }
+
+    pub fn initWithWorkers(worker_count: usize) TelegramLoopState {
+        return .{
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
+            .stop_requested = Atomic(bool).init(false),
+            .worker_count = worker_count,
+        };
+    }
+
+    pub fn deinit(self: *TelegramLoopState, allocator: std.mem.Allocator) void {
+        if (self.worker_pool) |pool| {
+            pool.deinit();
+            allocator.destroy(pool);
+            self.worker_pool = null;
+        }
+        if (self.session_locks) |locks| {
+            locks.deinit();
+            allocator.destroy(locks);
+            self.session_locks = null;
+        }
     }
 };
 
@@ -395,6 +512,10 @@ pub const ChannelRuntime = struct {
 /// `tg_ptr` is the channel instance owned by the supervisor (ChannelManager).
 /// The polling loop uses it directly instead of creating a second
 /// TelegramChannel, so health checks and polling operate on the same object.
+///
+/// Uses worker pool for parallel message processing:
+///   - Poll thread: enqueue messages (non-blocking)
+///   - Worker threads: process messages (parallel, per-session locking)
 pub fn runTelegramLoop(
     allocator: std.mem.Allocator,
     config: *const Config,
@@ -440,6 +561,142 @@ pub fn runTelegramLoop(
         log.err("No default model configured. Set agents.defaults.model.primary in ~/.nullclaw/config.json or run `nullclaw onboard`.", .{});
         return;
     };
+
+    // Initialize worker pool if not already done
+    if (loop_state.worker_pool == null) {
+        // Create session lock manager
+        const session_locks = allocator.create(worker_pool_mod.SessionLockManager) catch {
+            log.warn("Failed to create SessionLockManager, falling back to sequential processing", .{});
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+        session_locks.* = worker_pool_mod.SessionLockManager.init(allocator);
+        loop_state.session_locks = session_locks;
+
+        // Create worker pool
+        const handler = TelegramWorkerHandler{
+            .tg_ptr = tg_ptr,
+            .runtime = runtime,
+            .config = config,
+            .session_locks = session_locks,
+            .allocator = allocator,
+        };
+
+        const pool = allocator.create(TelegramWorkerPool) catch {
+            log.warn("Failed to create WorkerPool, falling back to sequential processing", .{});
+            return;
+        };
+        pool.* = TelegramWorkerPool.init(allocator, handler, loop_state.worker_count) catch {
+            allocator.destroy(pool);
+            log.warn("Failed to initialize WorkerPool, falling back to sequential processing", .{});
+            return;
+        };
+        loop_state.worker_pool = pool;
+        log.info("Telegram worker pool started with {} workers", .{loop_state.worker_count});
+    }
+
+    // Update activity timestamp at start
+    loop_state.last_activity.store(util.timestampUnix(), .release);
+
+    while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
+        const messages = tg_ptr.pollUpdates(allocator) catch |err| {
+            log.warn("Telegram poll error: {}", .{err});
+            loop_state.last_activity.store(util.timestampUnix(), .release);
+            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
+            continue;
+        };
+
+        // Update activity after each poll (even if no messages)
+        loop_state.last_activity.store(util.timestampUnix(), .release);
+
+        for (messages) |msg| {
+            // Handle /start command immediately (don't queue)
+            const trimmed = std.mem.trim(u8, msg.content, " \t\r\n");
+            if (std.mem.eql(u8, trimmed, "/start")) {
+                var greeting_buf: [512]u8 = undefined;
+                const name = msg.first_name orelse msg.id;
+                const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
+                tg_ptr.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // Clone message data for worker pool
+            const worker_msg = TelegramWorkerMessage{
+                .sender = allocator.dupe(u8, msg.sender) catch {
+                    log.warn("Failed to clone sender, skipping message", .{});
+                    msg.deinit(allocator);
+                    continue;
+                },
+                .sender_first_name = if (msg.first_name) |name| allocator.dupe(u8, name) catch null else null,
+                .sender_id = allocator.dupe(u8, msg.id) catch {
+                    log.warn("Failed to clone sender_id, skipping message", .{});
+                    msg.deinit(allocator);
+                    continue;
+                },
+                .content = allocator.dupe(u8, msg.content) catch {
+                    log.warn("Failed to clone content, skipping message", .{});
+                    msg.deinit(allocator);
+                    continue;
+                },
+                .is_group = msg.is_group,
+                .message_id = msg.message_id,
+                .account_id = allocator.dupe(u8, tg_ptr.account_id) catch {
+                    log.warn("Failed to clone account_id, skipping message", .{});
+                    msg.deinit(allocator);
+                    continue;
+                },
+            };
+
+            // Enqueue for worker pool processing
+            if (loop_state.worker_pool) |pool| {
+                pool.submit(worker_msg) catch |err| {
+                    log.err("Failed to enqueue message: {}", .{err});
+                    worker_msg.deinit(allocator);
+                };
+            }
+
+            // Free original message (worker owns the clones)
+            msg.deinit(allocator);
+        }
+
+        if (messages.len > 0) {
+            allocator.free(messages);
+        }
+
+        if (tg_ptr.persistableUpdateOffset()) |persistable_update_id| {
+            persistTelegramUpdateOffsetIfAdvanced(
+                allocator,
+                config,
+                tg_ptr.account_id,
+                tg_ptr.bot_token,
+                &persisted_update_id,
+                persistable_update_id,
+            );
+        }
+
+        // Periodic session eviction
+        evict_counter += 1;
+        if (evict_counter >= 100) {
+            evict_counter = 0;
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+        }
+
+        health.markComponentOk("telegram");
+    }
+}
+
+/// Sequential processing fallback (original behavior)
+fn runTelegramLoopSequential(
+    allocator: std.mem.Allocator,
+    config: *const Config,
+    runtime: *ChannelRuntime,
+    loop_state: *TelegramLoopState,
+    tg_ptr: *telegram.TelegramChannel,
+    model: []const u8,
+) void {
+    var persisted_update_id: i64 = tg_ptr.last_update_id;
+    var evict_counter: u32 = 0;
 
     // Update activity timestamp at start
     loop_state.last_activity.store(util.timestampUnix(), .release);
@@ -517,14 +774,7 @@ pub fn runTelegramLoop(
         }
 
         if (tg_ptr.persistableUpdateOffset()) |persistable_update_id| {
-            persistTelegramUpdateOffsetIfAdvanced(
-                allocator,
-                config,
-                tg_ptr.account_id,
-                tg_ptr.bot_token,
-                &persisted_update_id,
-                persistable_update_id,
-            );
+            persistTelegramUpdateOffsetIfAdvanced(allocator, config, tg_ptr.account_id, tg_ptr.bot_token, &persisted_update_id, persistable_update_id);
         }
 
         // Periodic session eviction

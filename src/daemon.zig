@@ -845,7 +845,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     var event_bus = bus_mod.Bus.init();
 
     // Spawn gateway thread with larger stack for TLS operations (8MB)
-    var gw_span = (trace.startSpan(.gateway, "start") catch null);
+    var gw_span = trace.startSpan(.gateway, "start") orelse null;
     defer if (gw_span) |*s| trace.endSpan(s);
     
     state.markRunning("gateway");
