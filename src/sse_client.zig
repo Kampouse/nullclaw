@@ -36,6 +36,8 @@ pub const SseConnection = struct {
     /// Last received event ID for reconnection (W3C SSE spec).
     /// Sent as Last-Event-ID header on reconnect so the server can resume.
     last_event_id: ?[]const u8 = null,
+    /// Track if we've consumed the full body (Zig 0.16 HTTP reader panics on over-read)
+    body_consumed: bool = false,
 
     pub const Error = error{
         NotConnected,
@@ -65,6 +67,7 @@ pub const SseConnection = struct {
     /// This is a known issue in Zig 0.16.0.
     pub fn deinit(self: *SseConnection) void {
         self.body_reader = null;
+        self.body_consumed = false;
         // SKIP: req.deinit() - crashes in Zig 0.16.0 with ThreadedIo
         // The request uses thread-local Io which should not be deinited during
         // normal operation. Resources will be cleaned up on thread exit.
@@ -92,6 +95,7 @@ pub const SseConnection = struct {
         // URL already includes account query param from Signal channel config.
         const uri = try std.Uri.parse(self.url);
         self.body_reader = null;
+        self.body_consumed = false;
 
         // Build request options with SSE headers.
         // Per W3C SSE spec, send Last-Event-ID on reconnection so the server
@@ -252,6 +256,10 @@ pub const SseConnection = struct {
         if (buf.len > MAX_BUFFER_SIZE) {
             return self.read(buf[0..MAX_BUFFER_SIZE]);
         }
+        
+        // Zig 0.16 HTTP body reader panics on read after body is consumed
+        // Track this ourselves to avoid the panic
+        if (self.body_consumed) return error.ConnectionClosed;
 
         var total_read: usize = 0;
 
@@ -261,6 +269,7 @@ pub const SseConnection = struct {
             const to_read = @min(buffered, buf.len - total_read);
             const data = reader.take(to_read) catch |err| switch (err) {
                 error.EndOfStream => {
+                    self.body_consumed = true;
                     if (total_read > 0) return total_read;
                     return error.ConnectionClosed;
                 },
@@ -284,12 +293,34 @@ pub const SseConnection = struct {
         }
 
         // Phase 3: Buffer empty and no data yet - wait briefly for readability
+        // But first check if the body is already fully consumed (bufferedLen was 0)
+        // This happens when Content-Length body is exhausted
+        if (buffered == 0 and reader.bufferedLen() == 0) {
+            // Try one non-blocking peek to see if there's more data
+            // If peek fails or returns 0 buffered, body is likely done
+            const peek_attempt = reader.peekGreedy(1) catch |err| {
+                if (err == error.EndOfStream) {
+                    self.body_consumed = true;
+                    return error.ConnectionClosed;
+                }
+                return error.ReadError;
+            };
+            if (peek_attempt.len == 0) {
+                // No data available, body might be done
+                // Don't try to read - just return 0 and let caller retry
+                return 0;
+            }
+        }
+        
         if (!(try self.waitForReadable(READ_TIMEOUT_MS))) {
             return 0;
         }
 
         const first = reader.take(1) catch |err| switch (err) {
-            error.EndOfStream => return error.ConnectionClosed,
+            error.EndOfStream => {
+                self.body_consumed = true;
+                return error.ConnectionClosed;
+            },
             else => return error.ReadError,
         };
 
@@ -303,7 +334,10 @@ pub const SseConnection = struct {
         while (buffered > 0 and total_read < buf.len) {
             const to_read = @min(buffered, buf.len - total_read);
             const data = reader.take(to_read) catch |err| switch (err) {
-                error.EndOfStream => return total_read,
+                error.EndOfStream => {
+                    self.body_consumed = true;
+                    return total_read;
+                },
                 else => return error.ReadError,
             };
             if (data.len == 0) break;
