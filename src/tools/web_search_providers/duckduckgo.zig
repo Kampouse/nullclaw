@@ -160,34 +160,36 @@ fn collectTopics(
 
 const testing = std.testing;
 
-test "DuckDuckGo live API search for 'weather'" {
-    // This test makes a real API call to see what DuckDuckGo returns
-    const result = try execute(testing.allocator, "weather", 5, 30);
-    defer testing.allocator.free(result.output);
-
-    std.debug.print("\n=== DuckDuckGo Live API Test ===\n", .{});
-    std.debug.print("Query: weather\n", .{});
-    std.debug.print("Success: {any}\n", .{result.success});
-    std.debug.print("Output: {s}\n", .{result.output});
-    std.debug.print("================================\n\n", .{});
+test "DuckDuckGo formatResults parses valid JSON" {
+    const json =
+        \\{"AbstractText":"Zig is a programming language","AbstractURL":"https://ziglang.org","Heading":"Zig"}
+    ;
+    const result = try formatResults(testing.allocator, json, "zig", 5);
+    defer if (result.owns_output) testing.allocator.free(result.output);
 
     try testing.expect(result.success);
+    try testing.expect(!std.mem.eql(u8, result.output, "No web results found."));
 }
 
-test "DuckDuckGo live API search for 'zig programming'" {
-    const result = try execute(testing.allocator, "zig programming language", 5, 30);
-    defer testing.allocator.free(result.output);
-
-    std.debug.print("\n=== DuckDuckGo Live API Test ===\n", .{});
-    std.debug.print("Query: zig programming language\n", .{});
-    std.debug.print("Success: {any}\n", .{result.success});
-    std.debug.print("Output length: {d}\n", .{result.output.len});
-    if (result.output.len < 500) {
-        std.debug.print("Output: {s}\n", .{result.output});
-    } else {
-        std.debug.print("Output (first 500 chars): {s}\n", .{result.output[0..500]});
-    }
-    std.debug.print("================================\n\n", .{});
+test "DuckDuckGo formatResults empty results" {
+    const json = "{\"AbstractText\":\"\",\"AbstractURL\":\"\",\"Heading\":\"\",\"RelatedTopics\":[]}";
+    const result = try formatResults(testing.allocator, json, "test", 5);
+    defer if (result.owns_output) testing.allocator.free(result.output);
 
     try testing.expect(result.success);
+    try testing.expectEqualStrings("No web results found.", result.output);
+}
+
+test "DuckDuckGo formatResults with RelatedTopics" {
+    const json =
+        \\{"Heading":"","AbstractText":"","AbstractURL":"","RelatedTopics":[
+        \\  {"Text":"Zig - Programming language","FirstURL":"https://ziglang.org"}
+        \\]}
+    ;
+    const result = try formatResults(testing.allocator, json, "zig", 5);
+    defer if (result.owns_output) testing.allocator.free(result.output);
+
+    try testing.expect(result.success);
+    try testing.expect(std.mem.indexOf(u8, result.output, "Zig") != null);
+    try testing.expect(std.mem.indexOf(u8, result.output, "ziglang.org") != null);
 }

@@ -143,6 +143,7 @@ pub const AgentConfig = struct {
 };
 
 pub const ToolsConfig = struct {
+    zig_path: []const u8 = "zig", // Path to zig executable (default: "zig" for PATH lookup)
     shell_timeout_secs: u64 = 60,
     shell_max_output_bytes: u32 = 1_048_576, // 1MB
     max_file_size_bytes: u32 = 10_485_760, // 10MB — shared file_read/edit/append

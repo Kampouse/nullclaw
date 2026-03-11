@@ -391,7 +391,7 @@ pub fn allTools(
     try list.append(allocator, cargo_tool.tool());
 
     const zig_build_tool = try allocator.create(zig_build.ZigBuildTool);
-    zig_build_tool.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
+    zig_build_tool.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths, .zig_path = opts.tools_config.zig_path };
     try list.append(allocator, zig_build_tool.tool());
 
     // Tools without workspace_dir

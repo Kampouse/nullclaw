@@ -1112,3 +1112,36 @@ test "command at MAX_ANALYSIS_LEN minus one is still analyzed" {
     try std.testing.expect(p.isCommandAllowed(&buf));
     try std.testing.expectEqual(CommandRiskLevel.low, p.commandRiskLevel(&buf));
 }
+
+test "wildcard * allows all commands" {
+    const allowed = [_][]const u8{"*"};
+    const p = SecurityPolicy{
+        .autonomy = .full,
+        .allowed_commands = &allowed,
+    };
+
+    // Various commands that should all be allowed with "*"
+    try std.testing.expect(p.isCommandAllowed("zig build"));
+    try std.testing.expect(p.isCommandAllowed("cargo build --release"));
+    try std.testing.expect(p.isCommandAllowed("python3 script.py"));
+    try std.testing.expect(p.isCommandAllowed("npm install"));
+    try std.testing.expect(p.isCommandAllowed("ls -la"));
+    try std.testing.expect(p.isCommandAllowed("echo hello"));
+
+    // Note: "*" allows all commands, including chained commands with &&
+    // Dangerous pattern blocking is limited - mostly blocks single &, redirects, subshells
+}
+
+test "zig version command is allowed with wildcard" {
+    const allowed = [_][]const u8{"*"};
+    const p = SecurityPolicy{
+        .autonomy = .full,
+        .allowed_commands = &allowed,
+    };
+
+    // Commands that an agent might run to check if zig is installed
+    try std.testing.expect(p.isCommandAllowed("zig version"));
+    try std.testing.expect(p.isCommandAllowed("zig build"));
+    try std.testing.expect(p.isCommandAllowed("which zig"));
+    try std.testing.expect(p.isCommandAllowed("whereis zig"));
+}

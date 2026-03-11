@@ -1497,9 +1497,21 @@ pub const Agent = struct {
                     };
                 };
                 std.debug.print("[TRACE] executeTool: tool.execute returned successfully\n", .{});
-                const output = if (result.success) result.output else (result.error_msg orelse result.output);
+                const output_src = if (result.success) result.output else (result.error_msg orelse result.output);
                 const success = result.success;
+
+                // Duplicate output before deinit to avoid use-after-free
+                const output = tool_allocator.dupe(u8, output_src) catch {
+                    result.deinit(tool_allocator);
+                    return .{
+                        .name = call.name,
+                        .output = "Memory allocation failed",
+                        .success = false,
+                        .tool_call_id = call.tool_call_id,
+                    };
+                };
                 result.deinit(tool_allocator);
+
                 return .{
                     .name = call.name,
                     .output = output,

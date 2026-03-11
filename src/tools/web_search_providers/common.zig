@@ -165,7 +165,7 @@ pub fn formatResultEntries(allocator: std.mem.Allocator, query: []const u8, entr
         try buf.append(allocator, '\n');
     }
 
-    return ToolResult.ok(try buf.toOwnedSlice(allocator));
+    return .{ .success = true, .output = try buf.toOwnedSlice(allocator), .owns_output = true };
 }
 
 pub fn formatResultsArray(
@@ -216,7 +216,7 @@ pub fn formatResultsArray(
         return ToolResult.ok("No web results found.");
     }
 
-    return ToolResult.ok(try buf.toOwnedSlice(allocator));
+    return .{ .success = true, .output = try buf.toOwnedSlice(allocator), .owns_output = true };
 }
 
 pub fn extractString(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {

@@ -12,8 +12,8 @@ pub const CargoTool = struct {
     workspace_dir: []const u8,
     allowed_paths: []const []const u8 = &.{},
 
-    pub const tool_name = "cargo_operations";
-    pub const tool_description = "Perform Cargo operations (build, test, run, check, clean, doc, new, init, update, clone, add).";
+    pub const tool_name = "cargo";
+    pub const tool_description = "Perform Cargo operations: build, test, run, check, clean, doc, new, init, update, clippy, fmt, add. Use this tool for all Rust/Cargo tasks.";
     pub const tool_params =
         \\{"type":"object","properties":{"operation":{"type":"string","enum":["build","test","run","check","clean","doc","new","init","update","clippy","fmt"],"description":"Cargo operation to perform"},"args":{"type":"string","description":"Additional arguments to pass to cargo (e.g., '--release', '--bin foo')"},"manifest_path":{"type":"string","description":"Path to Cargo.toml (for project-specific operations)"},"package_name":{"type":"string","description":"Package name (for 'new' operation)"},"cwd":{"type":"string","description":"Working directory (absolute path within allowed paths; defaults to workspace)"}},"required":["operation"]}
     ;
@@ -330,7 +330,7 @@ pub const CargoTool = struct {
 test "cargo tool name" {
     var ct = CargoTool{ .workspace_dir = "/tmp" };
     const t = ct.tool();
-    try std.testing.expectEqualStrings("cargo_operations", t.name());
+    try std.testing.expectEqualStrings("cargo", t.name());
 }
 
 test "cargo tool schema has operation" {
@@ -635,7 +635,7 @@ test "cargo tool tool_metadata" {
     const t = ct.tool();
 
     // Verify tool metadata is correct
-    try std.testing.expectEqualStrings("cargo_operations", t.name());
+    try std.testing.expectEqualStrings("cargo", t.name());
 
     const desc = t.description();
     try std.testing.expect(desc.len > 0);

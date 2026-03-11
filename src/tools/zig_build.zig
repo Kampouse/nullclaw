@@ -10,9 +10,10 @@ const UNAVAILABLE_WORKSPACE_SENTINEL = "/__nullclaw_workspace_unavailable__";
 pub const ZigBuildTool = struct {
     workspace_dir: []const u8,
     allowed_paths: []const []const u8 = &.{},
+    zig_path: []const u8 = "zig", // Path to zig executable (default: "zig" for PATH lookup)
 
-    pub const tool_name = "zig_build_operations";
-    pub const tool_description = "Perform Zig build operations (build, test, run, check, clean, fmt, ast-check, init, translate-c, fetch, version).";
+    pub const tool_name = "zig";
+    pub const tool_description = "Perform Zig operations: build, test, run, check, clean, fmt, ast-check, init, translate-c, fetch, version. Use this tool for all Zig compiler tasks.";
     pub const tool_params =
         \\{"type":"object","properties":{"operation":{"type":"string","enum":["build","test","run","check","clean","fmt","ast-check","init","translate-c","fetch","version"],"description":"Zig operation to perform"},"args":{"type":"string","description":"Additional arguments to pass to zig (e.g., '-Drelease-fast', '-femit-bin=myapp')"},"build_zig_path":{"type":"string","description":"Path to build.zig (for project-specific operations)"},"project_name":{"type":"string","description":"Project name (for 'init' operation)"},"cwd":{"type":"string","description":"Working directory (absolute path within allowed paths; defaults to workspace)"}},"required":["operation"]}
     ;
@@ -119,9 +120,10 @@ pub const ZigBuildTool = struct {
         return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 
-    fn runZig(_: *ZigBuildTool, allocator: std.mem.Allocator, zig_cwd: []const u8, args: []const []const u8) !struct { stdout: []u8, stderr: []u8, success: bool } {
+    fn runZig(self: *ZigBuildTool, allocator: std.mem.Allocator, zig_cwd: []const u8, args: []const []const u8) !struct { stdout: []u8, stderr: []u8, success: bool } {
         var argv_buf: [32][]const u8 = undefined;
-        argv_buf[0] = "zig";
+        argv_buf[0] = self.zig_path; // Use configured zig path (default: "zig")
+
         const arg_count = @min(args.len, argv_buf.len - 1);
         for (args[0..arg_count], 1..) |a, i| {
             argv_buf[i] = a;
@@ -361,7 +363,7 @@ pub const ZigBuildTool = struct {
 test "zig_build tool name" {
     var zt = ZigBuildTool{ .workspace_dir = "/tmp" };
     const t = zt.tool();
-    try std.testing.expectEqualStrings("zig_build_operations", t.name());
+    try std.testing.expectEqualStrings("zig", t.name());
 }
 
 test "zig_build tool schema has operation" {
@@ -632,7 +634,7 @@ test "zig_build tool tool_metadata" {
     const t = zt.tool();
 
     // Verify tool metadata is correct
-    try std.testing.expectEqualStrings("zig_build_operations", t.name());
+    try std.testing.expectEqualStrings("zig", t.name());
 
     const desc = t.description();
     try std.testing.expect(desc.len > 0);

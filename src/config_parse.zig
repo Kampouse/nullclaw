@@ -757,6 +757,9 @@ pub fn parseJson(self: *Config, content: []const u8) !void {
             if (tl.object.get("web_fetch_max_chars")) |v| {
                 if (v == .integer) self.tools.web_fetch_max_chars = @intCast(v.integer);
             }
+            if (tl.object.get("zig_path")) |v| {
+                if (v == .string) self.tools.zig_path = try self.allocator.dupe(u8, v.string);
+            }
             // tools.media.audio → self.audio_media
             if (tl.object.get("media")) |media| {
                 if (media == .object) {
