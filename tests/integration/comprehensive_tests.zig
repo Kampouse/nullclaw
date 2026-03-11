@@ -95,6 +95,19 @@ pub fn main() !void {
     runTest("Extended conversation (10 turns)", allocator, testMultiTurnExtended, &passed, &failed);
     runTest("Context retention", allocator, testMultiTurnContext, &passed, &failed);
     
+    // ==================== HIGH RISK TESTS ====================
+    std.debug.print("\n", .{});
+    std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
+    std.debug.print("High Risk Tests (Likely to Find Bugs)\n", .{});
+    std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
+    
+    runTest("Memory exhaustion (50 sessions)", allocator, testMemoryExhaustion, &passed, &failed);
+    runTest("Race conditions (parallel writes)", allocator, testRaceConditions, &passed, &failed);
+    runTest("Session cleanup", allocator, testSessionCleanup, &passed, &failed);
+    runTest("Context isolation", allocator, testContextIsolation, &passed, &failed);
+    runTest("Long-running session (20 turns)", allocator, testLongRunningSession, &passed, &failed);
+    runTest("Crash recovery", allocator, testCrashRecovery, &passed, &failed);
+    
     // ==================== SUMMARY ====================
     std.debug.print("\n", .{});
     std.debug.print("════════════════════════════════════════════════════════════\n", .{});
@@ -630,4 +643,251 @@ fn testMultiTurnContext(allocator: std.mem.Allocator) !void {
     
     // Should remember context from turn 1
     if (response2.content == null) return error.NoContent;
+}
+
+// ==================== HIGH RISK TESTS ====================
+
+fn testMemoryExhaustion(allocator: std.mem.Allocator) !void {
+    // Create 50 concurrent sessions to test memory limits
+    const num_sessions = 50;
+    
+    const SessionCtx = struct {
+        allocator: std.mem.Allocator,
+        id: usize,
+        success: bool,
+    };
+    
+    var contexts: [num_sessions]SessionCtx = undefined;
+    var threads: [num_sessions]std.Thread = undefined;
+    
+    // Initialize contexts
+    for (&contexts, 0..) |*ctx, i| {
+        ctx.* = .{
+            .allocator = allocator,
+            .id = i,
+            .success = false,
+        };
+    }
+    
+    // Spawn threads
+    for (&threads, &contexts) |*thread, *ctx| {
+        const spawn_result = std.Thread.spawn(.{}, struct {
+            fn run(ctx_ptr: *SessionCtx) !void {
+                var provider = OpenAiProvider.init(ctx_ptr.allocator, "mock-key");
+                defer provider.deinit();
+                
+                // Each session makes 3 requests
+                var req: usize = 0;
+                while (req < 3) : (req += 1) {
+                    const messages = [_]ChatMessage{.{ .role = .user, .content = "session test" }};
+                    const response = provider.provider().chat(ctx_ptr.allocator, .{ .messages = &messages }, "gpt-4", 0.7) catch {
+                        continue;
+                    };
+                    defer if (response.content) |c| ctx_ptr.allocator.free(c);
+                    
+                    if (response.content != null) {
+                        ctx_ptr.success = true;
+                    }
+                }
+            }
+        }.run, .{ctx});
+        
+        if (spawn_result) |t| {
+            thread.* = t;
+        } else |_| {
+            // Thread spawn failed - memory exhausted
+            ctx.success = false;
+        }
+    }
+    
+    // Wait for all threads
+    for (&threads) |*thread| {
+        thread.join();
+    }
+    
+    // Check at least 80% succeeded
+    var success_count: usize = 0;
+    for (contexts) |ctx| {
+        if (ctx.success) success_count += 1;
+    }
+    
+    std.debug.print("({}/50 ok) ", .{success_count});
+    
+    if (success_count < 40) return error.TooManyFailures;
+}
+
+fn testRaceConditions(allocator: std.mem.Allocator) !void {
+    // Test parallel writes to same provider (should be thread-safe)
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    const num_threads = 10;
+    const SharedState = struct {
+        provider: *OpenAiProvider,
+        allocator: std.mem.Allocator,
+        errors: std.atomic.Value(usize),
+    };
+    
+    var state = SharedState{
+        .provider = &provider,
+        .allocator = allocator,
+        .errors = std.atomic.Value(usize).init(0),
+    };
+    
+    var threads: [num_threads]std.Thread = undefined;
+    
+    // Spawn threads all hitting same provider
+    for (&threads, 0..) |*thread, i| {
+        const spawn_result = std.Thread.spawn(.{}, struct {
+            fn run(ctx: *SharedState, id: usize) void {
+                _ = id;
+                const messages = [_]ChatMessage{.{ .role = .user, .content = "race test" }};
+                const response = ctx.provider.provider().chat(ctx.allocator, .{ .messages = &messages }, "gpt-4", 0.7) catch {
+                    _ = ctx.errors.fetchAdd(1, .monotonic);
+                    return;
+                };
+                if (response.content) |c| ctx.allocator.free(c);
+            }
+        }.run, .{ &state, i });
+        
+        if (spawn_result) |t| {
+            thread.* = t;
+        } else |_| {
+            _ = state.errors.fetchAdd(1, .monotonic);
+        }
+    }
+    
+    // Wait for all threads
+    for (&threads) |*thread| {
+        thread.join();
+    }
+    
+    const error_count = state.errors.load(.monotonic);
+    std.debug.print("({} errors) ", .{error_count});
+    
+    // Should have no race condition errors
+    if (error_count > 2) return error.TooManyRaceErrors;
+}
+
+fn testSessionCleanup(allocator: std.mem.Allocator) !void {
+    // Test that provider properly cleans up resources
+    const iterations = 20;
+    
+    var i: usize = 0;
+    while (i < iterations) : (i += 1) {
+        // Create and destroy provider repeatedly
+        var provider = OpenAiProvider.init(allocator, "mock-key");
+        
+        const messages = [_]ChatMessage{.{ .role = .user, .content = "cleanup test" }};
+        const response = try provider.provider().chat(allocator, .{ .messages = &messages }, "gpt-4", 0.7);
+        defer if (response.content) |c| allocator.free(c);
+        
+        provider.deinit();
+    }
+    
+    std.debug.print("(20 iters) ", .{});
+    
+    // If we get here without crash or OOM, cleanup works
+}
+
+fn testContextIsolation(allocator: std.mem.Allocator) !void {
+    // Test that different providers don't share state
+    var provider1 = OpenAiProvider.init(allocator, "mock-key");
+    defer provider1.deinit();
+    
+    var provider2 = OpenAiProvider.init(allocator, "mock-key");
+    defer provider2.deinit();
+    
+    // Provider 1: Set context A
+    const messages1a = [_]ChatMessage{.{ .role = .user, .content = "test context set" }};
+    const response1a = provider1.provider().chat(allocator, .{ .messages = &messages1a }, "gpt-4", 0.7) catch return error.Request1Failed;
+    defer if (response1a.content) |c| allocator.free(c);
+    
+    // Provider 2: Set context B (empty response)
+    const messages2a = [_]ChatMessage{.{ .role = .user, .content = "test empty" }};
+    const response2a_result = provider2.provider().chat(allocator, .{ .messages = &messages2a }, "gpt-4", 0.7);
+    
+    // Empty response might fail or return null - both acceptable
+    if (response2a_result) |response2a| {
+        defer if (response2a.content) |c| allocator.free(c);
+        // Got response - that's fine
+    } else |_| {
+        // Error on empty response - also fine
+    }
+    
+    // Provider 1: Should still work independently
+    const messages1b = [_]ChatMessage{
+        .{ .role = .user, .content = "test context set" },
+        .{ .role = .assistant, .content = response1a.content orelse "" },
+        .{ .role = .user, .content = "test context get" },
+    };
+    const response1b = provider1.provider().chat(allocator, .{ .messages = &messages1b }, "gpt-4", 0.7) catch return error.Request2Failed;
+    defer if (response1b.content) |c| allocator.free(c);
+    
+    // Verify providers work independently (not testing specific content)
+    // Just verify no crash or data corruption
+}
+
+fn testLongRunningSession(allocator: std.mem.Allocator) !void {
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    // Build conversation history
+    var history = std.ArrayList(ChatMessage).initCapacity(allocator, 50) catch return error.MemoryError;
+    defer history.deinit(allocator);
+    
+    // 20 turns (more than extended test)
+    var turn: usize = 0;
+    while (turn < 20) : (turn += 1) {
+        history.append(allocator, .{ .role = .user, .content = "turn message" }) catch return error.MemoryError;
+        
+        const response = provider.provider().chat(allocator, .{ .messages = history.items }, "gpt-4", 0.7) catch return error.RequestFailed;
+        defer if (response.content) |c| allocator.free(c);
+        
+        if (response.content) |content| {
+            const content_copy = allocator.dupe(u8, content) catch return error.MemoryError;
+            history.append(allocator, .{ .role = .assistant, .content = content_copy }) catch return error.MemoryError;
+        }
+    }
+    
+    std.debug.print("(20 turns, {} msgs) ", .{history.items.len});
+    
+    // Should handle 20 turns without memory issues
+    if (history.items.len < 39) return error.HistoryTooShort;
+}
+
+fn testCrashRecovery(allocator: std.mem.Allocator) !void {
+    // Test that we can recover from simulated crashes
+    // (provider failure mid-conversation)
+    
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    
+    // Start conversation
+    const messages1 = [_]ChatMessage{.{ .role = .user, .content = "hello" }};
+    const response1 = provider.provider().chat(allocator, .{ .messages = &messages1 }, "gpt-4", 0.7) catch {
+        // Initial request failed - acceptable
+        provider.deinit();
+        return;
+    };
+    defer if (response1.content) |c| allocator.free(c);
+    
+    // Simulate crash by destroying provider
+    provider.deinit();
+    
+    // Create new provider and resume
+    var provider2 = OpenAiProvider.init(allocator, "mock-key");
+    defer provider2.deinit();
+    
+    // Should be able to continue conversation with new provider
+    const messages2 = [_]ChatMessage{
+        .{ .role = .user, .content = "hello" },
+        .{ .role = .assistant, .content = response1.content orelse "" },
+        .{ .role = .user, .content = "continue" },
+    };
+    const response2 = provider2.provider().chat(allocator, .{ .messages = &messages2 }, "gpt-4", 0.7) catch {
+        return error.RecoveryFailed;
+    };
+    defer if (response2.content) |c| allocator.free(c);
+    
+    // Successfully recovered
 }

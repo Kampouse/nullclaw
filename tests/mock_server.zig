@@ -142,6 +142,34 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     const has_tool_multiple = std.mem.indexOf(u8, body, "test tool multiple") != null;
     const has_context_set = std.mem.indexOf(u8, body, "test context set") != null;
     const has_context_get = std.mem.indexOf(u8, body, "test context get") != null;
+    const has_session = std.mem.indexOf(u8, body, "session test") != null;
+    const has_race = std.mem.indexOf(u8, body, "race test") != null;
+    const has_cleanup = std.mem.indexOf(u8, body, "cleanup test") != null;
+    
+    // High-risk test scenarios
+    if (has_session) {
+        const response = 
+            \\{"id":"chatcmpl-session","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Session response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}}
+        ;
+        try sendJson(stream, response, io);
+        return;
+    }
+    
+    if (has_race) {
+        const response = 
+            \\{"id":"chatcmpl-race","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Race-safe response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}}
+        ;
+        try sendJson(stream, response, io);
+        return;
+    }
+    
+    if (has_cleanup) {
+        const response = 
+            \\{"id":"chatcmpl-cleanup","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Cleanup OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}}
+        ;
+        try sendJson(stream, response, io);
+        return;
+    }
     
     // Tool call scenarios
     if (has_tool_weather) {
