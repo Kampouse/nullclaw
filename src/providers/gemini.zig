@@ -370,11 +370,13 @@ pub const GeminiAuth = union(enum) {
 pub const GeminiProvider = struct {
     auth: ?GeminiAuth,
     allocator: std.mem.Allocator,
+    http_client: std.http.Client,
 
     const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
     const DEFAULT_MAX_OUTPUT_TOKENS: u32 = config_types.DEFAULT_MODEL_MAX_TOKENS;
 
     pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) GeminiProvider {
+        const threaded_io = @import("../http_util.zig").getThreadedIo();
         var auth: ?GeminiAuth = null;
 
         // 1. Explicit key
@@ -422,6 +424,7 @@ pub const GeminiProvider = struct {
         return .{
             .auth = auth,
             .allocator = allocator,
+            .http_client = .{ .allocator = allocator, .io = threaded_io },
         };
     }
 
@@ -808,11 +811,11 @@ pub const GeminiProvider = struct {
         defer allocator.free(body);
 
         const resp_body = if (auth.isApiKey())
-            root.curlPost(allocator, url, body, &.{}) catch return error.GeminiApiError
+            self.httpPost(allocator, url, body, &.{}, 0) catch return error.GeminiApiError
         else blk: {
             var auth_hdr_buf: [512]u8 = undefined;
             const auth_hdr = std.fmt.bufPrint(&auth_hdr_buf, "Authorization: Bearer {s}", .{auth.credential()}) catch return error.GeminiApiError;
-            break :blk root.curlPost(allocator, url, body, &.{auth_hdr}) catch return error.GeminiApiError;
+            break :blk self.httpPost(allocator, url, body, &.{auth_hdr}, 0) catch return error.GeminiApiError;
         };
         defer allocator.free(resp_body);
 
@@ -836,11 +839,11 @@ pub const GeminiProvider = struct {
         defer allocator.free(body);
 
         const resp_body = if (auth.isApiKey())
-            root.curlPostTimed(allocator, url, body, &.{}, request.timeout_secs) catch return error.GeminiApiError
+            self.httpPost(allocator, url, body, &.{}, request.timeout_secs) catch return error.GeminiApiError
         else blk: {
             var auth_hdr_buf: [512]u8 = undefined;
             const auth_hdr = std.fmt.bufPrint(&auth_hdr_buf, "Authorization: Bearer {s}", .{auth.credential()}) catch return error.GeminiApiError;
-            break :blk root.curlPostTimed(allocator, url, body, &.{auth_hdr}, request.timeout_secs) catch return error.GeminiApiError;
+            break :blk self.httpPost(allocator, url, body, &.{auth_hdr}, request.timeout_secs) catch return error.GeminiApiError;
         };
         defer allocator.free(resp_body);
 
@@ -862,6 +865,11 @@ pub const GeminiProvider = struct {
 
     fn deinitImpl(ptr: *anyopaque) void {
         const self: *GeminiProvider = @ptrCast(@alignCast(ptr));
+        self.deinit();
+    }
+
+    pub fn deinit(self: *GeminiProvider) void {
+        self.http_client.deinit();
         if (self.auth) |auth| {
             switch (auth) {
                 .env_oauth_token => |tok| self.allocator.free(tok),
@@ -870,6 +878,69 @@ pub const GeminiProvider = struct {
             }
         }
         self.auth = null;
+    }
+
+    /// Persistent HTTP POST using the provider's HTTP client (connection reuse).
+    pub fn httpPost(self: *GeminiProvider, allocator: std.mem.Allocator, url: []const u8, body: []const u8, headers: []const []const u8, timeout_secs: u64) ![]u8 {
+        _ = timeout_secs; // TODO: Add timeout support
+
+        const uri = try std.Uri.parse(url);
+
+        // Build headers array
+        var header_buf: [32]std.http.Header = undefined;
+        var n_headers: usize = 0;
+        header_buf[n_headers] = .{ .name = "content-type", .value = "application/json" };
+        n_headers += 1;
+        for (headers) |header| {
+            if (n_headers >= header_buf.len) break;
+            const colon_idx = std.mem.indexOfScalar(u8, header, ':') orelse continue;
+            const name = header[0..colon_idx];
+            const value = std.mem.trim(u8, header[colon_idx + 1 ..], " \t\r\n");
+            header_buf[n_headers] = .{ .name = name, .value = value };
+            n_headers += 1;
+        }
+        const extra_headers = header_buf[0..n_headers];
+
+        var req = try self.http_client.request(.POST, uri, .{
+            .extra_headers = extra_headers,
+        });
+        defer req.deinit();
+
+        const body_dup = try allocator.dupe(u8, body);
+        defer allocator.free(body_dup);
+        try req.sendBodyComplete(body_dup);
+
+        var redirect_buf: [4096]u8 = undefined;
+        var response = try req.receiveHead(&redirect_buf);
+
+        // Read response body
+        var transfer_buf: [16384]u8 = undefined;
+        const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+        var response_body = std.ArrayListUnmanaged(u8){};
+        errdefer response_body.deinit(allocator);
+
+        while (true) {
+            body_reader.fill(4096) catch |err| {
+                if (err == error.EndOfStream) {
+                    const buffered = body_reader.bufferedLen();
+                    if (buffered == 0) break;
+                    const data = try body_reader.take(buffered);
+                    try response_body.appendSlice(allocator, data);
+                    break;
+                }
+                return err;
+            };
+
+            const buffered = body_reader.bufferedLen();
+            if (buffered == 0) break;
+
+            const data = try body_reader.take(buffered);
+            if (data.len == 0) break;
+            try response_body.appendSlice(allocator, data);
+        }
+
+        return response_body.toOwnedSlice(allocator);
     }
 
     fn supportsStreamingImpl(_: *anyopaque) bool {
