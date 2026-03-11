@@ -41,11 +41,51 @@ fn handleConnection(stream: *std.Io.net.Stream, io: std.Io) !void {
     var read_buf: [8192]u8 = undefined;
     var conn_reader = stream.reader(io, &read_buf);
     
-    // Read HTTP request - just read once and process
-    const bytes_read = conn_reader.interface.readSliceShort(read_buf[0..]) catch return error.ReadFailed;
-    if (bytes_read == 0) return error.EmptyRequest;
+    // Read HTTP request using buffered() for non-blocking read
+    // First peek triggers the actual read into buffer
+    _ = conn_reader.interface.peek(1) catch |err| {
+        if (err == error.EndOfStream) return error.EmptyRequest;
+        return err;
+    };
     
-    const request = read_buf[0..bytes_read];
+    // Get what's buffered - this IS our read_buf
+    var buffered_data = conn_reader.interface.buffered();
+    if (buffered_data.len == 0) return error.EmptyRequest;
+    
+    var total_read = buffered_data.len;
+    conn_reader.interface.toss(total_read);
+    
+    // Check if we have headers complete
+    var request = buffered_data[0..total_read];
+    
+    // Find Content-Length if present
+    const header_end = std.mem.indexOf(u8, request, "\r\n\r\n") orelse return error.InvalidRequest;
+    const headers = request[0..header_end];
+    
+    // Parse Content-Length
+    var content_length: usize = 0;
+    if (std.mem.indexOf(u8, headers, "Content-Length:")) |cl_pos| {
+        const cl_start = cl_pos + 15;
+        const cl_end = std.mem.indexOfScalarPos(u8, headers, cl_start, '\r') orelse cl_start;
+        const cl_str = std.mem.trim(u8, headers[cl_start..cl_end], " ");
+        content_length = std.fmt.parseInt(usize, cl_str, 10) catch 0;
+    }
+    
+    // Read remaining body if needed
+    const body_start = header_end + 4;
+    const expected_body_end = body_start + content_length;
+    
+    if (total_read < expected_body_end) {
+        // Need more data - peek again
+        const remaining = expected_body_end - total_read;
+        if (conn_reader.interface.peek(remaining)) |more| {
+            total_read += more.len;
+            conn_reader.interface.toss(more.len);
+            request = buffered_data[0..total_read];
+        } else |_| {
+            // EndOfStream or other error - use what we have
+        }
+    }
     
     // Parse HTTP request
     const method_end = std.mem.indexOfScalar(u8, request, ' ') orelse return error.InvalidRequest;
@@ -55,9 +95,8 @@ fn handleConnection(stream: *std.Io.net.Stream, io: std.Io) !void {
     const path_end = std.mem.indexOfScalarPos(u8, request, path_start, ' ') orelse return error.InvalidRequest;
     const path = request[path_start..path_end];
     
-    // Find body (after \r\n\r\n)
-    const body_start = std.mem.indexOf(u8, request, "\r\n\r\n") orelse return error.InvalidRequest;
-    const body = request[body_start + 4 ..];
+    // Body starts after headers (already computed as body_start above)
+    const body = request[body_start..];
     
     std.debug.print("{s} {s} ({} bytes)\n", .{ method, path, body.len });
     

@@ -1296,7 +1296,12 @@ test "parseGeminiSseLine invalid json returns error" {
 
 test "streamChatImpl fails without credentials" {
     // Construct directly with auth=null to avoid picking up env vars or CLI tokens
-    var p = GeminiProvider{ .auth = null, .allocator = std.testing.allocator };
+    const test_io = @import("../http_util.zig").getThreadedIo();
+    var p = GeminiProvider{
+        .auth = null,
+        .allocator = std.testing.allocator,
+        .http_client = .{ .allocator = std.testing.allocator, .io = test_io },
+    };
 
     const prov = p.provider();
     const msgs = [_]root.ChatMessage{root.ChatMessage.user("test")};
@@ -1592,9 +1597,11 @@ test "GeminiAuth env_oauth_token is not api key" {
 
 test "provider deinit frees env_oauth_token" {
     const alloc = std.testing.allocator;
+    const test_io = @import("../http_util.zig").getThreadedIo();
     var p = GeminiProvider{
         .auth = .{ .env_oauth_token = try alloc.dupe(u8, "ya29.token") },
         .allocator = alloc,
+        .http_client = .{ .allocator = alloc, .io = test_io },
     };
     const prov = p.provider();
     prov.deinit();
@@ -1603,9 +1610,11 @@ test "provider deinit frees env_oauth_token" {
 
 test "provider deinit frees oauth_token" {
     const alloc = std.testing.allocator;
+    const test_io = @import("../http_util.zig").getThreadedIo();
     var p = GeminiProvider{
         .auth = .{ .oauth_token = try alloc.dupe(u8, "ya29.token") },
         .allocator = alloc,
+        .http_client = .{ .allocator = alloc, .io = test_io },
     };
     const prov = p.provider();
     prov.deinit();
