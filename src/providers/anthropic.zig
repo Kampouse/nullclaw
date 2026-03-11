@@ -23,6 +23,7 @@ pub const AnthropicProvider = struct {
     credential: ?[]const u8,
     base_url: []const u8,
     allocator: std.mem.Allocator,
+    http_client: std.http.Client,
 
     const DEFAULT_BASE_URL = "https://api.anthropic.com";
     const API_VERSION = "2023-06-01";
@@ -30,6 +31,7 @@ pub const AnthropicProvider = struct {
 
     pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8, base_url: ?[]const u8) AnthropicProvider {
         const url = if (base_url) |u| trimTrailingSlash(u) else DEFAULT_BASE_URL;
+        const io = @import("../http_util.zig").getThreadedIo();
 
         var credential: ?[]const u8 = null;
         if (api_key) |key| {
@@ -43,6 +45,7 @@ pub const AnthropicProvider = struct {
             .credential = credential,
             .base_url = url,
             .allocator = allocator,
+            .http_client = .{ .allocator = allocator, .io = io },
         };
     }
 
@@ -258,7 +261,7 @@ pub const AnthropicProvider = struct {
         const resp_body = if (is_oauth)
             curlPostOAuth(allocator, url, body, auth_hdr, version_hdr) catch return error.AnthropicApiError
         else
-            root.curlPost(allocator, url, body, &.{ auth_hdr, version_hdr }) catch return error.AnthropicApiError;
+            self.httpPost(allocator, url, body, &.{ auth_hdr, version_hdr }, 0) catch return error.AnthropicApiError;
         defer allocator.free(resp_body);
 
         return parseTextResponse(allocator, resp_body);
@@ -298,7 +301,7 @@ pub const AnthropicProvider = struct {
         const resp_body = if (is_oauth)
             curlPostOAuth(allocator, url, body, auth_hdr, version_hdr) catch return error.AnthropicApiError
         else
-            root.curlPostTimed(allocator, url, body, &.{ auth_hdr, version_hdr }, request.timeout_secs) catch return error.AnthropicApiError;
+            self.httpPost(allocator, url, body, &.{ auth_hdr, version_hdr }, request.timeout_secs) catch return error.AnthropicApiError;
         defer allocator.free(resp_body);
 
         return parseNativeResponse(allocator, resp_body);
@@ -316,7 +319,77 @@ pub const AnthropicProvider = struct {
         return "Anthropic";
     }
 
-    fn deinitImpl(_: *anyopaque) void {}
+    fn deinitImpl(ptr: *anyopaque) void {
+        const self: *AnthropicProvider = @ptrCast(@alignCast(ptr));
+        self.deinit();
+    }
+
+    pub fn deinit(self: *AnthropicProvider) void {
+        self.http_client.deinit();
+    }
+
+    /// Persistent HTTP POST using the provider's HTTP client (connection reuse).
+    pub fn httpPost(self: *AnthropicProvider, allocator: std.mem.Allocator, url: []const u8, body: []const u8, headers: []const []const u8, timeout_secs: u64) ![]u8 {
+        _ = timeout_secs; // TODO: Add timeout support
+
+        const uri = try std.Uri.parse(url);
+
+        // Build headers array
+        var header_buf: [32]std.http.Header = undefined;
+        var n_headers: usize = 0;
+        header_buf[n_headers] = .{ .name = "content-type", .value = "application/json" };
+        n_headers += 1;
+        for (headers) |header| {
+            if (n_headers >= header_buf.len) break;
+            const colon_idx = std.mem.indexOfScalar(u8, header, ':') orelse continue;
+            const name = header[0..colon_idx];
+            const value = std.mem.trim(u8, header[colon_idx + 1 ..], " \t\r\n");
+            header_buf[n_headers] = .{ .name = name, .value = value };
+            n_headers += 1;
+        }
+        const extra_headers = header_buf[0..n_headers];
+
+        var req = try self.http_client.request(.POST, uri, .{
+            .extra_headers = extra_headers,
+        });
+        defer req.deinit();
+
+        const body_dup = try allocator.dupe(u8, body);
+        defer allocator.free(body_dup);
+        try req.sendBodyComplete(body_dup);
+
+        var redirect_buf: [4096]u8 = undefined;
+        var response = try req.receiveHead(&redirect_buf);
+
+        // Read response body
+        var transfer_buf: [16384]u8 = undefined;
+        const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+        var response_body = std.ArrayListUnmanaged(u8){};
+        errdefer response_body.deinit(allocator);
+
+        while (true) {
+            body_reader.fill(4096) catch |err| {
+                if (err == error.EndOfStream) {
+                    const buffered = body_reader.bufferedLen();
+                    if (buffered == 0) break;
+                    const data = try body_reader.take(buffered);
+                    try response_body.appendSlice(allocator, data);
+                    break;
+                }
+                return err;
+            };
+
+            const buffered = body_reader.bufferedLen();
+            if (buffered == 0) break;
+
+            const data = try body_reader.take(buffered);
+            if (data.len == 0) break;
+            try response_body.appendSlice(allocator, data);
+        }
+
+        return response_body.toOwnedSlice(allocator);
+    }
 
     fn supportsStreamingImpl(_: *anyopaque) bool {
         return true;
