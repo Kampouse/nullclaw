@@ -695,19 +695,14 @@ pub const TelegramChannel = struct {
     }
 
     pub fn healthCheck(self: *TelegramChannel) bool {
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "getMe") catch return false;
-        const resp = root.http_util.curlPostWithProxy(self.allocator, url, "{}", &.{}, self.proxy, "10") catch return false;
+        const resp = self.apiPost("getMe", "{}") catch return false;
         defer self.allocator.free(resp);
         return std.mem.indexOf(u8, resp, "\"ok\":true") != null;
     }
 
     /// Register bot commands with Telegram so they appear in the "/" menu.
     pub fn setMyCommands(self: *TelegramChannel) void {
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "setMyCommands") catch return;
-
-        const resp = root.http_util.curlPostWithProxy(self.allocator, url, TELEGRAM_BOT_COMMANDS_JSON, &.{}, self.proxy, "10") catch |err| {
+        const resp = self.apiPost("setMyCommands", TELEGRAM_BOT_COMMANDS_JSON) catch |err| {
             log.warn("setMyCommands failed: {}", .{err});
             return;
         };
@@ -716,11 +711,8 @@ pub const TelegramChannel = struct {
 
     /// Disable webhook mode before polling, preserving queued updates.
     pub fn deleteWebhookKeepPending(self: *TelegramChannel) void {
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "deleteWebhook") catch return;
-
         const body = "{\"drop_pending_updates\":false}";
-        const resp = root.http_util.curlPostWithProxy(self.allocator, url, body, &.{}, self.proxy, "10") catch |err| {
+        const resp = self.apiPost("deleteWebhook", body) catch |err| {
             log.warn("deleteWebhook failed: {}", .{err});
             return;
         };
@@ -730,11 +722,8 @@ pub const TelegramChannel = struct {
     /// Skip all pending updates accumulated while bot was offline.
     /// Fetches with offset=-1 to get only the latest update, then advances past it.
     pub fn dropPendingUpdates(self: *TelegramChannel) void {
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "getUpdates") catch return;
-
         const body = "{\"offset\":-1,\"timeout\":0}";
-        const resp_body = root.http_util.curlPostWithProxy(self.allocator, url, body, &.{}, self.proxy, "10") catch return;
+        const resp_body = self.apiPost("getUpdates", body) catch return;
         defer self.allocator.free(resp_body);
 
         // Parse to extract the latest update_id and advance past it
@@ -1140,9 +1129,6 @@ pub const TelegramChannel = struct {
     }
 
     fn answerCallbackQuery(self: *TelegramChannel, callback_query_id: []const u8, text: ?[]const u8) void {
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "answerCallbackQuery") catch return;
-
         var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(self.allocator);
         body.appendSlice(self.allocator, "{\"callback_query_id\":") catch return;
@@ -1153,14 +1139,11 @@ pub const TelegramChannel = struct {
         }
         body.appendSlice(self.allocator, "}") catch return;
 
-        const resp = root.http_util.curlPostWithProxy(self.allocator, url, body.items, &.{}, self.proxy, "10") catch return;
+        const resp = self.apiPost("answerCallbackQuery", body.items) catch return;
         self.allocator.free(resp);
     }
 
     fn editMessageReplyMarkupClear(self: *TelegramChannel, chat_id: []const u8, message_id: i64) void {
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "editMessageReplyMarkup") catch return;
-
         var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(self.allocator);
         body.appendSlice(self.allocator, "{\"chat_id\":") catch return;
@@ -1172,7 +1155,7 @@ pub const TelegramChannel = struct {
         body.appendSlice(self.allocator, msg_id_str) catch return;
         body.appendSlice(self.allocator, ",\"reply_markup\":{\"inline_keyboard\":[]}}") catch return;
 
-        const resp = root.http_util.curlPostWithProxy(self.allocator, url, body.items, &.{}, self.proxy, "10") catch return;
+        const resp = self.apiPost("editMessageReplyMarkup", body.items) catch return;
         self.allocator.free(resp);
     }
 
@@ -1192,9 +1175,6 @@ pub const TelegramChannel = struct {
             log.warn("telegram.sendWithMarkdownFallbackWithMarkup: rejecting empty message for chat_id '{s}'", .{chat_id});
             return error.EmptyMessage;
         }
-
-        var url_buf: [512]u8 = undefined;
-        const url = try self.apiUrl(&url_buf, "sendMessage");
 
         // Convert Markdown → Telegram HTML
         const html_text = markdownToTelegramHtml(self.allocator, text) catch {
@@ -1223,7 +1203,7 @@ pub const TelegramChannel = struct {
         try appendRawReplyMarkup(&html_body, self.allocator, reply_markup_json);
         try html_body.appendSlice(self.allocator, "}");
 
-        const resp = root.http_util.curlPostWithProxy(self.allocator, url, html_body.items, &.{}, self.proxy, "30") catch {
+        const resp = self.apiPost("sendMessage", html_body.items) catch {
             // Network error — fall through to plain send
             return try self.sendChunkPlainWithMarkup(chat_id, text, reply_to, reply_markup_json);
         };
@@ -1547,10 +1527,6 @@ pub const TelegramChannel = struct {
             return error.EmptyMessage;
         }
 
-        // Build URL
-        var url_buf: [512]u8 = undefined;
-        const url = try self.apiUrl(&url_buf, "sendMessage");
-
         // Build JSON body with escaped text
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
@@ -1561,7 +1537,7 @@ pub const TelegramChannel = struct {
         try root.json_util.appendJsonString(&body_list, self.allocator, text);
         try body_list.appendSlice(self.allocator, "}");
 
-        const resp = try root.http_util.curlPostWithProxy(self.allocator, url, body_list.items, &.{}, self.proxy, "30");
+        const resp = try self.apiPost("sendMessage", body_list.items);
         self.allocator.free(resp);
     }
 
@@ -2275,10 +2251,7 @@ pub const TelegramChannel = struct {
     fn vtableStart(ptr: *anyopaque) anyerror!void {
         const self: *TelegramChannel = @ptrCast(@alignCast(ptr));
         // Verify bot token by calling getMe
-        var url_buf: [512]u8 = undefined;
-        const url = self.apiUrl(&url_buf, "getMe") catch return;
-
-        if (root.http_util.curlPostWithProxy(self.allocator, url, "{}", &.{}, self.proxy, "10")) |resp| {
+        if (self.apiPost("getMe", "{}")) |resp| {
             self.allocator.free(resp);
         } else |_| {}
 
