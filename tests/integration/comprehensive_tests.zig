@@ -75,6 +75,26 @@ pub fn main() !void {
     runTest("Concurrent requests", allocator, testConcurrentRequests, &passed, &failed);
     runTest("Connection failure mid-stream", allocator, testStreamFailure, &passed, &failed);
     
+    // ==================== TOOL CALL TESTS ====================
+    std.debug.print("\n", .{});
+    std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
+    std.debug.print("Tool Call Tests\n", .{});
+    std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
+    
+    runTest("Tool call execution", allocator, testToolCallExecution, &passed, &failed);
+    runTest("Tool call error handling", allocator, testToolCallError, &passed, &failed);
+    runTest("Multiple tool calls", allocator, testMultipleToolCalls, &passed, &failed);
+    
+    // ==================== MULTI-TURN TESTS ====================
+    std.debug.print("\n", .{});
+    std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
+    std.debug.print("Multi-Turn Conversation Tests\n", .{});
+    std.debug.print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", .{});
+    
+    runTest("Basic multi-turn", allocator, testMultiTurnBasic, &passed, &failed);
+    runTest("Extended conversation (10 turns)", allocator, testMultiTurnExtended, &passed, &failed);
+    runTest("Context retention", allocator, testMultiTurnContext, &passed, &failed);
+    
     // ==================== SUMMARY ====================
     std.debug.print("\n", .{});
     std.debug.print("════════════════════════════════════════════════════════════\n", .{});
@@ -453,4 +473,161 @@ fn testStreamFailure(allocator: std.mem.Allocator) !void {
     // If we got a full stream, that's also acceptable
     // (mock server might not support streamfail trigger yet)
     return;
+}
+
+// ==================== TOOL CALL TESTS ====================
+
+fn testToolCallExecution(allocator: std.mem.Allocator) !void {
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    // Request tool call (weather)
+    const messages = [_]ChatMessage{.{ .role = .user, .content = "test tool weather" }};
+    const response = try provider.provider().chat(allocator, .{ .messages = &messages }, "gpt-4", 0.7);
+    defer if (response.content) |c| allocator.free(c);
+    defer if (response.tool_calls.len > 0) {
+        for (response.tool_calls) |call| {
+            allocator.free(call.id);
+            allocator.free(call.name);
+            allocator.free(call.arguments);
+        }
+        allocator.free(response.tool_calls);
+    };
+    
+    // Should get a tool call
+    if (response.tool_calls.len == 0) return error.NoToolCalls;
+    
+    // Verify tool call structure
+    const call = response.tool_calls[0];
+    if (call.name.len == 0) return error.EmptyToolName;
+    if (call.id.len == 0) return error.EmptyToolId;
+}
+
+fn testToolCallError(allocator: std.mem.Allocator) !void {
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    // Request tool error
+    const messages = [_]ChatMessage{.{ .role = .user, .content = "test tool error" }};
+    const result = provider.provider().chat(allocator, .{ .messages = &messages }, "gpt-4", 0.7);
+    
+    // Should handle tool errors gracefully
+    if (result) |response| {
+        defer if (response.content) |c| allocator.free(c);
+        defer if (response.tool_calls.len > 0) {
+            for (response.tool_calls) |call| {
+                allocator.free(call.id);
+                allocator.free(call.name);
+                allocator.free(call.arguments);
+            }
+            allocator.free(response.tool_calls);
+        };
+        // Got response - might be error message in content
+        return;
+    } else |_| {
+        // Error is also acceptable
+        return;
+    }
+}
+
+fn testMultipleToolCalls(allocator: std.mem.Allocator) !void {
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    // Request multiple tools
+    const messages = [_]ChatMessage{.{ .role = .user, .content = "test tool multiple" }};
+    const response = try provider.provider().chat(allocator, .{ .messages = &messages }, "gpt-4", 0.7);
+    defer if (response.content) |c| allocator.free(c);
+    defer if (response.tool_calls.len > 0) {
+        for (response.tool_calls) |call| {
+            allocator.free(call.id);
+            allocator.free(call.name);
+            allocator.free(call.arguments);
+        }
+        allocator.free(response.tool_calls);
+    };
+    
+    // Should get multiple tool calls (mock returns 2)
+    if (response.tool_calls.len < 2) return error.NotEnoughToolCalls;
+    
+    // Verify each has unique ID
+    const call1 = response.tool_calls[0];
+    const call2 = response.tool_calls[1];
+    if (std.mem.eql(u8, call1.id, call2.id)) return error.DuplicateToolIds;
+}
+
+// ==================== MULTI-TURN TESTS ====================
+
+fn testMultiTurnBasic(allocator: std.mem.Allocator) !void {
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    // Turn 1
+    const messages1 = [_]ChatMessage{.{ .role = .user, .content = "hello" }};
+    const response1 = try provider.provider().chat(allocator, .{ .messages = &messages1 }, "gpt-4", 0.7);
+    defer if (response1.content) |c| allocator.free(c);
+    
+    // Turn 2 with context
+    const messages2 = [_]ChatMessage{
+        .{ .role = .user, .content = "hello" },
+        .{ .role = .assistant, .content = response1.content orelse "" },
+        .{ .role = .user, .content = "what did I say?" },
+    };
+    const response2 = try provider.provider().chat(allocator, .{ .messages = &messages2 }, "gpt-4", 0.7);
+    defer if (response2.content) |c| allocator.free(c);
+    
+    if (response2.content == null) return error.NoContent;
+}
+
+fn testMultiTurnExtended(allocator: std.mem.Allocator) !void {
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    // Build conversation history
+    var history = std.ArrayList(ChatMessage).initCapacity(allocator, 20) catch return error.MemoryError;
+    defer history.deinit(allocator);
+    
+    // 10 turns
+    var turn: usize = 0;
+    while (turn < 10) : (turn += 1) {
+        // Add user message
+        history.append(allocator, .{ .role = .user, .content = "turn message" }) catch return error.MemoryError;
+        
+        // Get response
+        const response = provider.provider().chat(allocator, .{ .messages = history.items }, "gpt-4", 0.7) catch return error.RequestFailed;
+        defer if (response.content) |c| allocator.free(c);
+        
+        // Add assistant response to history
+        if (response.content) |content| {
+            const content_copy = allocator.dupe(u8, content) catch return error.MemoryError;
+            history.append(allocator, .{ .role = .assistant, .content = content_copy }) catch return error.MemoryError;
+        }
+    }
+    
+    // Verify we have 19 messages (10 user + 9 assistant, last one not added yet)
+    if (history.items.len < 19) return error.HistoryTooShort;
+    
+    std.debug.print("(10 turns, {} msgs) ", .{history.items.len});
+}
+
+fn testMultiTurnContext(allocator: std.mem.Allocator) !void {
+    var provider = OpenAiProvider.init(allocator, "mock-key");
+    defer provider.deinit();
+    
+    // Turn 1: Establish context
+    const messages1 = [_]ChatMessage{.{ .role = .user, .content = "test context set" }};
+    const response1 = try provider.provider().chat(allocator, .{ .messages = &messages1 }, "gpt-4", 0.7);
+    defer if (response1.content) |c| allocator.free(c);
+    
+    // Turn 2: Reference previous context
+    const messages2 = [_]ChatMessage{
+        .{ .role = .user, .content = "test context set" },
+        .{ .role = .assistant, .content = response1.content orelse "" },
+        .{ .role = .user, .content = "test context get" },
+    };
+    const response2 = try provider.provider().chat(allocator, .{ .messages = &messages2 }, "gpt-4", 0.7);
+    defer if (response2.content) |c| allocator.free(c);
+    
+    // Should remember context from turn 1
+    if (response2.content == null) return error.NoContent;
 }

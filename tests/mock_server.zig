@@ -137,6 +137,51 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     const has_ratelimit = std.mem.indexOf(u8, body, "test ratelimit") != null;
     const has_empty = std.mem.indexOf(u8, body, "test empty") != null;
     const has_streamfail = std.mem.indexOf(u8, body, "test streamfail") != null;
+    const has_tool_weather = std.mem.indexOf(u8, body, "test tool weather") != null;
+    const has_tool_error = std.mem.indexOf(u8, body, "test tool error") != null;
+    const has_tool_multiple = std.mem.indexOf(u8, body, "test tool multiple") != null;
+    const has_context_set = std.mem.indexOf(u8, body, "test context set") != null;
+    const has_context_get = std.mem.indexOf(u8, body, "test context get") != null;
+    
+    // Tool call scenarios
+    if (has_tool_weather) {
+        const response = 
+            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_tool_123","type":"function","function":{"name":"get_weather","arguments":"{\"location\":\"Tokyo\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}}
+        ;
+        try sendJson(stream, response, io);
+        return;
+    }
+    
+    if (has_tool_error) {
+        // Return tool call that would fail
+        try sendError(stream, 400, "Tool execution failed: invalid parameters", io);
+        return;
+    }
+    
+    if (has_tool_multiple) {
+        const response = 
+            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_multi_1","type":"function","function":{"name":"get_weather","arguments":"{\"location\":\"Tokyo\"}"}},{"id":"call_multi_2","type":"function","function":{"name":"get_time","arguments":"{\"timezone\":\"Asia/Tokyo\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":25,"completion_tokens":20,"total_tokens":45}}
+        ;
+        try sendJson(stream, response, io);
+        return;
+    }
+    
+    // Multi-turn context scenarios
+    if (has_context_set) {
+        const response = 
+            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Context established: session_12345"},"finish_reason":"stop"}],"usage":{"prompt_tokens":15,"completion_tokens":10,"total_tokens":25}}
+        ;
+        try sendJson(stream, response, io);
+        return;
+    }
+    
+    if (has_context_get) {
+        const response = 
+            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Retrieved context: session_12345 from previous turn"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":12,"total_tokens":32}}
+        ;
+        try sendJson(stream, response, io);
+        return;
+    }
     
     // Error scenarios
     if (has_malformed) {
