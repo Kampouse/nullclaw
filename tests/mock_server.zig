@@ -1,12 +1,19 @@
 const std = @import("std");
-const http_util = @import("http_util");
 
 /// Simple mock HTTP server for testing NullClaw providers
 /// Simulates OpenAI API responses without external dependencies
 
 pub fn main() !void {
     const port: u16 = 4010;
-    const io = http_util.getThreadedIo();
+    
+    // Initialize threaded IO properly
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+    
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
     
     const address = try std.Io.net.IpAddress.parse("127.0.0.1", port);
     var server = try address.listen(io, .{
@@ -34,9 +41,10 @@ fn handleConnection(stream: *std.Io.net.Stream, io: std.Io) !void {
     var read_buf: [8192]u8 = undefined;
     var conn_reader = stream.reader(io, &read_buf);
     
-    // Read request
-    const bytes_read = conn_reader.interface.readSliceShort(&read_buf) catch return error.ReadFailed;
+    // Read HTTP request - just read once and process
+    const bytes_read = conn_reader.interface.readSliceShort(read_buf[0..]) catch return error.ReadFailed;
     if (bytes_read == 0) return error.EmptyRequest;
+    
     const request = read_buf[0..bytes_read];
     
     // Parse HTTP request
@@ -77,25 +85,22 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     // Check message content for keywords
     const has_weather = std.mem.indexOf(u8, body, "weather") != null;
     const has_hello = std.mem.indexOf(u8, body, "hello") != null;
-    const has_error = std.mem.indexOf(u8, body, "test error") != null;
+    const has_error_msg = std.mem.indexOf(u8, body, "test error") != null;
     
-    if (has_error) {
-        // Return error
+    if (has_error_msg) {
         try sendError(stream, 500, "Mock error", io);
         return;
     }
     
     if (is_tool_result) {
-        // Return response after tool execution
         const response = 
-            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"The weather in Tokyo is currently sunny with a temperature of 22°C. Perfect day to be outside!"},"finish_reason":"stop"}],"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70}}
+            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"The weather in Tokyo is sunny, 22°C."},"finish_reason":"stop"}],"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70}}
         ;
         try sendJson(stream, response, io);
         return;
     }
     
     if (has_tools and has_weather) {
-        // Return tool call
         const response = 
             \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_mock123","type":"function","function":{"name":"get_weather","arguments":"{\"location\":\"Tokyo, Japan\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":30,"completion_tokens":15,"total_tokens":45}}
         ;
@@ -104,9 +109,8 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
     }
     
     if (has_hello) {
-        // Return simple greeting
         const response = 
-            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Hello! I'm a mock assistant for testing NullClaw."},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25}}
+            \\{"id":"chatcmpl-mock","object":"chat.completion","created":1234567890,"model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Hello! Mock assistant here."},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25}}
         ;
         try sendJson(stream, response, io);
         return;
@@ -122,7 +126,6 @@ fn handleChatCompletion(stream: *std.Io.net.Stream, body: []const u8, io: std.Io
 fn handleAnthropicMessages(stream: *std.Io.net.Stream, body: []const u8, io: std.Io) !void {
     _ = body;
     
-    // Simple Anthropic mock
     const response = 
         \\{"id":"msg_mock","type":"message","role":"assistant","content":[{"type":"text","text":"Mock Anthropic response."}],"model":"claude-3-sonnet","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}
     ;
@@ -138,6 +141,7 @@ fn sendJson(stream: *std.Io.net.Stream, json: []const u8, io: std.Io) !void {
         "Content-Type: application/json\r\n" ++
         "Content-Length: {}\r\n" ++
         "Access-Control-Allow-Origin: *\r\n" ++
+        "Connection: close\r\n" ++
         "\r\n" ++
         "{s}", 
         .{ json.len, json }
@@ -154,6 +158,7 @@ fn sendError(stream: *std.Io.net.Stream, code: u16, message: []const u8, io: std
         "HTTP/1.1 {} Error\r\n" ++
         "Content-Type: application/json\r\n" ++
         "Content-Length: {}\r\n" ++
+        "Connection: close\r\n" ++
         "\r\n" ++
         "{{\"error\":{{\"message\":\"{s}\",\"type\":\"mock_error\"}}}}", 
         .{ code, message.len + 40, message }
@@ -170,6 +175,7 @@ fn send404(stream: *std.Io.net.Stream, io: std.Io) !void {
         "HTTP/1.1 404 Not Found\r\n" ++
         "Content-Type: application/json\r\n" ++
         "Content-Length: 27\r\n" ++
+        "Connection: close\r\n" ++
         "\r\n" ++
         "{\"error\":\"Not found\"}"
     );
