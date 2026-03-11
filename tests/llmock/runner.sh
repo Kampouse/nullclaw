@@ -1,14 +1,13 @@
 #!/bin/bash
-# NullClaw Integration Test Runner with llmock
-# Usage: ./tests/llmock/runner.sh
+# NullClaw Integration Test Runner with native Zig mock server
+# Usage: ./tests/llmock/runner.sh [test-name]
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 PORT=4010
-LLMOCK_PID=""
+MOCK_PID=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -30,45 +29,33 @@ log_error() {
 
 # Cleanup function
 cleanup() {
-    if [ -n "$LLMOCK_PID" ]; then
-        log_info "Stopping llmock (PID: $LLMOCK_PID)..."
-        kill $LLMOCK_PID 2>/dev/null || true
-        wait $LLMOCK_PID 2>/dev/null || true
+    if [ -n "$MOCK_PID" ]; then
+        log_info "Stopping mock server (PID: $MOCK_PID)..."
+        kill $MOCK_PID 2>/dev/null || true
+        wait $MOCK_PID 2>/dev/null || true
     fi
 }
 
 # Register cleanup on exit
 trap cleanup EXIT
 
-# Check if npm is available
-if ! command -v npm &> /dev/null; then
-    log_error "npm is required but not installed"
-    exit 1
-fi
-
-# Install dependencies if needed
-if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
-    log_info "Installing dependencies..."
-    cd "$PROJECT_ROOT"
-    npm install --silent
-fi
-
-# Start llmock server
-log_info "Starting llmock server on port $PORT..."
+# Start Zig mock server
+log_info "Starting Zig mock server on port $PORT..."
 cd "$PROJECT_ROOT"
-npx llmock -p $PORT -f "$FIXTURES_DIR" &
-LLMOCK_PID=$!
+
+/Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build mock-server -- $PORT &
+MOCK_PID=$!
 
 # Wait for server to start
-sleep 2
+sleep 1
 
 # Check if server is running
-if ! kill -0 $LLMOCK_PID 2>/dev/null; then
-    log_error "Failed to start llmock server"
+if ! kill -0 $MOCK_PID 2>/dev/null; then
+    log_error "Failed to start mock server"
     exit 1
 fi
 
-log_info "llmock server started at http://localhost:$PORT"
+log_info "Mock server started at http://localhost:$PORT"
 
 # Set environment variables for Zig tests
 export OPENAI_BASE_URL="http://localhost:$PORT/v1/chat/completions"
@@ -101,13 +88,3 @@ else
     cd "$PROJECT_ROOT"
     /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build test-integration 2>&1
 fi
-
-TEST_EXIT_CODE=$?
-
-if [ $TEST_EXIT_CODE -eq 0 ]; then
-    log_info "All tests passed!"
-else
-    log_error "Tests failed with exit code $TEST_EXIT_CODE"
-fi
-
-exit $TEST_EXIT_CODE

@@ -836,6 +836,28 @@ pub fn build(b: *std.Build) void {
         
         const tool_call_test_run = b.addRunArtifact(tool_call_test_exe);
         tool_call_test_step.dependOn(&tool_call_test_run.step);
+        
+        // Mock server for testing
+        const mock_server_step = b.step("mock-server", "Start mock HTTP server for testing");
+        
+        const mock_server_exe = b.addExecutable(.{
+            .name = "nullclaw-mock-server",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/mock_server.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "compat", .module = b.createModule(.{
+                        .root_source_file = b.path("src/compat.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                    })},
+                },
+            }),
+        });
+        
+        const mock_server_run = b.addRunArtifact(mock_server_exe);
+        mock_server_step.dependOn(&mock_server_run.step);
     }
 }
 
