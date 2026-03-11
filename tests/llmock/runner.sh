@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PORT=4010
 MOCK_PID=""
+ZIG="/Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig"
 
 # Colors for output
 RED='\033[0;31m'
@@ -17,10 +18,6 @@ NC='\033[0m' # No Color
 
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
 log_error() {
@@ -39,19 +36,28 @@ cleanup() {
 # Register cleanup on exit
 trap cleanup EXIT
 
-# Build and start Zig mock server
+# Build mock server executable
 log_info "Building mock server..."
 cd "$PROJECT_ROOT"
-/Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build mock-server 2>&1 | grep -v "^error\|Build Summary\|failed command" || true
 
-# Check if build succeeded
-if [ ! -f ".zig-cache/o/5d4f36dbe9469c18cee00c50e60a0011/nullclaw-mock-server" ]; then
+$ZIG build-exe \
+    -ODebug \
+    --dep http_util \
+    -Mroot=tests/mock_server.zig \
+    -Mhttp_util=src/http_util.zig \
+    --name mock-server \
+    2>&1 | grep -E "error:" && exit 1 || true
+
+if [ ! -f "mock-server" ]; then
     log_error "Mock server build failed"
     exit 1
 fi
 
+log_info "Mock server built successfully"
+
+# Start mock server in background
 log_info "Starting mock server on port $PORT..."
-./.zig-cache/o/5d4f36dbe9469c18cee00c50e60a0011/nullclaw-mock-server &
+./mock-server &
 MOCK_PID=$!
 
 # Wait for server to start
@@ -73,8 +79,7 @@ export OPENAI_API_KEY="mock-key"
 export ANTHROPIC_API_KEY="mock-key"
 export GEMINI_API_KEY="mock-key"
 
-log_info "Environment variables set:"
-log_info "  OPENAI_BASE_URL=$OPENAI_BASE_URL"
+log_info "Environment: OPENAI_BASE_URL=$OPENAI_BASE_URL"
 
 # Run test
 cd "$PROJECT_ROOT"
@@ -82,12 +87,12 @@ cd "$PROJECT_ROOT"
 if [ -n "$1" ]; then
     if [ "$1" = "tool-calls" ]; then
         log_info "Running tool calling test..."
-        /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build test-tool-calls 2>&1
+        $ZIG build test-tool-calls 2>&1
     else
         log_error "Unknown test: $1"
         exit 1
     fi
 else
     log_info "Running all integration tests..."
-    /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build test-integration 2>&1
+    $ZIG build test-integration 2>&1
 fi
