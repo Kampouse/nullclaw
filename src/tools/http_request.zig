@@ -115,6 +115,13 @@ pub const HttpRequestTool = struct {
         // Build extra headers from custom headers
         var extra_headers_buf: [32]std.http.Header = undefined;
         var extra_count: usize = 0;
+
+        // Add default User-Agent header to avoid API blocking
+        if (extra_count < extra_headers_buf.len) {
+            extra_headers_buf[extra_count] = .{ .name = "User-Agent", .value = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" };
+            extra_count += 1;
+        }
+
         for (custom_headers) |h| {
             if (extra_count >= extra_headers_buf.len) break;
             extra_headers_buf[extra_count] = .{ .name = h[0], .value = h[1] };

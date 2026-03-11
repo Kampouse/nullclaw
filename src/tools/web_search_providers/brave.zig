@@ -26,6 +26,7 @@ pub fn execute(
     const headers = [_][]const u8{
         auth_header,
         "Accept: application/json",
+        "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     };
 
     const body = common.curlGet(allocator, url_str, &headers, timeout_str) catch |err| {
