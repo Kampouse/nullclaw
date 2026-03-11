@@ -1224,3 +1224,218 @@ test "reloadSkillsAll does not affect session count" {
     _ = sm.reloadSkillsAll();
     try testing.expectEqual(@as(usize, 2), sm.sessionCount());
 }
+
+// ---------------------------------------------------------------------------
+// 7. Edge Case Tests
+// ---------------------------------------------------------------------------
+
+test "getOrCreate with empty session key" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    // Empty key should work (creates a session with empty key)
+    const session = try sm.getOrCreate("");
+    try testing.expectEqualStrings("", session.session_key);
+}
+
+test "getOrCreate with very long session key" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    // 1KB session key
+    var long_key: [1024]u8 = undefined;
+    @memset(&long_key, 'x');
+    long_key[0..9].* = "long_key_".*;
+    
+    const session = try sm.getOrCreate(&long_key);
+    try testing.expectEqual(@as(usize, 1024), session.session_key.len);
+}
+
+test "getOrCreate with unicode session key" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    // Unicode key (emoji, CJK)
+    const unicode_key = "session_😀_日本語_🎉";
+    const session = try sm.getOrCreate(unicode_key);
+    try testing.expectEqualStrings(unicode_key, session.session_key);
+}
+
+test "getOrCreate with special characters in key" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    // Special chars
+    const special_key = "session/a\\b:c*d?e\"f<g>h|i";
+    const session = try sm.getOrCreate(special_key);
+    try testing.expectEqualStrings(special_key, session.session_key);
+}
+
+test "session deinit frees session_key memory" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    // Create session with long key
+    var long_key: [4096]u8 = undefined;
+    @memset(&long_key, 'k');
+    
+    _ = try sm.getOrCreate(&long_key);
+    try testing.expectEqual(@as(usize, 1), sm.sessionCount());
+    
+    // Evict should free the session_key
+    const evicted = sm.evictIdle(0); // Evict all
+    try testing.expectEqual(@as(usize, 1), evicted);
+    try testing.expectEqual(@as(usize, 0), sm.sessionCount());
+}
+
+test "processMessage with very long content" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    // 100KB message
+    var huge_msg: [102400]u8 = undefined;
+    @memset(&huge_msg, 'x');
+    huge_msg[0..5].* = "hello".*;
+    
+    const response = try sm.processMessage("big", &huge_msg, null);
+    defer testing.allocator.free(response);
+    try testing.expectEqualStrings("ok", response);
+}
+
+test "processMessage with empty content" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    const response = try sm.processMessage("empty", "", null);
+    defer testing.allocator.free(response);
+    try testing.expectEqualStrings("ok", response);
+}
+
+test "processMessage with null conversation_context" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    const response = try sm.processMessage("no-ctx", "hello", null);
+    defer testing.allocator.free(response);
+    try testing.expectEqualStrings("ok", response);
+}
+
+test "sessionCount after evictIdle" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    _ = try sm.getOrCreate("count:a");
+    _ = try sm.getOrCreate("count:b");
+    _ = try sm.getOrCreate("count:c");
+    try testing.expectEqual(@as(usize, 3), sm.sessionCount());
+    
+    _ = sm.evictIdle(0);
+    try testing.expectEqual(@as(usize, 0), sm.sessionCount());
+}
+
+test "session created_at timestamp is reasonable" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    const session = try sm.getOrCreate("timestamp");
+    
+    // Timestamp should be positive (after year 2000)
+    try testing.expect(session.created_at > 946684800);
+}
+
+test "session last_active updates on processMessage" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    const session = try sm.getOrCreate("active");
+    const initial_active = session.last_active;
+    
+    _ = try sm.processMessage("active", "test", null);
+    
+    // last_active should be >= initial (might be same if fast)
+    try testing.expect(session.last_active >= initial_active);
+}
+
+test "concurrent processMessage same session is serialized" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    defer sm.deinit();
+
+    const SharedCtx = struct {
+        sm: *SessionManager,
+        errors: std.atomic.Value(usize),
+    };
+    
+    var ctx = SharedCtx{
+        .sm = &sm,
+        .errors = std.atomic.Value(usize).init(0),
+    };
+    
+    const num_threads = 5;
+    var threads: [num_threads]std.Thread = undefined;
+    
+    for (&threads) |*thread| {
+        thread.* = std.Thread.spawn(.{}, struct {
+            fn run(c: *SharedCtx) void {
+                const resp = c.sm.processMessage("same", "concurrent", null) catch {
+                    _ = c.errors.fetchAdd(1, .monotonic);
+                    return;
+                };
+                testing.allocator.free(resp);
+            }
+        }.run, .{&ctx}) catch continue;
+    }
+    
+    for (&threads) |*thread| {
+        thread.join();
+    }
+    
+    // All should succeed (mutex serializes access)
+    try testing.expectEqual(@as(usize, 0), ctx.errors.load(.monotonic));
+    
+    // Session should have 5 turns
+    const session = try sm.getOrCreate("same");
+    try testing.expectEqual(@as(u64, 5), session.turn_count);
+}
+
+test "deinit clears all sessions" {
+    var mock = MockProvider{ .response = "ok" };
+    const cfg = testConfig();
+    var sm = testSessionManager(testing.allocator, &mock, &cfg);
+    
+    // Create many sessions
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        var key_buf: [32]u8 = undefined;
+        const key = std.fmt.bufPrint(&key_buf, "deinit:{}", .{i}) catch unreachable;
+        _ = try sm.getOrCreate(key);
+    }
+    
+    try testing.expectEqual(@as(usize, 100), sm.sessionCount());
+    
+    // deinit should free all without leaks
+    sm.deinit();
+}
