@@ -23,8 +23,10 @@ pub fn main() !void {
     
     std.debug.print("NullClaw Mock Server listening on http://127.0.0.1:{}\n", .{port});
     std.debug.print("Endpoints:\n", .{});
-    std.debug.print("  POST /v1/chat/completions - Chat completion\n", .{});
-    std.debug.print("  POST /v1/messages - Anthropic messages\n", .{});
+    std.debug.print("  POST /v1/chat/completions - OpenAI chat completion\n", .{});
+    std.debug.print("  POST /v1/messages        - Anthropic messages\n", .{});
+    std.debug.print("  POST /api/chat           - Ollama chat\n", .{});
+    std.debug.print("  POST /api/generate       - Ollama generate\n", .{});
     std.debug.print("\n", .{});
     
     while (true) {
@@ -106,6 +108,8 @@ fn handleConnection(stream: *std.Io.net.Stream, io: std.Io) !void {
             try handleChatCompletion(stream, body, io);
         } else if (std.mem.startsWith(u8, path, "/v1/messages")) {
             try handleAnthropicMessages(stream, body, io);
+        } else if (std.mem.startsWith(u8, path, "/api/chat") or std.mem.startsWith(u8, path, "/api/generate")) {
+            try handleOllamaRequest(stream, body, io);
         } else {
             try send404(stream, io);
         }
@@ -230,6 +234,80 @@ fn handleAnthropicMessages(stream: *std.Io.net.Stream, body: []const u8, io: std
         \\{"id":"msg_mock","type":"message","role":"assistant","content":[{"type":"text","text":"Mock Anthropic response."}],"model":"claude-3-sonnet","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}
     ;
     try sendJson(stream, response, io);
+}
+
+/// Handle Ollama API requests (/api/chat or /api/generate)
+fn handleOllamaRequest(stream: *std.Io.net.Stream, body: []const u8, io: std.Io) !void {
+    // Check for streaming request
+    const is_streaming = std.mem.indexOf(u8, body, "\"stream\":true") != null or
+        std.mem.indexOf(u8, body, "\"stream\": true") != null;
+    
+    // Check message content for keywords
+    const has_hello = std.mem.indexOf(u8, body, "hello") != null;
+    const has_error = std.mem.indexOf(u8, body, "test error") != null;
+    
+    if (has_error) {
+        try sendError(stream, 500, "Mock error", io);
+        return;
+    }
+    
+    const content = if (has_hello) "Hello! Mock Ollama response." else "Default mock Ollama response.";
+    
+    if (is_streaming) {
+        try sendOllamaStreaming(stream, content, io);
+    } else {
+        // Ollama non-streaming response format
+        var response_buf: [1024]u8 = undefined;
+        const response = std.fmt.bufPrint(&response_buf,
+            \\{{"model":"mock-llama","created_at":"2024-01-01T00:00:00Z","message":{{"role":"assistant","content":"{s}"}},"done":true,"total_duration":500000000,"load_duration":100000000,"prompt_eval_count":10,"eval_count":20}}
+        , .{content}) catch return error.ResponseTooLong;
+        try sendJson(stream, response, io);
+    }
+}
+
+/// Send Ollama streaming response (newline-delimited JSON, not SSE)
+fn sendOllamaStreaming(stream: *std.Io.net.Stream, content: []const u8, io: std.Io) !void {
+    var write_buf: [16384]u8 = undefined;
+    var conn_writer = stream.writer(io, &write_buf);
+    
+    // Send headers (Ollama uses plain JSON streaming, not SSE)
+    try std.Io.Writer.writeAll(&conn_writer.interface, 
+        "HTTP/1.1 200 OK\r\n" ++
+        "Content-Type: application/x-ndjson\r\n" ++
+        "Cache-Control: no-cache\r\n" ++
+        "Connection: keep-alive\r\n" ++
+        "\r\n"
+    );
+    try std.Io.Writer.flush(&conn_writer.interface);
+    
+    // Stream content in chunks
+    const chunk_size = 5;
+    var pos: usize = 0;
+    
+    while (pos < content.len) {
+        const end = @min(pos + chunk_size, content.len);
+        const chunk = content[pos..end];
+        
+        // Ollama streaming format: newline-delimited JSON
+        var chunk_buf: [512]u8 = undefined;
+        const chunk_json = std.fmt.bufPrint(&chunk_buf,
+            \\{{"model":"mock-llama","created_at":"2024-01-01T00:00:00Z","message":{{"role":"assistant","content":"{s}"}},"done":false}}
+            \\
+        , .{chunk}) catch continue;
+        
+        try std.Io.Writer.writeAll(&conn_writer.interface, chunk_json);
+        try std.Io.Writer.flush(&conn_writer.interface);
+        
+        pos = end;
+    }
+    
+    // Send final done message
+    const done_msg = 
+        \\{"model":"mock-llama","created_at":"2024-01-01T00:00:00Z","done":true,"total_duration":500000000,"load_duration":100000000,"prompt_eval_count":10,"eval_count":20}
+        \\
+    ;
+    try std.Io.Writer.writeAll(&conn_writer.interface, done_msg);
+    try std.Io.Writer.flush(&conn_writer.interface);
 }
 
 fn sendJson(stream: *std.Io.net.Stream, json: []const u8, io: std.Io) !void {
