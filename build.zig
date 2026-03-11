@@ -792,6 +792,28 @@ pub fn build(b: *std.Build) void {
 
         // Add summary to auto-discovery (runs after all tests)
         auto_discovery_step.dependOn(&summary_footer.step);
+        
+        // ---------- Integration Tests with llmock ----------
+        const integration_test_step = b.step("test-integration", "Run integration tests with llmock mock server");
+        
+        const integration_test_exe = b.addExecutable(.{
+            .name = "nullclaw-integration-tests",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/integration/runtime_main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "nullclaw", .module = lib_mod.? },
+                },
+            }),
+        });
+        
+        if (sqlite3) |lib| {
+            integration_test_exe.root_module.linkLibrary(lib);
+        }
+        
+        const integration_test_run = b.addRunArtifact(integration_test_exe);
+        integration_test_step.dependOn(&integration_test_run.step);
     }
 }
 

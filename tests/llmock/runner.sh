@@ -85,14 +85,16 @@ log_info "  GEMINI_BASE_URL=$GEMINI_BASE_URL"
 
 # Run Zig integration tests
 log_info "Running Zig integration tests..."
-cd "$PROJECT_ROOT"
 
 if [ -n "$1" ]; then
-    # Run specific test file
-    zig test "$1"
+    # Run specific test file (not supported with build system)
+    log_error "Specific test files not supported with integration tests"
+    log_info "Run all integration tests with: ./tests/llmock/runner.sh"
+    exit 1
 else
-    # Run all integration tests
-    zig build test-integration 2>/dev/null || zig test tests/integration/*.zig
+    # Run all integration tests using zig build with correct Zig version
+    cd "$PROJECT_ROOT"
+    /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig build test-integration 2>&1
 fi
 
 TEST_EXIT_CODE=$?

@@ -2,7 +2,7 @@
   "fixtures": [
     {
       "match": { "userMessage": "hello" },
-      "response": { "content": "Hello! I'm a mock assistant." }
+      "response": { "content": "Hello! I'm a mock assistant for testing NullClaw runtime." }
     },
     {
       "match": { "userMessage": "test tool" },
@@ -17,8 +17,16 @@
       "response": { "error": { "message": "Mock error", "type": "test_error" }, "status": 500 }
     },
     {
+      "match": { "userMessage": "what did I just say?" },
+      "response": { "content": "You just said hello. This is a multi-turn conversation test." }
+    },
+    {
+      "match": { "userMessage": "remember this" },
+      "response": { "content": "I'll remember that for this session." }
+    },
+    {
       "match": { "predicate": "() => true" },
-      "response": { "content": "Default mock response" }
+      "response": { "content": "Default mock response from NullClaw test fixtures." }
     }
   ]
 }
