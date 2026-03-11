@@ -6,17 +6,21 @@
 set -e
 
 # Parse flags
-RELEASE_BUILD=true
+RELEASE_BUILD=false  # Default to debug mode for trace output
 NO_START=false
 SHOW_HELP=false
+ENABLE_TRACE=true
 
 for arg in "$@"; do
     case $arg in
         --help|-h)
             SHOW_HELP=true
             ;;
-        --debug|-d)
-            RELEASE_BUILD=false
+        --release|-r)
+            RELEASE_BUILD=true
+            ;;
+        --no-trace)
+            ENABLE_TRACE=false
             ;;
         --no-start|-n)
             NO_START=true
@@ -39,18 +43,24 @@ Usage:
 
 Options:
   -h, --help       Show this help message
-  -d, --debug      Build in debug mode (larger binary, faster compile)
+  -r, --release    Build in release mode (no trace output, smaller binary)
+  --no-trace       Disable detailed trace logging (default: enabled)
   -n, --no-start   Build but don't start the bot
 
 Examples:
-  $0                    Build release and start Telegram bot (default)
-  $0 --debug            Build debug and start Telegram bot
-  $0 -n                 Build release, don't start
-  $0 --debug -n         Build debug, don't start
+  $0                    Build debug with trace and start Telegram bot (default)
+  $0 --release        Build release without trace and start Telegram bot
+  $0 --no-trace       Build debug without trace logging
+  $0 -n               Build but don't start
+  $0 --release -n     Build release, don't start
 
 Binary sizes:
-  Release:  ~3.2M (optimized)
-  Debug:    ~26M   (faster compile)
+  Debug:    ~26M   (faster compile, includes trace output)
+  Release:  ~3.2M  (optimized, no trace output)
+
+Trace output:
+  Debug builds include detailed [TRACE] logging for debugging
+  Release builds have no trace output for better performance
 EOF
     exit 0
 fi
@@ -68,10 +78,10 @@ echo ""
 # Step 1: Build first (safer - keeps old process running if build fails)
 echo -e "${YELLOW}→ Step 1: Building nullclaw...${NC}"
 if [ "$RELEASE_BUILD" = true ]; then
-    echo -e "${BLUE}Building with ReleaseSmall optimization...${NC}"
+    echo -e "${BLUE}Building with ReleaseSmall optimization (no trace output)...${NC}"
     zig build -Doptimize=ReleaseSmall
 else
-    echo -e "${BLUE}Building with debug settings...${NC}"
+    echo -e "${BLUE}Building debug mode with trace output enabled...${NC}"
     zig build
 fi
 
@@ -88,6 +98,11 @@ VERSION_INFO=$(./zig-out/bin/nullclaw --version 2>&1)
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BLUE}Version:${NC}   ${VERSION_INFO}"
 echo -e "${BLUE}Binary:${NC}    ./zig-out/bin/nullclaw (${BINARY_SIZE})"
+if [ "$RELEASE_BUILD" = false ]; then
+    echo -e "${GREEN}Trace:${NC}     ENABLED - detailed [TRACE] logging will be shown"
+else
+    echo -e "${YELLOW}Trace:${NC}     DISABLED - optimized for performance"
+fi
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 

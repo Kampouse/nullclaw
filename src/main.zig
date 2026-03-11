@@ -1880,6 +1880,71 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         std.process.exit(1);
     }
 
+    // Single instance enforcement: check if Telegram channel is already running
+    var pid_file_path_buf: [1024]u8 = undefined;
+    const pid_file_path = try std.fmt.bufPrintZ(&pid_file_path_buf, "{s}/.nullclaw-telegram.pid", .{config.workspace_dir});
+
+    // Check if another instance is already running using C system calls
+    const existing_pid = blk: {
+        const flags: std.c.O = @bitCast(@as(u32, 0)); // O_RDONLY = 0
+        const fd = std.c.open(pid_file_path, flags, @as(c_uint, 0));
+        if (fd < 0) {
+            // Failed to open, assume no PID file exists
+            break :blk null;
+        }
+        defer _ = std.c.close(fd);
+
+        var pid_buf: [20]u8 = undefined;
+        const bytes_read = std.c.read(fd, &pid_buf, pid_buf.len);
+        if (bytes_read <= 0) {
+            break :blk null;
+        }
+
+        const content = pid_buf[0..@as(usize, @intCast(bytes_read))];
+        const pid_str = std.mem.trim(u8, content, &.{'\n', '\r'});
+        const pid = std.fmt.parseInt(u32, pid_str, 10) catch 0;
+        break :blk pid;
+    };
+
+    if (existing_pid) |pid| {
+        if (pid > 0) {
+            // Check if process is still running by sending signal 0
+            const sig: std.c.SIG = @enumFromInt(@as(u32, 0));
+            const result = std.c.kill(@as(i32, @intCast(pid)), sig);
+            const is_running = result == 0;
+
+            if (is_running) {
+                std.log.err("Telegram channel is already running (PID {d}). Exiting to prevent duplicate instances.", .{pid});
+                std.process.exit(1);
+            }
+        }
+    }
+
+    // Write our PID file using C system calls
+    {
+        // O_WRONLY = 1, O_CREAT = 64, O_TRUNC = 512
+        const flags: std.c.O = @bitCast(@as(u32, 1 | 64 | 512));
+        const fd = std.c.open(pid_file_path, flags, @as(c_uint, 0o644));
+        if (fd < 0) {
+            std.log.err("Failed to create PID file", .{});
+            std.process.exit(1);
+        }
+        defer _ = std.c.close(fd);
+
+        const pid = if (builtin.os.tag == .linux) @as(u32, @intCast(std.os.linux.getpid())) else if (builtin.os.tag == .macos) @as(u32, @intCast(std.c.getpid())) else 0;
+        var pid_str_buf: [20]u8 = undefined;
+        const pid_str = try std.fmt.bufPrintZ(&pid_str_buf, "{d}\n", .{pid});
+
+        // Calculate string length (find null terminator)
+        var len: usize = 0;
+        while (len < pid_str_buf.len and pid_str_buf[len] != 0) : (len += 1) {}
+
+        const written = std.c.write(fd, pid_str.ptr, len);
+        if (written < 0) {
+            std.log.warn("Failed to write PID file: {}", .{written});
+        }
+    }
+
     // Determine allowed users: --user CLI args override config allow_from
     var user_list: std.ArrayList([]const u8) = .empty;
     defer user_list.deinit(allocator);
