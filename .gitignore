@@ -1,20 +1,22 @@
-zig-out/
-zig-cache/
-.zig-cache/
-*.db
-*.db-journal
-.DS_Store
-.env
-.env.*
-!.env.example
-!.env.signal.example
-*.swp
-*~
-*.bak
-*.a
-reference/
+# Dependencies
+node_modules/
 
-result
-.direnv/
-.worktrees
-config.signal.json
+# Build artifacts
+.zig-cache/
+zig-out/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local

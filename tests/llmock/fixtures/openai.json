@@ -1,0 +1,24 @@
+{
+  "fixtures": [
+    {
+      "match": { "userMessage": "hello" },
+      "response": { "content": "Hello! I'm a mock assistant." }
+    },
+    {
+      "match": { "userMessage": "test tool" },
+      "response": {
+        "toolCalls": [
+          { "name": "shell", "arguments": "{\"command\":\"echo test\"}" }
+        ]
+      }
+    },
+    {
+      "match": { "userMessage": "test error" },
+      "response": { "error": { "message": "Mock error", "type": "test_error" }, "status": 500 }
+    },
+    {
+      "match": { "predicate": "() => true" },
+      "response": { "content": "Default mock response" }
+    }
+  ]
+}
