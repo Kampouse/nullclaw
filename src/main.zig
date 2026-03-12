@@ -81,6 +81,26 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
 
     const allocator = std.heap.smp_allocator;
 
+    // CRITICAL: Create proper I/O instance for production use
+    // std.Options.debug_io has a failing allocator (see Io/Threaded.zig:1622)
+    // which causes OutOfMemory when processes are spawned
+    var app_io = std.Io.Threaded{
+        .allocator = allocator,
+        .stack_size = std.Thread.SpawnConfig.default_stack_size,
+        .async_limit = .nothing,
+        .cpu_count_error = null,
+        .concurrent_limit = .nothing,
+        .old_sig_io = undefined,
+        .old_sig_pipe = undefined,
+        .have_signal_handler = false,
+        .argv0 = .empty,
+        .environ_initialized = true,
+        .environ = .empty,
+        .worker_threads = .init(null),
+        .disable_memory_mapping = false,
+    };
+    const io = app_io.ioBasic();
+
     // Initialize tracing system FIRST
     yc.trace_simple.init(allocator, .info);
     defer yc.trace_simple.deinit();
@@ -119,7 +139,7 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
         .onboard => try runOnboard(allocator, sub_args),
         .doctor => try yc.doctor.run(allocator),
         .help => printUsage(),
-        .gateway => try runGateway(allocator, sub_args),
+        .gateway => try runGateway(allocator, sub_args, io),
         .service => try runService(allocator, sub_args),
         .cron => try runCron(allocator, sub_args),
         .channel => try runChannel(allocator, sub_args),
@@ -173,7 +193,7 @@ fn applyGatewayDaemonOverrides(cfg: *yc.config.Config, sub_args: []const []const
 
 // ── Gateway ──────────────────────────────────────────────────────
 
-fn runGateway(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
+fn runGateway(allocator: std.mem.Allocator, sub_args: []const []const u8, io: std.Io) !void {
     var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
@@ -190,7 +210,7 @@ fn runGateway(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
         std.process.exit(1);
     };
 
-    try yc.daemon.run(allocator, &cfg, cfg.gateway.host, cfg.gateway.port);
+    try yc.daemon.run(allocator, &cfg, cfg.gateway.host, cfg.gateway.port, io);
 }
 
 // ── Service ──────────────────────────────────────────────────────

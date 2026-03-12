@@ -114,6 +114,7 @@ const GatewayThreadObserver = struct {
     mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
     next_seq: u64 = 0,
     events: std.ArrayListUnmanaged(GatewayObservedToolEvent) = .empty,
+    io: std.Io,
 
     const vtable = observability.Observer.VTable{
         .record_event = recordEvent,
@@ -122,13 +123,13 @@ const GatewayThreadObserver = struct {
         .name = name,
     };
 
-    pub fn init(allocator: std.mem.Allocator) GatewayThreadObserver {
-        return .{ .allocator = allocator };
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) GatewayThreadObserver {
+        return .{ .allocator = allocator, .io = io };
     }
 
     pub fn deinit(self: *GatewayThreadObserver) void {
-        self.mutex.lock(std.Options.debug_io) catch return;
-        defer self.mutex.unlock(std.Options.debug_io);
+        self.mutex.lock(self.io) catch return;
+        defer self.mutex.unlock(self.io);
         for (self.events.items) |event| {
             self.allocator.free(event.tool);
         }
@@ -143,9 +144,8 @@ const GatewayThreadObserver = struct {
     }
 
     pub fn currentSeq(self: *GatewayThreadObserver) u64 {
-        const io = std.Options.debug_io;
-        self.mutex.lockUncancelable(io);
-        defer self.mutex.unlock(io);
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         return self.next_seq;
     }
 
@@ -154,9 +154,8 @@ const GatewayThreadObserver = struct {
         allocator: std.mem.Allocator,
         seq: u64,
     ) ![]GatewayTurnToolEvent {
-        const io = std.Options.debug_io;
-        self.mutex.lock(io) catch return error.MutexLockFailed;
-        defer self.mutex.unlock(io);
+        self.mutex.lock(self.io) catch return error.MutexLockFailed;
+        defer self.mutex.unlock(self.io);
 
         var count: usize = 0;
         for (self.events.items) |event| {
@@ -1551,7 +1550,7 @@ pub fn processIncomingMessage(allocator: std.mem.Allocator, message: []const u8)
 }
 
 /// Send a reply to a Telegram chat using the Bot API.
-pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, chat_id: i64, text: []const u8) !void {
+pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, chat_id: i64, text: []const u8, io: std.Io) !void {
     // Build the curl command to call the Telegram API
     const url = try std.fmt.allocPrint(allocator, "https://api.telegram.org/bot{s}/sendMessage", .{bot_token});
     defer allocator.free(url);
@@ -1581,7 +1580,6 @@ pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, ch
         url,
     };
 
-    const io = std.Options.debug_io;
     var curl_child = std.process.spawn(io, .{
         .argv = &argv,
         .stdout = .pipe,
@@ -1622,6 +1620,7 @@ const WebhookHandlerContext = struct {
     config_opt: ?*const Config,
     state: *GatewayState,
     session_mgr_opt: ?*session_mod.SessionManager,
+    io: std.Io,
     response_status: []const u8 = "200 OK",
     response_body: []const u8 = "",
 };
@@ -1714,14 +1713,14 @@ fn handleTelegramWebhookRoute(ctx: *WebhookHandlerContext) void {
                 const sk = telegramSessionKeyRouted(ctx.req_allocator, &kb, chat_id.?, b, tg_cfg_opt, tg_account_id);
                 const reply: ?[]const u8 = sm.processMessage(sk, msg_text.?, null) catch |err| blk: {
                     if (tg_bot_token.len > 0) {
-                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, userFacingAgentError(err)) catch {};
+                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, userFacingAgentError(err), ctx.io) catch {};
                     }
                     break :blk null;
                 };
                 if (reply) |r| {
                     defer ctx.root_allocator.free(r);
                     if (tg_bot_token.len > 0) {
-                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, r) catch {};
+                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, r, ctx.io) catch {};
                     }
                     ctx.response_body = "{\"status\":\"ok\"}";
                 } else {
@@ -2478,7 +2477,7 @@ fn handleQqWebhookRoute(ctx: *WebhookHandlerContext) void {
 /// Run the HTTP gateway. Binds to host:port and serves HTTP requests.
 /// Endpoints: GET /health, GET /ready, POST /pair, POST /webhook, GET|POST /whatsapp, POST /telegram, POST /slack/events, POST /line, POST /lark, POST /qq
 /// If config_ptr is null, loads config internally (for backward compatibility).
-pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr: ?*const Config, event_bus: ?*bus_mod.Bus) !void {
+pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr: ?*const Config, event_bus: ?*bus_mod.Bus, io: std.Io) !void {
     health.markComponentOk("gateway");
 
     var state = GatewayState.init(allocator);
@@ -2505,7 +2504,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     var subagent_manager_opt: ?*subagent_mod.SubagentManager = null;
     var sec_tracker_opt: ?security.RateTracker = null;
     var sec_policy_opt: ?security.SecurityPolicy = null;
-    var gateway_thread_observer = GatewayThreadObserver.init(allocator);
+    var gateway_thread_observer = GatewayThreadObserver.init(allocator, io);
     defer gateway_thread_observer.deinit();
     const needs_local_agent = event_bus == null;
 
@@ -2700,6 +2699,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 .config_opt = config_opt,
                 .state = &state,
                 .session_mgr_opt = if (session_mgr_opt) |*sm| sm else null,
+                .io = io,
             };
             desc.handler(&webhook_ctx);
             response_status = webhook_ctx.response_status;
@@ -2714,6 +2714,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 .config_opt = config_opt,
                 .state = &state,
                 .session_mgr_opt = if (session_mgr_opt) |*sm| sm else null,
+                .io = io,
             };
             handleSlackWebhookRoute(&webhook_ctx);
             response_status = webhook_ctx.response_status;
@@ -3539,6 +3540,7 @@ test "handleQqWebhookRoute rejects invalid json payload" {
         .config_opt = &cfg,
         .state = &state,
         .session_mgr_opt = null,
+        .io = std.testing.io,
     };
 
     handleQqWebhookRoute(&ctx);

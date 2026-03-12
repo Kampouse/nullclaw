@@ -157,9 +157,9 @@ pub fn resetShutdownRequested() void {
 }
 
 /// Gateway thread entry point.
-fn gatewayThread(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16, state: *DaemonState, event_bus: *bus_mod.Bus) void {
+fn gatewayThread(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16, state: *DaemonState, event_bus: *bus_mod.Bus, io: std.Io) void {
     const gateway = @import("gateway.zig");
-    gateway.run(allocator, host, port, config, event_bus) catch |err| {
+    gateway.run(allocator, host, port, config, event_bus, io) catch |err| {
         state.markError("gateway", @errorName(err));
         health.markComponentError("gateway", @errorName(err));
         return;
@@ -653,6 +653,7 @@ fn inboundDispatcherThread(
     registry: *const dispatch.ChannelRegistry,
     runtime: *channel_loop.ChannelRuntime,
     state: *DaemonState,
+    io: std.Io,
 ) void {
     var evict_counter: u32 = 0;
 
@@ -759,7 +760,7 @@ fn inboundDispatcherThread(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(runtime.config.agent.session_idle_timeout_secs, std.Options.debug_io);
+            _ = runtime.session_mgr.evictIdle(runtime.config.agent.session_idle_timeout_secs, io);
         }
     }
 }
@@ -768,19 +769,19 @@ fn inboundDispatcherThread(
 /// Spawns threads for gateway, heartbeat, and channels, then loops until
 /// shutdown is requested (Ctrl+C signal or explicit request).
 /// `host` and `port` are CLI-parsed values that override `config.gateway`.
-pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16) !void {
+pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16, io: std.Io) !void {
     var main_span = trace.startSpan(.daemon, "run") orelse {
         // Continue without tracing if it fails
-        return runInternal(allocator, config, host, port, null);
+        return runInternal(allocator, config, host, port, null, io);
     };
     defer main_span.end();
-    
+
     trace.info(.daemon, "Starting daemon on {s}:{}", .{ host, port });
-    
-    return runInternal(allocator, config, host, port, &main_span);
+
+    return runInternal(allocator, config, host, port, &main_span, io);
 }
 
-fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16, main_span: ?*trace.Span) !void {
+fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []const u8, port: u16, main_span: ?*trace.Span, io: std.Io) !void {
     _ = main_span;
 
     // Single instance enforcement: check if gateway is already running
@@ -920,7 +921,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     defer if (gw_span) |*s| trace.endSpan(s);
     
     state.markRunning("gateway");
-    const gw_thread = std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus }) catch |err| {
+    const gw_thread = std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus, io }) catch |err| {
         state.markError("gateway", @errorName(err));
         trace.err(.gateway, "Failed to spawn: {}", .{err});
         try stdout.print("Failed to spawn gateway: {}\n", .{err});
@@ -975,7 +976,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     var chan_thread: ?std.Thread = null;
     if (has_supervised_channels) {
         if (std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, channelSupervisorThread, .{
-            allocator, config, &state, &channel_registry, channel_rt, &event_bus, std.Options.debug_io,
+            allocator, config, &state, &channel_registry, channel_rt, &event_bus, io,
         })) |thread| {
             chan_thread = thread;
         } else |err| {
@@ -988,7 +989,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     if (channel_rt) |rt| {
         state.addComponent("inbound_dispatcher");
         if (std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, inboundDispatcherThread, .{
-            allocator, &event_bus, &channel_registry, rt, &state,
+            allocator, &event_bus, &channel_registry, rt, &state, io,
         })) |thread| {
             inbound_thread = thread;
             state.markRunning("inbound_dispatcher");
