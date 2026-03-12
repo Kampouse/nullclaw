@@ -589,7 +589,7 @@ pub const SlackChannel = struct {
 
             var slept: u64 = 0;
             while (slept < POLL_INTERVAL_SECS and self.running.load(.acquire)) : (slept += 1) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(1 * std.time.ns_per_s);
             }
         }
     }
@@ -811,7 +811,7 @@ pub const SlackChannel = struct {
 
             var slept: u64 = 0;
             while (slept < RECONNECT_DELAY_NS and self.running.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(100 * std.time.ns_per_ms);
                 slept += 100 * std.time.ns_per_ms;
             }
         }
