@@ -7,6 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const log = std.log.scoped(.agent);
+const slog = @import("../structured_log.zig");
 const Config = @import("../config.zig").Config;
 const config_types = @import("../config_types.zig");
 const providers = @import("../providers/root.zig");
@@ -649,7 +650,7 @@ pub const Agent = struct {
     /// Execute a single conversation turn: send messages to LLM, parse tool calls,
     /// execute tools, and loop until a final text response is produced.
     pub fn turn(self: *Agent, user_message: []const u8) ![]const u8 {
-        std.debug.print("[TRACE] turn: START\n", .{});
+        slog.logStructured("DEBUG", "agent", "turn_start", .{});
         self.context_was_compacted = false;
         commands.refreshSubagentToolContext(self);
 
@@ -812,7 +813,7 @@ pub const Agent = struct {
             var response: ChatResponse = undefined;
             var response_attempt: u32 = 1;
             if (is_streaming) {
-                std.debug.print("[TRACE] turn: calling streamChat\n", .{});
+                slog.logStructured("DEBUG", "agent", "llm_call_start", .{});
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, true);
                 const stream_result = self.provider.streamChat(
                     self.allocator,
@@ -830,7 +831,7 @@ pub const Agent = struct {
                     self.stream_callback.?,
                     self.stream_ctx.?,
                 ) catch |err| {
-                    std.debug.print("[TRACE] turn: streamChat ERROR: {}\n", .{err});
+                    slog.logStructured("ERROR", "agent", "llm_error", .{.err_msg = err});
                     const fail_duration: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, timer_start)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
@@ -842,7 +843,7 @@ pub const Agent = struct {
                     self.observer.recordEvent(&fail_event);
                     return err;
                 };
-                std.debug.print("[TRACE] turn: streamChat completed successfully\n", .{});
+                slog.logStructured("DEBUG", "agent", "llm_success", .{});
                 response = ChatResponse{
                     .content = stream_result.content,
                     .tool_calls = &.{},
@@ -1184,7 +1185,7 @@ pub const Agent = struct {
             std.debug.print("[TRACE] turn: entering tool execution loop, parsed_calls.len={d}\n", .{parsed_calls.len});
 
             for (parsed_calls, 0..) |call, idx| {
-                std.debug.print("[TRACE] turn: iteration {d}, tool={s}\n", .{ idx, call.name });
+                slog.logStructured("DEBUG", "agent", "tool_iteration", .{.index = idx, .tool = call.name});
 
                 if (self.log_tool_calls) {
                     log.info(
@@ -1414,7 +1415,7 @@ pub const Agent = struct {
     }
 
     fn executeTool(self: *Agent, tool_allocator: std.mem.Allocator, call: ParsedToolCall) ToolExecutionResult {
-        std.debug.print("[TRACE] executeTool: start, tool={s}\n", .{call.name});
+        slog.logStructured("DEBUG", "agent", "tool_execute_start", .{.tool = call.name});
 
         // Policy gate: check autonomy and rate limit
         if (self.policy) |pol| {

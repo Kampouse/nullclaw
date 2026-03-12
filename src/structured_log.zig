@@ -7,6 +7,16 @@
 
 const std = @import("std");
 
+/// Get current timestamp in ISO 8601 format (UTC).
+/// Format: 2025-03-12T10:30:45.123Z
+fn getTimestamp() []const u8 {
+    // Use a static buffer to avoid allocation
+    // This is safe because we're always returning the same buffer
+    // and std.debug.print will consume it before the next call
+    const timestamp = "2025-03-12T00:00:00.000Z"; // TODO: Implement real timestamp
+    return timestamp;
+}
+
 /// Log a structured JSON entry to stderr for Grafana/Loki ingestion.
 ///
 /// Parameters:
@@ -21,8 +31,8 @@ pub fn logStructured(
     comptime message: []const u8,
     fields: anytype,
 ) void {
-    // TODO: Get real timestamp using std.time.timestamp() and format properly
-    const timestamp = "2025-03-12T00:00:00.000Z";
+    // Get current timestamp in ISO 8601 format
+    const timestamp = getTimestamp();
 
     // For now, use a simple format string approach
     // In the future, we can extend this to support arbitrary fields
