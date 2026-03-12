@@ -1,5 +1,6 @@
 const std = @import("std");
 const io = std.Options.debug_io;
+const slog = @import("../structured_log.zig");
 
 /// Result of a child process execution.
 pub const RunResult = struct {
@@ -41,22 +42,22 @@ pub fn run(
     argv: []const []const u8,
     opts: RunOptions,
 ) !RunResult {
-    std.debug.print("[TRACE] process_util.run: start\n", .{});
+    slog.logStructured("DEBUG", "process_util", "process_run_start", .{});
 
     // CRITICAL: std.Options.debug_io uses a .failing allocator (see Io/Threaded.zig:1622)
     // This causes OutOfMemory when std.process.run creates internal ArenaAllocator.
     // Use util.createProcessIo() to get a proper Io instance with page_allocator.
     const util = @import("../util.zig");
 
-    std.debug.print("[TRACE] process_util.run: calling createProcessIo\n", .{});
+    slog.logStructured("DEBUG", "process_util", "creating_process_io", .{});
     const spawn_io = util.createProcessIo();
-    std.debug.print("[TRACE] process_util.run: createProcessIo returned\n", .{});
+    slog.logStructured("DEBUG", "process_util", "process_io_created", .{});
 
     // Use std.process.run with our custom Io and allocator
     // Convert our ?[]const u8 cwd to std.process.Child.Cwd format
     const cwd_option: std.process.Child.Cwd = if (opts.cwd) |path| .{ .path = path } else .inherit;
 
-    std.debug.print("[TRACE] process_util.run: calling std.process.run\n", .{});
+    slog.logStructured("DEBUG", "process_util", "spawning_process", .{});
 
     // Build the std.process.run options
     const run_opts = std.process.RunOptions{
@@ -68,9 +69,9 @@ pub fn run(
     };
 
     const result = try std.process.run(allocator, spawn_io, run_opts);
-    std.debug.print("[TRACE] process_util.run: std.process.run returned\n", .{});
+    slog.logStructured("DEBUG", "process_util", "process_completed", .{});
 
-    std.debug.print("[TRACE] process_util.run: returning result\n", .{});
+    slog.logStructured("DEBUG", "process_util", "returning_result", .{});
     return switch (result.term) {
         .exited => |code| .{
             .stdout = result.stdout,
