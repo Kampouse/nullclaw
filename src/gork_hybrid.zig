@@ -19,8 +19,6 @@ const Allocator = std.mem.Allocator;
 const daemon_mod = @import("gork_daemon.zig");
 const poller_mod = @import("gork_poller.zig");
 
-const io = std.Options.debug_io; // For Zig 0.16.0 I/O
-
 pub const Hybrid = @This();
 
 // Global reference to the active Hybrid instance for callback access
@@ -117,18 +115,20 @@ const ArrayListPool = struct {
     mutex: std.Io.Mutex,
     available: std.ArrayList(*std.ArrayList([]const u8)),
     allocator: Allocator,
+    io: std.Io,
 
-    pub fn init(allocator: Allocator) ArrayListPool {
+    pub fn init(allocator: Allocator, io: std.Io) ArrayListPool {
         return .{
             .mutex = .{ .state = .init(.unlocked) },
             .available = std.ArrayList(*std.ArrayList([]const u8)).initCapacity(allocator, 10) catch @panic("OOM"),
             .allocator = allocator,
+            .io = io,
         };
     }
 
     pub fn deinit(self: *ArrayListPool) void {
-        self.mutex.lock(io) catch {};
-        defer self.mutex.unlock(io);
+        self.mutex.lock(self.io) catch {};
+        defer self.mutex.unlock(self.io);
 
         for (self.available.items) |list| {
             list.deinit(self.allocator);
@@ -138,8 +138,8 @@ const ArrayListPool = struct {
     }
 
     pub fn acquire(self: *ArrayListPool) *std.ArrayList([]const u8) {
-        self.mutex.lock(io);
-        defer self.mutex.unlock(io);
+        self.mutex.lock(self.io);
+        defer self.mutex.unlock(self.io);
 
         if (self.available.items.len > 0) {
             return self.available.pop();
@@ -151,8 +151,8 @@ const ArrayListPool = struct {
     }
 
     pub fn release(self: *ArrayListPool, list: *std.ArrayList([]const u8)) void {
-        self.mutex.lock(io);
-        defer self.mutex.unlock(io);
+        self.mutex.lock(self.io);
+        defer self.mutex.unlock(self.io);
 
         list.clearRetainingCapacity();
         self.available.append(self.allocator, list) catch {
@@ -229,7 +229,7 @@ pub fn logAudit(event: AuditEvent, details: []const u8) void {
 }
 
 /// Validate binary path (no directory traversal, must exist and be executable)
-pub fn validateBinaryPath(path: []const u8) SecurityError!void {
+pub fn validateBinaryPath(path: []const u8, io: std.Io) SecurityError!void {
     if (path.len == 0) return error.BinaryPathEmpty;
     if (path.len > MAX_BINARY_PATH_LEN) return error.BinaryPathTooLong;
 
@@ -293,7 +293,7 @@ fn charToHex(c: u8) !u8 {
 /// Verify binary signature using Ed25519
 /// Looks for a .sig file alongside the binary containing hex-encoded signature
 /// Verifies against trusted public key
-pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) SignatureVerification {
+pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8, io: std.Io) SignatureVerification {
     // Try to open signature file
     const sig_path = std.fmt.allocPrint(allocator, "{s}.sig", .{binary_path}) catch return .verification_error;
     defer allocator.free(sig_path);
@@ -434,20 +434,22 @@ const SeenMessageCache = struct {
     max_size: u32,
     max_age_ns: u64,
     mutex: std.Io.Mutex,
+    io: std.Io,
 
-    fn init(allocator: Allocator, max_size: u32, max_age_secs: u32) SeenMessageCache {
+    fn init(allocator: Allocator, max_size: u32, max_age_secs: u32, io: std.Io) SeenMessageCache {
         return .{
             .allocator = allocator,
             .cache = Cache.init(allocator),
             .max_size = max_size,
             .max_age_ns = @intCast(max_age_secs * std.time.ns_per_s),
             .mutex = .{ .state = .init(.unlocked) },
+            .io = io,
         };
     }
 
     fn deinit(self: *SeenMessageCache) void {
-        self.mutex.lock(io) catch {};
-        defer self.mutex.unlock(io);
+        self.mutex.lock(self.io) catch {};
+        defer self.mutex.unlock(self.io);
 
         // Free all keys
         var it = self.cache.iterator();
@@ -459,10 +461,10 @@ const SeenMessageCache = struct {
 
     /// Check if message ID has been seen before
     fn isSeen(self: *SeenMessageCache, message_id: []const u8) bool {
-        self.mutex.lock(io);
-        defer self.mutex.unlock(io);
+        self.mutex.lock(self.io);
+        defer self.mutex.unlock(self.io);
 
-        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
         const now = @as(i64, @intCast(now_ns / 1_000_000_000));
 
         // Clean up old entries first
@@ -477,10 +479,10 @@ const SeenMessageCache = struct {
 
     /// Mark message as seen
     fn markSeen(self: *SeenMessageCache, message_id: []const u8) !void {
-        self.mutex.lock(io);
-        defer self.mutex.unlock(io);
+        self.mutex.lock(self.io);
+        defer self.mutex.unlock(self.io);
 
-        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
         const now = @as(i64, @intCast(now_ns / 1_000_000_000));
 
         // Clean up old entries first
@@ -559,6 +561,7 @@ const SeenMessageCache = struct {
 
 allocator: Allocator,
 mutex: std.Io.Mutex,
+io: std.Io,
 config: Config,
 state: State,
 daemon: ?daemon_mod.DaemonProcess,
@@ -590,7 +593,7 @@ pub const CircuitBreaker = struct {
     half_open_attempts: u32 = 3, // Try N requests in half-open
 
     /// Check if operation should be allowed
-    pub fn allow(self: *CircuitBreaker) bool {
+    pub fn allow(self: *CircuitBreaker, io: std.Io) bool {
         const now = std.Io.Clock.real.now(io).nanoseconds;
 
         switch (self.state) {
@@ -663,11 +666,13 @@ pub const RateLimiter = struct {
     max_requests: u32 = 100, // Max requests per window
     window_ns: u64 = 60 * std.time.ns_per_s, // 60 second window
     cleanup_threshold: u32 = 1000, // Cleanup after N entries
+    io: std.Io,
 
-    pub fn init(allocator: Allocator) RateLimiter {
+    pub fn init(allocator: Allocator, io: std.Io) RateLimiter {
         return .{
             .allocator = allocator,
             .map = AgentMap.init(allocator),
+            .io = io,
         };
     }
 
@@ -681,7 +686,7 @@ pub const RateLimiter = struct {
 
     /// Check if request should be allowed
     pub fn allow(self: *RateLimiter, agent_id: []const u8) bool {
-        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
         const now_sec = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
 
         // Get or create entry
@@ -866,7 +871,7 @@ pub const Config = struct {
     seen_message_cache_size: u32 = 10000, // Max seen message IDs to track
 
     /// Validate configuration values
-    pub fn validate(self: *const Config) !void {
+    pub fn validate(self: *const Config, io: std.Io) !void {
         // Required fields
         if (self.binary_path.len == 0) return error.BinaryPathEmpty;
 
@@ -896,9 +901,9 @@ pub const Config = struct {
 };
 
 /// Initialize the hybrid system
-pub fn init(allocator: Allocator, config: Config, event_callback: *const fn (Allocator, Event) void) !Hybrid {
+pub fn init(allocator: Allocator, config: Config, event_callback: *const fn (Allocator, Event) void, io: std.Io) !Hybrid {
     // Validate configuration
-    try config.validate();
+    try config.validate(io);
 
     // Load max_message_queue_size from config (use default if 0)
     const max_queue = if (config.max_message_queue_size > 0)
@@ -910,13 +915,14 @@ pub fn init(allocator: Allocator, config: Config, event_callback: *const fn (All
     var rate_limiter: ?*RateLimiter = null;
     if (config.enable_rate_limiting) {
         const rl = try allocator.create(RateLimiter);
-        rl.* = RateLimiter.init(allocator);
+        rl.* = RateLimiter.init(allocator, io);
         rate_limiter = rl;
     }
 
     return Hybrid{
         .allocator = allocator,
         .mutex = .{ .state = .init(.unlocked) },
+        .io = io,
         .config = config,
         .state = .stopped,
         .daemon = null,
@@ -934,8 +940,9 @@ pub fn init(allocator: Allocator, config: Config, event_callback: *const fn (All
             allocator,
             config.seen_message_cache_size,
             config.max_message_age_secs,
+            io,
         ),
-        .array_pool = ArrayListPool.init(allocator),
+        .array_pool = ArrayListPool.init(allocator, io),
     };
 }
 
@@ -946,8 +953,8 @@ pub fn setActiveHybrid(self: *Hybrid) void {
 
 /// Start the hybrid system (thread-safe)
 pub fn start(self: *Hybrid) !void {
-    self.mutex.lock(io) catch return error.MutexLockFailed;
-    defer self.mutex.unlock(io);
+    self.mutex.lock(self.io) catch return error.MutexLockFailed;
+    defer self.mutex.unlock(self.io);
 
     if (self.state != .stopped) return error.AlreadyRunning;
 
@@ -955,7 +962,7 @@ pub fn start(self: *Hybrid) !void {
     self.notifyEvent(Event{ .state_changed = .starting });
 
     // Try to start daemon first
-    const daemon_result = self.startDaemon();
+    const daemon_result = self.startDaemon(self.io);
 
     if (daemon_result) |_| {
         std.log.info("Gork daemon started successfully", .{});
@@ -979,8 +986,8 @@ pub fn start(self: *Hybrid) !void {
 
 /// Stop the hybrid system (thread-safe)
 pub fn stop(self: *Hybrid) void {
-    self.mutex.lock(io) catch {};
-    defer self.mutex.unlock(io);
+    self.mutex.lock(self.io) catch {};
+    defer self.mutex.unlock(self.io);
     if (self.state == .stopped) return;
 
     self.state = .stopping;
@@ -1042,7 +1049,7 @@ fn decrementMessageQueue(self: *Hybrid) void {
 /// Send message to another agent (thread-safe)
 pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
     // Check circuit breaker
-    if (!self.circuit_breaker.allow()) {
+    if (!self.circuit_breaker.allow(self.io)) {
         _ = self.metrics.circuit_breaker_trips.fetchAdd(1, .seq_cst);
         const err = createDetailedError(
             error.CircuitBreakerOpen,
@@ -1132,16 +1139,16 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
 
     // Hold mutex for the entire send operation to avoid race condition
     // where daemon crashes between state check and message send
-    self.mutex.lock(io) catch return error.MutexLockFailed;
+    self.mutex.lock(self.io) catch return error.MutexLockFailed;
     // Try sending and track success/failure for metrics
     const send_result: anyerror!void = if (self.state == .degraded) blk: {
         // Release mutex during CLI call since it may take time
-        self.mutex.unlock(io);
+        self.mutex.unlock(self.io);
         break :blk self.sendViaCli(to, content);
     } else blk: {
         // Keep daemon reference and release mutex - daemon.sendMessage is thread-safe
         var daemon = self.daemon;
-        self.mutex.unlock(io);
+        self.mutex.unlock(self.io);
         if (daemon == null) return error.DaemonNotRunning;
         break :blk daemon.?.sendMessage(to, content);
     };
@@ -1185,7 +1192,7 @@ fn generateMessageId(allocator: Allocator, from: []const u8, to: []const u8, con
 }
 
 /// Validate message timestamp is not too old
-fn validateMessageTimestamp(config: Config, message_timestamp: u64, allocator: Allocator) !void {
+fn validateMessageTimestamp(config: Config, message_timestamp: u64, allocator: Allocator, io: std.Io) !void {
     if (!config.enable_replay_protection) return;
 
     const now_ns = std.Io.Clock.real.now(io).nanoseconds;
@@ -1338,12 +1345,12 @@ pub fn getMetrics(self: *const Hybrid) ![]const u8 {
 }
 
 /// Start the daemon process (caller must hold mutex)
-fn startDaemon(self: *Hybrid) !void {
+fn startDaemon(self: *Hybrid, io: std.Io) !void {
     // Validate binary path before spawning
-    try validateBinaryPath(self.config.binary_path);
+    try validateBinaryPath(self.config.binary_path, io);
 
     // Verify binary signature (if signature file exists)
-    const sig_result = verifyBinarySignature(self.allocator, self.config.binary_path);
+    const sig_result = verifyBinarySignature(self.allocator, self.config.binary_path, io);
     if (sig_result == .failed) {
         return error.BinarySignatureInvalid;
     }
@@ -1355,7 +1362,7 @@ fn startDaemon(self: *Hybrid) !void {
         .binary_path = self.config.binary_path,
         .port = self.config.daemon_port,
         .relay = self.config.relay,
-    });
+    }, io);
 
     self.daemon = daemon;
 }

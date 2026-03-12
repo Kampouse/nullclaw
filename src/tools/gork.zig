@@ -97,6 +97,7 @@ pub const GorkTool = struct {
             self.allocator,
             self.config,
             handleHybridEventWrapper,
+            io,
         );
 
         // Register this hybrid instance for replay protection callbacks

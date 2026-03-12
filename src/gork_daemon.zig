@@ -103,11 +103,9 @@ pub fn init(allocator: Allocator, event_callback: *const fn (Allocator, Event) v
 }
 
 /// Start the daemon process
-pub fn start(self: *DaemonProcess, config: StartConfig) !void {
-    // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - needs io
-    // defer self.mutex.unlock();
+pub fn start(self: *DaemonProcess, config: StartConfig, io: std.Io) !void {
+    self.mutex.lock(io) catch return error.LockFailed;
+    defer self.mutex.unlock(io);
 
     if (self.state != .stopped) return error.AlreadyRunning;
 
@@ -137,22 +135,18 @@ pub fn start(self: *DaemonProcess, config: StartConfig) !void {
 }
 
 /// Check if daemon is alive (thread-safe)
-pub fn isAlive(self: *const DaemonProcess) bool {
-    // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - needs io
-    // defer self.mutex.unlock();
+pub fn isAlive(self: *const DaemonProcess, io: std.Io) bool {
+    self.mutex.lock(io) catch return false;
+    defer self.mutex.unlock(io);
 
     // Since we can't poll directly, check if we have a child and state indicates running
     return self.child != null and (self.state == .running or self.state == .starting);
 }
 
 /// Get current state (thread-safe)
-pub fn getState(self: *const DaemonProcess) State {
-    // TODO: Zig 0.16.0 - needs io
-    // self.mutex.lock();
-    // TODO: Zig 0.16.0 - needs io
-    // defer self.mutex.unlock();
+pub fn getState(self: *const DaemonProcess, io: std.Io) State {
+    self.mutex.lock(io) catch return .stopped;
+    defer self.mutex.unlock(io);
     return self.state;
 }
 
