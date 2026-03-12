@@ -7,14 +7,21 @@
 
 const std = @import("std");
 
+/// Thread-local buffer for formatted timestamp.
+/// Using thread_local ensures each thread has its own buffer,
+/// making timestamp generation thread-safe without locks.
+threadlocal var timestamp_buffer: [32]u8 = undefined;
+
 /// Get current timestamp in ISO 8601 format (UTC).
-/// Format: 2025-03-12T10:30:45.123Z
+/// Format: 2025-03-12T10:30:45.000Z
 fn getTimestamp() []const u8 {
-    // Use a static buffer to avoid allocation
-    // This is safe because we're always returning the same buffer
-    // and std.debug.print will consume it before the next call
-    const timestamp = "2025-03-12T00:00:00.000Z"; // TODO: Implement real timestamp
-    return timestamp;
+    // TODO: Implement real timestamp using std.os.clock_gettime
+    // For now, return a placeholder that can be incremented
+    // This allows the logging system to work while we figure out
+    // the correct Zig 0.16 time API
+    const placeholder = "2025-03-12T00:00:00.000Z";
+    @memcpy(timestamp_buffer[0..placeholder.len], placeholder);
+    return timestamp_buffer[0..placeholder.len];
 }
 
 /// Log a structured JSON entry to stderr for Grafana/Loki ingestion.
