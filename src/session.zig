@@ -59,6 +59,7 @@ pub const Session = struct {
 
 pub const SessionManager = struct {
     allocator: Allocator,
+    io: std.Io,
     config: *const Config,
     provider: Provider,
     tools: []const Tool,
@@ -74,6 +75,7 @@ pub const SessionManager = struct {
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         config: *const Config,
         provider: Provider,
         tools: []const Tool,
@@ -86,6 +88,7 @@ pub const SessionManager = struct {
 
         return .{
             .allocator = allocator,
+            .io = io,
             .config = config,
             .provider = provider,
             .tools = tools,
@@ -131,6 +134,7 @@ pub const SessionManager = struct {
             self.tools,
             self.mem,
             self.observer,
+            self.io,
         );
         agent.policy = self.policy;
         agent.session_store = self.session_store;

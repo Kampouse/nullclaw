@@ -4,7 +4,6 @@
 //! for `nullclaw agent`) and the streaming stdout callback.
 
 const std = @import("std");
-const io = std.Options.debug_io; // For Zig 0.16.0 I/O
 const log = std.log.scoped(.agent);
 const slog = @import("../structured_log.zig");
 const Config = @import("../config.zig").Config;
@@ -126,7 +125,7 @@ fn parseAgentArgs(args: []const []const u8) AgentArgParseResult {
 
 /// Run the agent in single-message or interactive REPL mode.
 /// This is the main entry point called by `nullclaw agent`.
-pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
+pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8, io: std.Io) !void {
     var cfg = Config.load(allocator, io) catch {
         log.err("No config found. Run `nullclaw onboard` first.", .{});
         return;
@@ -262,7 +261,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
         }
         try w.flush();
 
-        var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs);
+        var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs, io);
         agent.policy = &policy;
         agent.session_store = if (mem_rt) |rt| rt.session_store else null;
         agent.response_cache = if (mem_rt) |*rt| rt.response_cache else null;
@@ -356,7 +355,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
         try w.flush();
     }
 
-    var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs);
+    var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs, io);
     agent.policy = &policy;
     agent.session_store = if (mem_rt) |rt| rt.session_store else null;
     agent.response_cache = if (mem_rt) |*rt| rt.response_cache else null;

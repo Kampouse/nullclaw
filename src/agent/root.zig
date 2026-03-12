@@ -213,6 +213,7 @@ pub const Agent = struct {
     };
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     provider: Provider,
     tools: []const Tool,
     tool_specs: []const ToolSpec,
@@ -330,6 +331,7 @@ pub const Agent = struct {
         tools: []const Tool,
         mem: ?Memory,
         observer_i: Observer,
+        io: std.Io,
     ) !Agent {
         const default_model = cfg.default_model orelse return error.NoDefaultModel;
         const token_limit_override = if (cfg.agent.token_limit_explicit) cfg.agent.token_limit else null;
@@ -350,6 +352,7 @@ pub const Agent = struct {
 
         return .{
             .allocator = allocator,
+            .io = io,
             .provider = provider_i,
             .tools = tools,
             .tool_specs = specs,

@@ -479,7 +479,7 @@ pub const ChannelRuntime = struct {
     security_policy: *security.SecurityPolicy,
 
     /// Initialize the runtime from config — mirrors main.zig:702-786 setup.
-    pub fn init(allocator: std.mem.Allocator, config: *const Config) !*ChannelRuntime {
+    pub fn init(allocator: std.mem.Allocator, config: *const Config, io: std.Io) !*ChannelRuntime {
         var runtime_provider = try provider_runtime.RuntimeProviderBundle.init(allocator, config);
         errdefer runtime_provider.deinit();
 
@@ -557,7 +557,7 @@ pub const ChannelRuntime = struct {
         const obs = noop_obs.observer();
 
         // Session manager
-        var session_mgr = session_mod.SessionManager.init(allocator, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+        var session_mgr = session_mod.SessionManager.init(allocator, io, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
         session_mgr.policy = security_policy;
 
         // Self — heap-allocated so pointers remain stable
@@ -1256,7 +1256,7 @@ test "channel runtime wires security policy into session manager and shell tool"
         },
     };
 
-    var runtime = try ChannelRuntime.init(allocator, &cfg);
+    var runtime = try ChannelRuntime.init(allocator, &cfg, std.testing.io);
     defer runtime.deinit();
 
     try std.testing.expect(runtime.session_mgr.policy != null);

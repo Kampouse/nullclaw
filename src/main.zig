@@ -135,14 +135,14 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     switch (cmd) {
         .version => printVersion(),
         .status => try yc.status.run(allocator),
-        .agent => try yc.agent.run(allocator, sub_args),
+        .agent => try yc.agent.run(allocator, sub_args, io),
         .onboard => try runOnboard(allocator, sub_args),
         .doctor => try yc.doctor.run(allocator),
         .help => printUsage(),
         .gateway => try runGateway(allocator, sub_args, io),
         .service => try runService(allocator, sub_args),
         .cron => try runCron(allocator, sub_args),
-        .channel => try runChannel(allocator, sub_args),
+        .channel => try runChannel(allocator, sub_args, io),
         .skills => try runSkills(allocator, sub_args),
         .hardware => try runHardware(allocator, sub_args),
         .migrate => try runMigrate(std.Options.debug_io, allocator, sub_args),
@@ -411,7 +411,7 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
 
 // ── Channel ──────────────────────────────────────────────────────
 
-fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
+fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8, io: std.Io) !void {
     if (sub_args.len < 1) {
         std.debug.print(
             \\Usage: nullclaw channel <command> [args]
@@ -443,7 +443,7 @@ fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
             std.debug.print("  {s}: {s}\n", .{ meta.label, status_text });
         }
     } else if (std.mem.eql(u8, subcmd, "start")) {
-        try runChannelStart(allocator, sub_args[1..]);
+        try runChannelStart(allocator, sub_args[1..], io);
     } else if (std.mem.eql(u8, subcmd, "status")) {
         std.debug.print("Channel health:\n", .{});
         std.debug.print("  CLI: ok\n", .{});
@@ -1349,6 +1349,7 @@ fn dispatchChannelStart(
     args: []const []const u8,
     config: *const yc.config.Config,
     meta: yc.channel_catalog.ChannelMeta,
+    io: std.Io,
 ) !void {
     if (!yc.channel_catalog.isBuildEnabled(meta.id)) {
         std.debug.print("{s} channel is disabled in this build.\n", .{meta.label});
@@ -1359,21 +1360,21 @@ fn dispatchChannelStart(
     switch (meta.id) {
         .telegram => {
             if (config.channels.telegramPrimary()) |tg_config| {
-                return runTelegramChannel(allocator, args, config.*, tg_config);
+                return runTelegramChannel(allocator, args, config.*, tg_config, io);
             }
             std.debug.print("Telegram channel is not configured.\n", .{});
             std.process.exit(1);
         },
         .signal => {
             if (config.channels.signalPrimary()) |sig_config| {
-                return runSignalChannel(allocator, args, config, sig_config);
+                return runSignalChannel(allocator, args, config, sig_config, io);
             }
             std.debug.print("Signal channel is not configured.\n", .{});
             std.process.exit(1);
         },
         .matrix => {
             if (config.channels.matrixPrimary()) |mx_config| {
-                return runMatrixChannel(allocator, args, config, mx_config);
+                return runMatrixChannel(allocator, args, config, mx_config, io);
             }
             std.debug.print("Matrix channel is not configured.\n", .{});
             std.process.exit(1);
@@ -1436,7 +1437,7 @@ fn printNoMessagingChannelConfiguredHint() void {
     std.debug.print("  Signal:   {{\"channels\": {{\"signal\": {{\"accounts\": {{\"main\": {{\"http_url\": \"http://127.0.0.1:8080\", \"account\": \"+1234567890\"}}}}}}}}\n", .{});
 }
 
-fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8) !void {
+fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8, io: std.Io) !void {
     if (args.len > 0 and std.mem.eql(u8, args[0], "--all")) {
         std.debug.print("Use `nullclaw gateway` to start all configured channels/accounts.\n", .{});
         std.process.exit(1);
@@ -1494,19 +1495,19 @@ fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8) !void
         }
 
         const child_args: []const []const u8 = if (args.len > 1) args[1..] else &.{};
-        return dispatchChannelStart(allocator, child_args, &config, meta);
+        return dispatchChannelStart(allocator, child_args, &config, meta, io);
     }
 
     // No channel specified -- keep historical preference:
     // Telegram first, then Signal, then any other configured channel.
     if (yc.channel_catalog.findByKey("telegram")) |meta| {
         if (yc.channel_catalog.isConfigured(&config, meta.id)) {
-            return dispatchChannelStart(allocator, args, &config, meta);
+            return dispatchChannelStart(allocator, args, &config, meta, io);
         }
     }
     if (yc.channel_catalog.findByKey("signal")) |meta| {
         if (yc.channel_catalog.isConfigured(&config, meta.id)) {
-            return dispatchChannelStart(allocator, args, &config, meta);
+            return dispatchChannelStart(allocator, args, &config, meta, io);
         }
     }
 
@@ -1514,7 +1515,7 @@ fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8) !void
         if (!canStartFromChannelCommand(meta.id)) continue;
         if (meta.id == .telegram or meta.id == .signal) continue;
         if (!yc.channel_catalog.isConfigured(&config, meta.id)) continue;
-        return dispatchChannelStart(allocator, args, &config, meta);
+        return dispatchChannelStart(allocator, args, &config, meta, io);
     }
 }
 
@@ -1579,7 +1580,7 @@ fn hasReliabilityCredentialFallback(allocator: std.mem.Allocator, config: *const
     return false;
 }
 
-fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, config: *const yc.config.Config, signal_config: yc.config.SignalConfig) !void {
+fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, config: *const yc.config.Config, signal_config: yc.config.SignalConfig, io: std.Io) !void {
     _ = args;
     if (!build_options.enable_channel_signal) {
         std.debug.print("Signal channel is disabled in this build.\n", .{});
@@ -1738,7 +1739,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
     const obs = noop_obs.observer();
 
     // Initialize session manager
-    var session_mgr = yc.session.SessionManager.init(allocator, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+    var session_mgr = yc.session.SessionManager.init(allocator, io, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
     session_mgr.policy = &sec_policy;
     if (mem_rt) |*rt| {
         session_mgr.mem_rt = rt;
@@ -1848,6 +1849,7 @@ fn runMatrixChannel(
     args: []const []const u8,
     config: *const yc.config.Config,
     matrix_config: yc.config.MatrixConfig,
+    io: std.Io,
 ) !void {
     _ = args;
     if (!build_options.enable_channel_matrix) {
@@ -1882,7 +1884,7 @@ fn runMatrixChannel(
 
     std.debug.print("  Polling for messages... (Ctrl+C to stop)\n\n", .{});
 
-    const runtime = yc.channel_loop.ChannelRuntime.init(allocator, config) catch |err| {
+    const runtime = yc.channel_loop.ChannelRuntime.init(allocator, config, io) catch |err| {
         std.debug.print("Runtime init failed: {}\n", .{err});
         std.process.exit(1);
     };
@@ -1894,7 +1896,7 @@ fn runMatrixChannel(
 
 // ── Telegram Channel ───────────────────────────────────────────────-
 
-fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, config: yc.config.Config, telegram_config: yc.config.TelegramConfig) !void {
+fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, config: yc.config.Config, telegram_config: yc.config.TelegramConfig, io: std.Io) !void {
     if (!build_options.enable_channel_telegram) {
         std.debug.print("Telegram channel is disabled in this build.\n", .{});
         std.process.exit(1);
@@ -2126,7 +2128,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 
     std.debug.print("  Polling for messages... (Ctrl+C to stop)\n\n", .{});
 
-    var session_mgr = yc.session.SessionManager.init(allocator, &config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+    var session_mgr = yc.session.SessionManager.init(allocator, io, &config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
     session_mgr.policy = &sec_policy;
     if (mem_rt) |*rt| {
         session_mgr.mem_rt = rt;

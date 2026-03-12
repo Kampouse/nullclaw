@@ -960,7 +960,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     // Channel runtime for supervised polling (provider, tools, sessions)
     var channel_rt: ?*channel_loop.ChannelRuntime = null;
     if (has_runtime_dependent_channels) {
-        channel_rt = channel_loop.ChannelRuntime.init(allocator, config) catch |err| blk: {
+        channel_rt = channel_loop.ChannelRuntime.init(allocator, config, io) catch |err| blk: {
             state.markError("channels", @errorName(err));
             health.markComponentError("channels", "runtime init failed");
             stdout.print(
