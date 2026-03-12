@@ -176,7 +176,7 @@ pub fn logStructured(
                     while (actual_len < array_len and array_ptr[actual_len] != 0) : (actual_len += 1) {}
                     const slice = array_ptr[0..actual_len];
                     std.debug.print("{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"{s}\",\"fields\":{{\"{s}\":\"{s}\"}}}}\n", .{ timestamp, level, scope, message, field.name, slice });
-                } else if (ptr_info.size == .Many and Child == u8) {
+                } else if (ptr_info.size == .many and Child == u8) {
                     // [*]const u8 (many-item pointer) - treat as C string
                     const c_str: [*:0]const u8 = @ptrCast(value);
                     const slice = std.mem.span(c_str);
@@ -191,6 +191,9 @@ pub fn logStructured(
             } else if (@typeInfo(T) == .int or T == comptime_int) {
                 // Comptime integers
                 std.debug.print("{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"{s}\",\"fields\":{{\"{s}\":\"{d}\"}}}}\n", .{ timestamp, level, scope, message, field.name, value });
+            } else if (@typeInfo(T) == .float) {
+                // Float types (f32, f64, etc.)
+                std.debug.print("{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"{s}\",\"fields\":{{\"{s}\":\"{e}\"}}}}\n", .{ timestamp, level, scope, message, field.name, value });
             } else if (T == bool) {
                 // Boolean
                 std.debug.print("{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"{s}\",\"fields\":{{\"{s}\":\"{any}\"}}}}\n", .{ timestamp, level, scope, message, field.name, value });
@@ -232,7 +235,7 @@ pub fn logStructured(
                         while (actual_len < array_len and array_ptr[actual_len] != 0) : (actual_len += 1) {}
                         const slice = array_ptr[0..actual_len];
                         std.debug.print("\"{s}\"", .{slice});
-                    } else if (ptr_info.size == .Many and Child == u8) {
+                    } else if (ptr_info.size == .many and Child == u8) {
                         // C string [*:0]const u8
                         const c_str: [*:0]const u8 = @ptrCast(value);
                         const slice = std.mem.span(c_str);
@@ -245,6 +248,9 @@ pub fn logStructured(
                 } else if (@typeInfo(T) == .int or T == comptime_int) {
                     // Comptime integers or other int types
                     std.debug.print("\"{d}\"", .{value});
+                } else if (@typeInfo(T) == .float) {
+                    // Float types (f32, f64, etc.)
+                    std.debug.print("\"{e}\"", .{value});
                 } else if (T == bool) {
                     std.debug.print("\"{any}\"", .{value});
                 } else {
@@ -334,4 +340,12 @@ test "log level filtering - ERROR level shows only ERROR" {
 
     // Reset to DEBUG for other tests
     max_log_level = .DEBUG;
+}
+
+test "logStructured with float fields" {
+    debug("test", "float_values", .{
+        .pi_f32 = @as(f32, 3.14159),
+        .pi_f64 = @as(f64, 3.14159265359),
+        .large = @as(f64, 1.0e10),
+    });
 }

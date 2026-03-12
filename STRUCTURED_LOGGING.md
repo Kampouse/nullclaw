@@ -278,6 +278,7 @@ Structured logging supports the following field types:
 - **String literals**: `.field = "value"` → `"field":"value"`
 - **String slices**: `.field = @"value"` → `"field":"value"`
 - **Integers**: `.field = 42` → `"field":"42"`
+- **Floats**: `.field = 3.14` → `"field":"3.14e0"`
 - **Booleans**: `.field = true` → `"field":"true"`
 - **Multiple fields**: All fields are serialized correctly
 
@@ -288,17 +289,18 @@ slog.info("auth", "user_login", .{
     .ip = "192.168.1.1",
     .success = true,
     .attempts = 3,
+    .latency = 0.045,
 });
 ```
 
 Output:
 ```json
-{"timestamp":"2026-03-12T14:12:33.000Z","level":"INFO","scope":"auth","message":"user_login","fields":{"user_id":"12345","ip":"192.168.1.1","success":"true","attempts":"3"}}
+{"timestamp":"2026-03-12T14:12:33.000Z","level":"INFO","scope":"auth","message":"user_login","fields":{"user_id":"12345","ip":"192.168.1.1","success":"true","attempts":"3","latency":"4.5e-2"}}
 ```
 
 ## Future Improvements
 
-- [ ] Extend structured logging to all modules
-- [ ] Add support for float types
+- [x] Extend structured logging to all modules (agent module completed)
+- [x] Add support for float types (f32, f64 supported)
 - [ ] Support for nested field structures
 - [ ] Performance optimization for high-volume logging

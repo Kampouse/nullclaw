@@ -850,7 +850,7 @@ pub const Agent = struct {
                     .usage = stream_result.usage,
                     .model = stream_result.model,
                 };
-                std.debug.print("[TRACE] turn: streaming response constructed\n", .{});
+                slog.debug("agent", "turn_streaming_response_constructed", .{});
             } else {
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, false);
                 response = self.provider.chat(
@@ -949,9 +949,9 @@ pub const Agent = struct {
                     };
                 };
             }
-            std.debug.print("[TRACE] turn: before logLlmResponse\n", .{});
+            slog.debug("agent", "turn_before_log_llm_response", .{});
             self.logLlmResponse(iteration + 1, response_attempt, &response);
-            std.debug.print("[TRACE] turn: after logLlmResponse\n", .{});
+            slog.debug("agent", "turn_after_log_llm_response", .{});
 
             const duration_ms: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, timer_start)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
             const resp_event = ObserverEvent{ .llm_response = .{
@@ -994,13 +994,13 @@ pub const Agent = struct {
                 if (free_assistant_history and assistant_history_content.len > 0) self.allocator.free(assistant_history_content);
             }
 
-            std.debug.print("[TRACE] turn: parsing tool calls, use_native={}\n", .{use_native});
+            slog.debug("agent", "turn_parsing_tool_calls", .{.use_native = use_native});
 
             if (use_native) {
                 // Provider returned structured tool_calls — convert them
                 parsed_calls = try dispatcher.parseStructuredToolCalls(self.allocator, response.tool_calls);
                 free_parsed_calls = true;
-                std.debug.print("[TRACE] turn: parsed structured tool calls, count={d}\n", .{parsed_calls.len});
+                slog.debug("agent", "turn_parsed_structured_tool_calls", .{.count = parsed_calls.len});
 
                 if (parsed_calls.len == 0) {
                     // Structured calls were empty (e.g. all had empty names) — try XML fallback
@@ -1021,7 +1021,7 @@ pub const Agent = struct {
                     parsed_calls,
                 );
                 free_assistant_history = true;
-                std.debug.print("[TRACE] turn: built assistant history with tool calls\n", .{});
+                slog.debug("agent", "turn_built_assistant_history_with_tool_calls", .{});
             } else {
                 // No native tool calls — parse response text for XML tool calls
                 const xml_parsed = try dispatcher.parseToolCalls(self.allocator, response_text);
@@ -1031,10 +1031,10 @@ pub const Agent = struct {
                 free_parsed_text = true;
                 // For XML path, store the raw response text as history
                 assistant_history_content = response_text;
-                std.debug.print("[TRACE] turn: parsed XML tool calls, count={d}\n", .{parsed_calls.len});
+                slog.debug("agent", "turn_parsed_xml_tool_calls", .{.count = parsed_calls.len});
             }
 
-            std.debug.print("[TRACE] turn: total parsed_calls count={d}\n", .{parsed_calls.len});
+            slog.debug("agent", "turn_total_parsed_calls", .{.count = parsed_calls.len});
 
             // Determine display text
             // IMPORTANT: When there are tool calls, NEVER show raw response_text to user
@@ -1152,7 +1152,7 @@ pub const Agent = struct {
                 w.flush() catch {};
             }
 
-            std.debug.print("[TRACE] turn: appending assistant message to history\n", .{});
+            slog.debug("agent", "turn_appending_assistant_message", .{});
 
             // Record assistant message with tool calls in history.
             // Native path (free_assistant_history=true): transfer ownership directly to avoid
@@ -1169,7 +1169,7 @@ pub const Agent = struct {
                 .content = assistant_content,
             });
 
-            std.debug.print("[TRACE] turn: history append complete, starting tool execution loop\n", .{});
+            slog.debug("agent", "turn_history_append_complete", .{});
 
             // Execute each tool call
             var results_buf: std.ArrayListUnmanaged(ToolExecutionResult) = .empty;
@@ -1182,7 +1182,7 @@ pub const Agent = struct {
                 log.info("tool-call batch session=0x{x} count={d}", .{ session_hash, parsed_calls.len });
             }
 
-            std.debug.print("[TRACE] turn: entering tool execution loop, parsed_calls.len={d}\n", .{parsed_calls.len});
+            slog.debug("agent", "turn_entering_tool_execution_loop", .{.parsed_calls_count = parsed_calls.len});
 
             for (parsed_calls, 0..) |call, idx| {
                 slog.logStructured("DEBUG", "agent", "tool_iteration", .{.index = idx, .tool = call.name});
@@ -1194,16 +1194,16 @@ pub const Agent = struct {
                     );
                 }
 
-                std.debug.print("[TRACE] turn: recording tool_call_start event\n", .{});
+                slog.debug("agent", "turn_recording_tool_call_start_event", .{});
                 const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
                 self.observer.recordEvent(&tool_start_event);
-                std.debug.print("[TRACE] turn: tool_call_start event recorded\n", .{});
+                slog.debug("agent", "turn_tool_call_start_event_recorded", .{});
 
                 const tool_timer = 0; // TODO: Zig 0.16.0 - util.timestampUnix() API changed
 
-                std.debug.print("[TRACE] turn: checking should_skip_tools_memory_store_duplicate\n", .{});
+                slog.debug("agent", "turn_checking_duplicate_memory_store", .{});
                 const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call)) blk: {
-                    std.debug.print("[TRACE] turn: skipping duplicate memory_store\n", .{});
+                    slog.debug("agent", "turn_skipping_duplicate_memory_store", .{});
                     break :blk ToolExecutionResult{
                         .name = call.name,
                         .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
@@ -1211,10 +1211,10 @@ pub const Agent = struct {
                         .tool_call_id = call.tool_call_id,
                     };
                 } else blk: {
-                    std.debug.print("[TRACE] turn: calling executeTool for tool={s}\n", .{call.name});
+                    slog.debug("agent", "turn_calling_execute_tool", .{.tool = call.name});
                     break :blk self.executeTool(arena, call);
                 };
-                std.debug.print("[TRACE] turn: executeTool returned for tool={s}\n", .{call.name});
+                slog.debug("agent", "turn_execute_tool_returned", .{.tool = call.name});
                 const tool_duration: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, tool_timer)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
 
                 if (self.log_tool_calls) {
@@ -1439,11 +1439,11 @@ pub const Agent = struct {
         }
 
         const trimmed_call_name = std.mem.trim(u8, call.name, " \t\r\n");
-        std.debug.print("[TRACE] executeTool: trimmed_name={s}\n", .{trimmed_call_name});
+        slog.debug("agent", "execute_tool_trimmed_name", .{.trimmed_name = trimmed_call_name});
 
         for (self.tools) |t| {
             if (std.ascii.eqlIgnoreCase(t.name(), trimmed_call_name)) {
-                std.debug.print("[TRACE] executeTool: found tool, parsing arguments\n", .{});
+                slog.debug("agent", "execute_tool_found_parsing_args", .{});
 
                 // Parse arguments JSON to ObjectMap ONCE
                 const parsed = std.json.parseFromSlice(
@@ -1452,7 +1452,7 @@ pub const Agent = struct {
                     call.arguments_json,
                     .{},
                 ) catch {
-                    std.debug.print("[TRACE] executeTool: JSON parse failed\n", .{});
+                    slog.debug("agent", "execute_tool_json_parse_failed", .{});
                     return .{
                         .name = call.name,
                         .output = "Invalid arguments JSON",
@@ -1462,7 +1462,7 @@ pub const Agent = struct {
                 };
                 defer parsed.deinit();
 
-                std.debug.print("[TRACE] executeTool: JSON parsed successfully\n", .{});
+                slog.debug("agent", "execute_tool_json_parse_success", .{});
 
                 const args: std.json.ObjectMap = switch (parsed.value) {
                     .object => |o| o,
@@ -1487,9 +1487,9 @@ pub const Agent = struct {
                     }
                 }
 
-                std.debug.print("[TRACE] executeTool: calling tool.execute\n", .{});
+                slog.debug("agent", "execute_tool_calling_tool_execute", .{});
                 const result = t.execute(tool_allocator, args) catch |err| {
-                    std.debug.print("[TRACE] executeTool: tool.execute failed: {}\n", .{err});
+                    slog.debug("agent", "execute_tool_failed", .{.error_msg = @errorName(err)});
                     return .{
                         .name = call.name,
                         .output = @errorName(err),
@@ -1497,7 +1497,7 @@ pub const Agent = struct {
                         .tool_call_id = call.tool_call_id,
                     };
                 };
-                std.debug.print("[TRACE] executeTool: tool.execute returned successfully\n", .{});
+                slog.debug("agent", "execute_tool_success", .{});
                 const output_src = if (result.success) result.output else (result.error_msg orelse result.output);
                 const success = result.success;
 
@@ -1522,7 +1522,7 @@ pub const Agent = struct {
             }
         }
 
-        std.debug.print("[TRACE] executeTool: tool not found\n", .{});
+        slog.debug("agent", "execute_tool_not_found", .{});
         return .{
             .name = call.name,
             .output = "Unknown tool",
