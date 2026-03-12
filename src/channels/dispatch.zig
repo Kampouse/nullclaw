@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const root = @import("root.zig");
+const util = @import("../util.zig");
 const bus = @import("../bus.zig");
 const Atomic = @import("../portable_atomic.zig").Atomic;
 
@@ -640,7 +641,7 @@ test "dispatcher runs in a separate thread" {
     try event_bus.publishOutbound(msg);
 
     // Small delay then close bus to let dispatcher process
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+    util.sleep(100 * std.time.ns_per_ms);
     event_bus.close();
     thread.join();
 
@@ -684,7 +685,7 @@ test "dispatcher concurrent producers + single dispatcher" {
     // Wait for all producers, then close bus
     for (&producers) |*p| p.join();
     // Small delay for dispatcher to drain
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+    util.sleep(100 * std.time.ns_per_ms);
     event_bus.close();
     dispatcher.join();
 

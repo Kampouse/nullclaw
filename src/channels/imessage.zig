@@ -148,7 +148,7 @@ pub const IMessageChannel = struct {
     fn sleepWithStopCheck(self: *IMessageChannel) void {
         var slept: u64 = 0;
         while (self.running.load(.acquire) and slept < self.poll_interval_secs) {
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            util.sleep(1 * std.time.ns_per_s);
             slept += 1;
         }
     }

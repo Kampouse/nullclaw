@@ -1478,7 +1478,7 @@ pub const QQChannel = struct {
             // Interruptible backoff
             var slept: u64 = 0;
             while (slept < backoff_ms and self.running.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(100 * std.time.ns_per_ms);
                 slept += 100;
             }
         }
@@ -1608,7 +1608,7 @@ pub const QQChannel = struct {
             if (self.force_heartbeat.swap(false, .acq_rel)) {
                 self.sendHeartbeatNow(ws);
             }
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            util.sleep(100 * std.time.ns_per_ms);
         }
         log.info("Heartbeat thread running (interval={d}ms)", .{self.heartbeat_interval_ms.load(.acquire)});
         while (!self.heartbeat_stop.load(.acquire)) {
@@ -1622,7 +1622,7 @@ pub const QQChannel = struct {
                     elapsed = 0;
                     continue;
                 }
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(100 * std.time.ns_per_ms);
                 elapsed += 100;
             }
             if (self.heartbeat_stop.load(.acquire)) return;

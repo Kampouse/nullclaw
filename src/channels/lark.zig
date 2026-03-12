@@ -610,7 +610,7 @@ pub const LarkChannel = struct {
 
             var slept_ms: u64 = 0;
             while (slept_ms < 5000 and self.running.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(100 * std.time.ns_per_ms);
                 slept_ms += 100;
             }
         }
