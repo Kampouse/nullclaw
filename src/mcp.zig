@@ -6,7 +6,6 @@
 //! built-in tool.
 
 const std = @import("std");
-const io = std.Options.debug_io; // For Zig 0.16.0 I/O
 const tools_mod = @import("tools/root.zig");
 const config_mod = @import("config.zig");
 const json_util = @import("json_util.zig");
@@ -302,7 +301,8 @@ pub const McpToolWrapper = struct {
         return .{ .ptr = @ptrCast(self), .vtable = &vtable };
     }
 
-    fn executeImpl(ptr: *anyopaque, allocator: Allocator, args: tools_mod.JsonObjectMap) anyerror!tools_mod.ToolResult {
+    fn executeImpl(ptr: *anyopaque, allocator: Allocator, args: tools_mod.JsonObjectMap, io: std.Io) anyerror!tools_mod.ToolResult {
+        _ = io;
         const self: *McpToolWrapper = @ptrCast(@alignCast(ptr));
         // Re-serialize ObjectMap to JSON string for MCP protocol
         const json_val = std.json.Value{ .object = args };

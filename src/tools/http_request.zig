@@ -31,7 +31,6 @@ pub const HttpRequestTool = struct {
     }
 
     pub fn execute(self: *HttpRequestTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
         const url = root.getString(args, "url") orelse
             return ToolResult.fail("Missing 'url' parameter");
 

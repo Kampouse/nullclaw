@@ -26,7 +26,6 @@ pub const ImageInfoTool = struct {
     }
 
     pub fn execute(_: *ImageInfoTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 

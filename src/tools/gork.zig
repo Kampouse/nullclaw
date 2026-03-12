@@ -281,11 +281,7 @@ fn handleHybridEvent(allocator: std.mem.Allocator, event: hybrid_mod.Event) void
         .message_received => |*msg| {
             // Replay protection: check timestamp
             // TODO: Need io context in callback - skip timestamp check for now
-            } else {
-                // Message from the future - clock skew
-                const skew = msg_time - now;
-                std.log.info("Gork: Message received from {s}: {s} (clock skew: {d}s)", .{ msg.from, msg.content, skew });
-            }
+            std.log.info("Gork: Message received from {s}: {s}", .{ msg.from, msg.content });
         },
         .peer_connected => |peer| {
             std.log.info("Gork: Peer connected: {s}", .{peer});

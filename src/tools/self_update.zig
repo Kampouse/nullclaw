@@ -9,7 +9,6 @@ const path_security = @import("path_security.zig");
 const process_util = @import("process_util.zig");
 const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
 const resolvePathAlloc = path_security.resolvePathAlloc;
-const io = std.io;
 
 /// Detect the source repository directory by using git to find the repo root.
 /// Returns an owned path if found, null otherwise.

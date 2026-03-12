@@ -33,7 +33,6 @@ pub const FileReadTool = struct {
     }
 
     pub fn execute(self: *FileReadTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 

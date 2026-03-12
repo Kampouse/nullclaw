@@ -197,7 +197,6 @@ pub const Tool = struct {
     };
 
     pub fn execute(self: Tool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
         return self.vtable.execute(self.ptr, allocator, args, io);
     }
 
@@ -236,13 +235,13 @@ pub const Tool = struct {
 ///   - `pub const tool_name: []const u8`
 ///   - `pub const tool_description: []const u8`
 ///   - `pub const tool_params: []const u8`
-///   - `fn execute(self: *T, allocator: Allocator, args: JsonObjectMap) anyerror!ToolResult`
+///   - `fn execute(self: *T, allocator: Allocator, args: JsonObjectMap, io: std.Io) anyerror!ToolResult`
 pub fn ToolVTable(comptime T: type) Tool.VTable {
     return .{
         .execute = &struct {
-            fn f(ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap) anyerror!ToolResult {
+            fn f(ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) anyerror!ToolResult {
                 const self: *T = @ptrCast(@alignCast(ptr));
-                return self.execute(allocator, args);
+                return self.execute(allocator, args, io);
             }
         }.f,
         .name = &struct {
@@ -325,6 +324,7 @@ pub fn defaultToolsWithPaths(
 pub fn allTools(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
+    io: std.Io,
     opts: struct {
         http_enabled: bool = false,
         http_allowed_domains: []const []const u8 = &.{},
@@ -531,9 +531,9 @@ pub fn allTools(
                 .enable_fallback = gc.enable_fallback,
             };
 
-            const gork_tool = try gork.GorkTool.init(allocator, gork_config);
+            const gork_tool = try gork.GorkTool.init(allocator, gork_config, io);
             errdefer allocator.destroy(gork_tool); // Free if start() fails
-            try gork_tool.start();
+            try gork_tool.start(io);
             try list.append(allocator, gork_tool.tool());
         }
     }

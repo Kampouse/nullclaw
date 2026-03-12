@@ -34,7 +34,7 @@ pub const FileEditTool = struct {
     }
 
     pub fn execute(self: *FileEditTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
+// io is used below
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 
@@ -122,12 +122,14 @@ pub const FileEditTool = struct {
 // ── Tests ───────────────────────────────────────────────────────────
 
 test "file_edit tool name" {
+    const io = std.testing.io;
     var ft = FileEditTool{ .workspace_dir = "/tmp" };
     const t = ft.tool();
     try std.testing.expectEqualStrings("file_edit", t.name());
 }
 
 test "file_edit tool schema has required params" {
+    const io = std.testing.io;
     var ft = FileEditTool{ .workspace_dir = "/tmp" };
     const t = ft.tool();
     const schema = t.parametersJson();
@@ -137,6 +139,7 @@ test "file_edit tool schema has required params" {
 }
 
 test "file_edit basic replace" {
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
@@ -148,7 +151,7 @@ test "file_edit basic replace" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"world\", \"new_text\": \"zig\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     if (!result.success) {
@@ -164,6 +167,7 @@ test "file_edit basic replace" {
 }
 
 test "file_edit old_text not found" {
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
@@ -175,7 +179,7 @@ test "file_edit old_text not found" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"missing\", \"new_text\": \"replacement\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // error_msg is a static string from ToolResult.fail(), don't free it
 
@@ -184,6 +188,7 @@ test "file_edit old_text not found" {
 }
 
 test "file_edit empty file returns not found" {
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "empty.txt", .data = "" });
@@ -195,7 +200,7 @@ test "file_edit empty file returns not found" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\", \"old_text\": \"something\", \"new_text\": \"other\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // error_msg is a static string from ToolResult.fail(), don't free it
 
@@ -204,6 +209,7 @@ test "file_edit empty file returns not found" {
 }
 
 test "file_edit replaces only first occurrence" {
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "dup.txt", .data = "aaa bbb aaa" });
@@ -215,7 +221,7 @@ test "file_edit replaces only first occurrence" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"dup.txt\", \"old_text\": \"aaa\", \"new_text\": \"ccc\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
@@ -226,47 +232,52 @@ test "file_edit replaces only first occurrence" {
 }
 
 test "file_edit blocks path traversal" {
+    const io = std.testing.io;
     var ft = FileEditTool{ .workspace_dir = "/tmp/workspace" };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"../../etc/evil\", \"old_text\": \"a\", \"new_text\": \"b\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not allowed") != null);
 }
 
 test "file_edit missing path param" {
+    const io = std.testing.io;
     var ft = FileEditTool{ .workspace_dir = "/tmp" };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"old_text\": \"a\", \"new_text\": \"b\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
 
 test "file_edit missing old_text param" {
+    const io = std.testing.io;
     var ft = FileEditTool{ .workspace_dir = "/tmp" };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"file.txt\", \"new_text\": \"b\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
 
 test "file_edit missing new_text param" {
+    const io = std.testing.io;
     var ft = FileEditTool{ .workspace_dir = "/tmp" };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"file.txt\", \"old_text\": \"a\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
 
 test "file_edit empty old_text" {
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "content" });
@@ -278,7 +289,7 @@ test "file_edit empty old_text" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\", \"old_text\": \"\", \"new_text\": \"new\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // error_msg is a static string from ToolResult.fail(), don't free it
 
@@ -289,16 +300,18 @@ test "file_edit empty old_text" {
 // ── Absolute path support tests ─────────────────────────────────────
 
 test "file_edit absolute path without allowed_paths is rejected" {
+    const io = std.testing.io;
     var ft = FileEditTool{ .workspace_dir = "/tmp" };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"/tmp/file.txt\", \"old_text\": \"a\", \"new_text\": \"b\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Absolute paths not allowed") != null);
 }
 
 test "file_edit absolute path with allowed_paths works" {
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
     try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.txt", .data = "hello world" });
