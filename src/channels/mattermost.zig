@@ -444,7 +444,7 @@ pub const MattermostChannel = struct {
 
             var slept: u64 = 0;
             while (slept < RECONNECT_DELAY_NS and self.running.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(100 * std.time.ns_per_ms);
                 slept += 100 * std.time.ns_per_ms;
             }
         }

@@ -920,7 +920,7 @@ pub const SignalChannel = struct {
             task.channel.sendTypingIndicator(task.target);
             var elapsed: u64 = 0;
             while (elapsed < TYPING_INTERVAL_NS and !task.stop_requested.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(TYPING_SLEEP_STEP_NS);
                 elapsed += TYPING_SLEEP_STEP_NS;
             }
         }
