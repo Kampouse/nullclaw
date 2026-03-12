@@ -853,7 +853,7 @@ pub const TelegramChannel = struct {
             task.channel.sendTypingIndicator(task.chat_id);
             var elapsed: u64 = 0;
             while (elapsed < TYPING_INTERVAL_NS and !task.stop_requested.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(TYPING_SLEEP_STEP_NS);
                 elapsed += TYPING_SLEEP_STEP_NS;
             }
         }
@@ -1505,7 +1505,7 @@ pub const TelegramChannel = struct {
 
                 // 100ms delay between chunks to avoid rate-limit / ordering issues
                 if (i < chunks.items.len - 1) {
-                    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                    util.sleep(100 * std.time.ns_per_ms);
                 }
             }
         }
@@ -3338,7 +3338,7 @@ test "telegram startTyping stores handle and stopTyping clears it" {
 
     try ch.startTyping("12345");
     try std.testing.expect(ch.typing_handles.get("12345") != null);
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+    util.sleep(10 * std.time.ns_per_ms);
     try ch.stopTyping("12345");
     try std.testing.expect(ch.typing_handles.get("12345") == null);
 }
