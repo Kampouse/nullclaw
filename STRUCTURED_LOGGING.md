@@ -229,10 +229,76 @@ slog.logStructured("INFO", "my_scope", "user_action", .{
 - Use single-field format for complex structures
 - Check field types are compatible with formatting
 
+## Best Practices
+
+1. **Use descriptive message names**: `turn_start` instead of `start`
+2. **Include relevant fields**: Add context with structured fields
+3. **Use appropriate log levels**: ERROR for failures, DEBUG for tracing
+4. **Keep scopes consistent**: Use module/component names as scopes
+5. **Set log level via environment**: Use `NULLCLAW_LOG_LEVEL` to control verbosity
+
+## Configuration
+
+### Log Level Control
+
+Set the minimum log level via environment variable:
+
+```bash
+# Show all logs (DEBUG and above)
+export NULLCLAW_LOG_LEVEL=DEBUG
+
+# Show INFO, WARN, ERROR (filter out DEBUG)
+export NULLCLAW_LOG_LEVEL=INFO
+
+# Show only WARN and ERROR
+export NULLCLAW_LOG_LEVEL=WARN
+
+# Show only ERROR
+export NULLCLAW_LOG_LEVEL=ERROR
+```
+
+Call `slog.init()` at program startup to read the environment variable:
+
+```zig
+const slog = @import("structured_log");
+
+pub fn main() !void {
+    slog.init();
+    // Now logging respects NULLCLAW_LOG_LEVEL
+}
+```
+
+### Default Behavior
+
+If `NULLCLAW_LOG_LEVEL` is not set or `slog.init()` is not called, the default is to show all logs (DEBUG level).
+
+## Field Types Supported
+
+Structured logging supports the following field types:
+- **String literals**: `.field = "value"` → `"field":"value"`
+- **String slices**: `.field = @"value"` → `"field":"value"`
+- **Integers**: `.field = 42` → `"field":"42"`
+- **Booleans**: `.field = true` → `"field":"true"`
+- **Multiple fields**: All fields are serialized correctly
+
+Example:
+```zig
+slog.info("auth", "user_login", .{
+    .user_id = "12345",
+    .ip = "192.168.1.1",
+    .success = true,
+    .attempts = 3,
+});
+```
+
+Output:
+```json
+{"timestamp":"2026-03-12T14:12:33.000Z","level":"INFO","scope":"auth","message":"user_login","fields":{"user_id":"12345","ip":"192.168.1.1","success":"true","attempts":"3"}}
+```
+
 ## Future Improvements
 
-- [ ] Real timestamp generation using `std.time.timestamp()`
 - [ ] Extend structured logging to all modules
-- [ ] Add log level filtering via environment variable
-- [ ] Support for arbitrary field structures
+- [ ] Add support for float types
+- [ ] Support for nested field structures
 - [ ] Performance optimization for high-volume logging
