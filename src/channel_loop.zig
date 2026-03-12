@@ -763,7 +763,7 @@ pub fn runTelegramLoop(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
 
         health.markComponentOk("telegram");
@@ -864,7 +864,7 @@ fn runTelegramLoopSequential(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
 
         health.markComponentOk("telegram");
@@ -997,7 +997,7 @@ pub fn runSignalLoop(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
 
         health.markComponentOk("signal");
@@ -1191,7 +1191,7 @@ pub fn runMatrixLoop(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
 
         health.markComponentOk("matrix");
@@ -1219,7 +1219,6 @@ test "TelegramLoopState stop_requested toggle" {
 test "TelegramLoopState last_activity update" {
     var state = TelegramLoopState.init();
     const before = state.last_activity.load(.acquire);
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
     state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
@@ -1295,7 +1294,6 @@ test "SignalLoopState stop_requested toggle" {
 test "SignalLoopState last_activity update" {
     var state = SignalLoopState.init();
     const before = state.last_activity.load(.acquire);
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
     state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
@@ -1318,7 +1316,6 @@ test "MatrixLoopState stop_requested toggle" {
 test "MatrixLoopState last_activity update" {
     var state = MatrixLoopState.init();
     const before = state.last_activity.load(.acquire);
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
     state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);

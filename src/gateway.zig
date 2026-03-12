@@ -2490,7 +2490,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     if (config_ptr) |cfg| {
         config_opt = cfg;
     } else {
-        owned_config = Config.load(allocator) catch null;
+        owned_config = Config.load(allocator, std.Options.debug_io) catch null;
         if (owned_config) |*c| {
             config_opt = c;
         }

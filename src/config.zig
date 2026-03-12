@@ -2,8 +2,6 @@ const std = @import("std");
 const platform = @import("platform.zig");
 pub const config_types = @import("config_types.zig");
 pub const config_parse = @import("config_parse.zig");
-
-const io = std.Options.debug_io;
 /// Write a JSON-escaped string (with enclosing quotes) to any writer.
 /// Mirrors json_util.appendJsonString but works with writer-based output.
 fn writeJsonStr(w: anytype, s: []const u8) !void {
@@ -207,18 +205,18 @@ pub const Config = struct {
         self.max_actions_per_hour = self.autonomy.max_actions_per_hour;
     }
 
-    pub fn load(backing_allocator: std.mem.Allocator) !Config {
+    pub fn load(backing_allocator: std.mem.Allocator, io: std.Io) !Config {
         const home = platform.getHomeDir(backing_allocator) catch return error.NoHomeDir;
         defer backing_allocator.free(home);
         const config_dir = try std.fs.path.join(backing_allocator, &.{ home, ".nullclaw" });
         defer backing_allocator.free(config_dir);
         const config_path = try std.fs.path.join(backing_allocator, &.{ config_dir, "config.json" });
         defer backing_allocator.free(config_path);
-        return loadPath(backing_allocator, config_path);
+        return loadPath(backing_allocator, config_path, io);
     }
 
     /// Load config from a specific file path.
-    pub fn loadPath(backing_allocator: std.mem.Allocator, config_path: []const u8) !Config {
+    pub fn loadPath(backing_allocator: std.mem.Allocator, config_path: []const u8, io: std.Io) !Config {
         // Use an arena so deinit() can free everything in one shot.
         const arena_ptr = try backing_allocator.create(std.heap.ArenaAllocator);
         arena_ptr.* = std.heap.ArenaAllocator.init(backing_allocator);
@@ -244,7 +242,7 @@ pub const Config = struct {
 
         // Try to read existing config file
         const content: ?[]const u8 = blk: {
-            const result = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, config_path, allocator, .limited(1024 * 64)) catch {
+            const result = std.Io.Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(1024 * 64)) catch {
                 // Config file doesn't exist or can't be read — use defaults
                 break :blk null;
             };
@@ -553,20 +551,20 @@ pub const Config = struct {
     }
 
     /// Save config as JSON to the config_path.
-    pub fn save(self: *const Config) !void {
+    pub fn save(self: *const Config, io: std.Io) !void {
         const dir = std.fs.path.dirname(self.config_path) orelse return error.InvalidConfigPath;
 
         // Ensure parent directory exists
-        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(io, dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
 
-        const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, self.config_path, .{});
-        defer file.close(std.Options.debug_io);
+        const file = try std.Io.Dir.cwd().createFile(io, self.config_path, .{});
+        defer file.close(io);
 
         var buf: [8192]u8 = undefined;
-        var bw = file.writer(std.Options.debug_io, &buf);
+        var bw = file.writer(io, &buf);
         const w = &bw.interface;
 
         try w.print("{{\n", .{});
@@ -1241,7 +1239,7 @@ test "save includes channels section by default" {
         .config_path = config_path,
         .allocator = allocator,
     };
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -1284,7 +1282,7 @@ test "save writes configured telegram channel account" {
             },
         },
     };
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -1334,7 +1332,7 @@ test "save roundtrip preserves telegram interactive settings" {
             },
         },
     };
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -1380,7 +1378,7 @@ test "save roundtrip preserves diagnostics logging flags" {
     cfg.diagnostics.log_message_receipts = true;
     cfg.diagnostics.log_message_payloads = true;
     cfg.diagnostics.log_llm_io = true;
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -1442,7 +1440,7 @@ test "save roundtrip preserves reliability settings" {
     cfg.reliability.fallback_providers = &.{ "openrouter", "groq" };
     cfg.reliability.api_keys = &.{ "rk_a", "rk_b" };
     cfg.reliability.model_fallbacks = &model_fallbacks;
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -1660,7 +1658,7 @@ test "save roundtrip preserves extended config sections" {
         },
     };
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -1757,7 +1755,7 @@ test "save escapes mcp_servers strings safely" {
         },
     };
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -2712,7 +2710,7 @@ test "save and load roundtrip" {
     cfg.default_model = try allocator.dupe(u8, "glm-4.7");
     cfg.workspace_dir_override = try allocator.dupe(u8, "C:\\Users\\menger\\Desktop\\myspace");
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     // load back by reading and parsing the saved file
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
@@ -2996,7 +2994,7 @@ test "save writes provider native_tools when false" {
         },
     };
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
     defer file.close(std.Options.debug_io);
@@ -4007,7 +4005,7 @@ test "save includes nostr channel when configured" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
     defer file.close(std.Options.debug_io);
@@ -4057,7 +4055,7 @@ test "save includes dm_relays in nostr section" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
     defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
@@ -4094,7 +4092,7 @@ test "dm_relays round-trips through save and load" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
     defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
     const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
@@ -4143,7 +4141,7 @@ test "nostr display_name with special chars round-trips correctly" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
     defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
     const file_content = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});

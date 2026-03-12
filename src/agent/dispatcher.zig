@@ -460,7 +460,6 @@ pub fn formatToolResults(allocator: std.mem.Allocator, results: []const ToolExec
     try buf.appendSlice(allocator, "[Tool results]\n");
     for (results) |result| {
         const status_str = if (result.success) "ok" else "error";
-        // TODO: Zig 0.16.0 - writer() API changed, use allocPrint instead
         const formatted = try std.fmt.allocPrint(allocator, "<tool_result name=\"{s}\" status=\"{s}\">\n{s}\n</tool_result>\n", .{
             result.name,
             status_str,
@@ -557,7 +556,6 @@ pub const DispatcherKind = enum {
 /// Returns true if the text starts with `{` (after trimming whitespace) and contains `"tool_calls"`.
 /// This is a lightweight heuristic — full JSON parsing happens in parseNativeToolCalls.
 pub fn isNativeJsonFormat(text: []const u8) bool {
-    // TODO: Zig 0.16.0 - trimLeft removed, use trim instead
     const trimmed = std.mem.trim(u8, text, " \n\r\t");
     if (trimmed.len == 0 or trimmed[0] != '{') return false;
     return std.mem.indexOf(u8, trimmed, "\"tool_calls\"") != null;
@@ -725,7 +723,6 @@ pub fn formatNativeToolResults(allocator: std.mem.Allocator, results: []const To
         const tc_id = result.tool_call_id orelse "unknown";
 
         // Serialize content as a JSON string value
-        // TODO: Zig 0.16.0 - writer() API changed, use allocPrint instead
         const formatted = try std.fmt.allocPrint(allocator, "{{\"role\":\"tool\",\"tool_call_id\":{s},\"content\":{s}}}", .{
             tc_id,
             result.output,

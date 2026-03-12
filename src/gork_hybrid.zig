@@ -127,7 +127,9 @@ const ArrayListPool = struct {
     }
 
     pub fn deinit(self: *ArrayListPool) void {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+        self.mutex.lock(io) catch {};
+        defer self.mutex.unlock(io);
+
         for (self.available.items) |list| {
             list.deinit(self.allocator);
             self.allocator.destroy(list);
@@ -136,7 +138,9 @@ const ArrayListPool = struct {
     }
 
     pub fn acquire(self: *ArrayListPool) *std.ArrayList([]const u8) {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+        self.mutex.lock(io);
+        defer self.mutex.unlock(io);
+
         if (self.available.items.len > 0) {
             return self.available.pop();
         }
@@ -147,7 +151,9 @@ const ArrayListPool = struct {
     }
 
     pub fn release(self: *ArrayListPool, list: *std.ArrayList([]const u8)) void {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+        self.mutex.lock(io);
+        defer self.mutex.unlock(io);
+
         list.clearRetainingCapacity();
         self.available.append(self.allocator, list) catch {
             list.deinit(self.allocator);
@@ -292,28 +298,31 @@ pub fn verifyBinarySignature(allocator: Allocator, binary_path: []const u8) Sign
     const sig_path = std.fmt.allocPrint(allocator, "{s}.sig", .{binary_path}) catch return .verification_error;
     defer allocator.free(sig_path);
 
-    _ = std.Io.Dir.cwd().openFile(io, sig_path, .{}) catch |err| {
+    const sig_file = std.Io.Dir.cwd().openFile(io, sig_path, .{}) catch |err| {
         // Signature file not found - this is OK, signature is optional
         if (err == error.FileNotFound) return .not_found;
         std.log.warn("Failed to open signature file '{s}': {}", .{ sig_path, err });
         return .verification_error;
     };
-    // Read hex-encoded signature (128 hex chars = 64 bytes)
-    const sig_hex_buf: [256]u8 = undefined;
-    // TODO: Zig 0.16.0 - file.read() API changed, use reader
-    const sig_bytes_read: usize = 0; // Stub
-    _ = sig_hex_buf;
-    _ = sig_bytes_read;
+    defer sig_file.close(io);
 
-    return .verification_error; // TODO: Implement proper signature verification
+    // Read signature file
+    const sig_content = std.Io.Dir.cwd().readFileAlloc(io, sig_path, allocator, .limited(4096)) catch |err| {
+        std.log.warn("Failed to read signature file: {}", .{err});
+        return .verification_error;
+    };
+    defer allocator.free(sig_content);
 
-    // Old code (disabled for Zig 0.16.0 migration):
-    // const sig_hex = std.mem.trim(u8, sig_hex_buf[0..sig_bytes_read], " \t\n\r");
-    // ... rest of signature verification
+    if (sig_content.len == 0) {
+        return .verification_error;
+    }
+
+    const sig_hex = std.mem.trim(u8, sig_content, " \t\n\r");
+
+    // TODO: Implement proper signature verification
+    _ = sig_hex;
+    return .verification_error;
 }
-
-/// Compute SHA-256 hash of a file
-//     logAudit(.security_violation, "Binary signature verification failed");
 
 /// Compute SHA-256 hash of a file
 fn computeSha256(allocator: Allocator, path: []const u8) ![]u8 {
@@ -437,7 +446,9 @@ const SeenMessageCache = struct {
     }
 
     fn deinit(self: *SeenMessageCache) void {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+        self.mutex.lock(io) catch {};
+        defer self.mutex.unlock(io);
+
         // Free all keys
         var it = self.cache.iterator();
         while (it.next()) |entry| {
@@ -448,7 +459,9 @@ const SeenMessageCache = struct {
 
     /// Check if message ID has been seen before
     fn isSeen(self: *SeenMessageCache, message_id: []const u8) bool {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+        self.mutex.lock(io);
+        defer self.mutex.unlock(io);
+
         const now_ns = std.Io.Clock.real.now(io).nanoseconds;
         const now = @as(i64, @intCast(now_ns / 1_000_000_000));
 
@@ -464,7 +477,9 @@ const SeenMessageCache = struct {
 
     /// Mark message as seen
     fn markSeen(self: *SeenMessageCache, message_id: []const u8) !void {
-        // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+        self.mutex.lock(io);
+        defer self.mutex.unlock(io);
+
         const now_ns = std.Io.Clock.real.now(io).nanoseconds;
         const now = @as(i64, @intCast(now_ns / 1_000_000_000));
 
@@ -931,7 +946,9 @@ pub fn setActiveHybrid(self: *Hybrid) void {
 
 /// Start the hybrid system (thread-safe)
 pub fn start(self: *Hybrid) !void {
-    // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+    self.mutex.lock(io) catch return error.MutexLockFailed;
+    defer self.mutex.unlock(io);
+
     if (self.state != .stopped) return error.AlreadyRunning;
 
     self.state = .starting;
@@ -962,7 +979,8 @@ pub fn start(self: *Hybrid) !void {
 
 /// Stop the hybrid system (thread-safe)
 pub fn stop(self: *Hybrid) void {
-    // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+    self.mutex.lock(io) catch {};
+    defer self.mutex.unlock(io);
     if (self.state == .stopped) return;
 
     self.state = .stopping;
@@ -1114,7 +1132,7 @@ pub fn sendMessage(self: *Hybrid, to: []const u8, content: []const u8) !void {
 
     // Hold mutex for the entire send operation to avoid race condition
     // where daemon crashes between state check and message send
-    // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
+    self.mutex.lock(io) catch return error.MutexLockFailed;
     // Try sending and track success/failure for metrics
     const send_result: anyerror!void = if (self.state == .degraded) blk: {
         // Release mutex during CLI call since it may take time
@@ -1231,7 +1249,6 @@ pub fn discover(self: *Hybrid, capability: []const u8, limit: u32) ![]AgentInfo 
         self.allocator.free(msg);
     }
 
-    // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
 
@@ -1275,7 +1292,6 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
     // Validate agent ID
     try validateAgentId(agent_id);
 
-    // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
 
@@ -1313,7 +1329,6 @@ pub fn getReputation(self: *Hybrid, agent_id: []const u8) !u32 {
 
 /// Get current state (thread-safe)
 pub fn getState(self: *Hybrid) State {
-    // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
     return self.state;
 }
 
@@ -1358,7 +1373,6 @@ fn startPoller(self: *Hybrid, mode: poller_mod.Mode) !void {
 /// Send message via CLI (fallback)
 fn sendViaCli(self: *Hybrid, to: []const u8, content: []const u8) !void {
     // Note: Validation is done in sendMessage before calling this
-    // TODO: Zig 0.16.0 - mutex.lock() needs io parameter
     var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
     defer argv.deinit(self.allocator);
 

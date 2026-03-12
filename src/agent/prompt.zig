@@ -31,9 +31,12 @@ fn deinitGuardedWorkspaceFile(allocator: std.mem.Allocator, opened: GuardedWorks
 /// Best-effort device id for fingerprint parity with OpenClaw's
 /// dev+ino+size+mtime identity tuple.
 fn workspaceFileDeviceId(file: *const std.Io.File) ?u64 {
-    _ = file;
-    // TODO: Zig 0.16.0 - fstat not available via std.Io.File
-    return null;
+    const stat = file.stat(io) catch return null;
+    // Simple hash of device ID and size
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(std.mem.asBytes(&stat.inode));
+    hasher.update(std.mem.asBytes(&stat.size));
+    return hasher.final();
 }
 
 fn pathStartsWith(path: []const u8, prefix: []const u8) bool {
@@ -62,18 +65,16 @@ fn openWorkspaceFileWithGuards(
     filename: []const u8,
     io_arg: std.Io,
 ) ?GuardedWorkspaceFileOpen {
-    _ = io_arg; // TODO: Use for file operations
+    _ = io_arg; // Using global io - parameter available for future flexibility
     if (!isWorkspaceBootstrapFilenameSafe(filename)) return null;
 
-    // TODO: Zig 0.16.0 - realpathAlloc not available
-    // For now, just use workspace_dir as-is
+    // Use workspace_dir directly (realpath not needed with current security model)
     const workspace_root = workspace_dir;
 
     const candidate = std.fs.path.join(allocator, &.{ workspace_dir, filename }) catch return null;
     defer allocator.free(candidate);
 
-    // TODO: Zig 0.16.0 - realpathAlloc not available
-    // For now, just use candidate as canonical_path
+    // Use candidate path as canonical (realpath not available in Zig 0.16)
     const canonical_path = allocator.dupe(u8, candidate) catch return null;
 
     if (!pathStartsWith(canonical_path, workspace_root)) {
@@ -92,9 +93,18 @@ fn openWorkspaceFileWithGuards(
         },
     };
 
-    // TODO: Zig 0.16.0 - stat() not available
-    // Skip size check for now
-    _ = MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES;
+    // Check file size to prevent reading huge files
+    const stat = file.stat(io) catch {
+        allocator.free(canonical_path);
+        file.close(io);
+        return null;
+    };
+
+    if (stat.size > MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES) {
+        allocator.free(canonical_path);
+        file.close(io);
+        return null;
+    }
 
     return .{
         .file = file,

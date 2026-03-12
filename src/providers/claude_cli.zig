@@ -97,12 +97,52 @@ pub const ClaudeCliProvider = struct {
 
     /// Run the claude CLI and parse stream-json output.
     fn runClaude(allocator: std.mem.Allocator, prompt: []const u8, model: []const u8) ![]const u8 {
-        // TODO: Zig 0.16.0 - Child API changed
-        _ = allocator; // suppress unused
-        _ = prompt; // suppress unused
-        _ = model; // suppress unused
-        _ = allocator; // suppress unused parameter warning
-        return error.NotSupported;
+        const io = std.Options.debug_io;
+
+        // Build argv: claude -p <prompt> --output-format stream-json --model <model> --verbose
+        var argv_list = std.ArrayList([]const u8){};
+        try argv_list.append(allocator, "claude");
+        try argv_list.append(allocator, "-p");
+        try argv_list.append(allocator, prompt);
+        try argv_list.append(allocator, "--output-format");
+        try argv_list.append(allocator, "stream-json");
+        try argv_list.append(allocator, "--model");
+        try argv_list.append(allocator, model);
+        try argv_list.append(allocator, "--verbose");
+
+        var child = try std.process.spawn(io, .{
+            .argv = argv_list.items,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
+        defer {
+            child.kill(io);
+            _ = child.wait(io) catch {};
+        }
+
+        // Close stdin
+        if (child.stdin) |stdin_file| {
+            stdin_file.close(io);
+            child.stdin = null;
+        }
+
+        // Read stdout
+        const stdout_file = child.stdout orelse return error.ClaudeExecutionFailed;
+        var read_buf: [4096]u8 = undefined;
+        var reader = stdout_file.reader(io, &read_buf);
+        const output = reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024)) catch return error.ClaudeExecutionFailed;
+        defer allocator.free(output);
+
+        const term = child.wait(io) catch return error.ClaudeExecutionFailed;
+        switch (term) {
+            .exited => |code| {
+                if (code != 0) return error.ClaudeExecutionFailed;
+            },
+            else => return error.ClaudeExecutionFailed,
+        }
+
+        return try parseStreamJson(allocator, output);
     }
 
     /// Parse claude stream-json output lines for a result event.
@@ -143,20 +183,70 @@ pub const ClaudeCliProvider = struct {
 
 /// Check if a CLI tool is available in PATH using `which`.
 fn checkCliAvailable(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    // TODO: Zig 0.16.0 - Child API changed
-    _ = allocator; // suppress unused
-    _ = cli_name; // suppress unused
-    _ = allocator; // suppress unused parameter warning
-    return error.NotSupported;
+    _ = allocator;
+    const io = std.Options.debug_io;
+
+    // Try to run `which <cli_name>` to check if it exists
+    var argv = [_][]const u8{ "which", cli_name };
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch return error.NotSupported;
+
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
+
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    const term = child.wait(io) catch return error.NotSupported;
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) return error.NotSupported;
+        },
+        else => return error.NotSupported,
+    }
 }
 
 /// Run `<cli> --version` and verify exit code 0.
 fn checkCliVersion(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    // TODO: Zig 0.16.0 - Child API changed
-    _ = allocator; // suppress unused
-    _ = cli_name; // suppress unused
-    _ = allocator; // suppress unused parameter warning
-    return error.NotSupported;
+    const io = std.Options.debug_io;
+
+    // Run `<cli> --version` to verify it works
+    const version_arg = try std.fmt.allocPrint(allocator, "--version", .{});
+    defer allocator.free(version_arg);
+
+    var argv = [_][]const u8{ cli_name, version_arg };
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch return error.NotSupported;
+
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
+
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    const term = child.wait(io) catch return error.NotSupported;
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) return error.NotSupported;
+        },
+        else => return error.NotSupported,
+    }
 }
 
 /// Extract the content of the last user message from a message slice.
@@ -256,7 +346,6 @@ test "ClaudeCliProvider vtable has correct function pointers" {
 }
 
 test "ClaudeCliProvider.init returns NotSupported for missing binary" {
-    // TODO: Zig 0.16.0 - Child API changed, checkCliAvailable returns NotSupported
     const result = checkCliAvailable(std.testing.allocator, "nonexistent_binary_xyzzy_12345");
     try std.testing.expectError(error.NotSupported, result);
 }

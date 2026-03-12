@@ -1846,7 +1846,7 @@ fn handleCapabilitiesCommand(self: anytype, arg: []const u8) ![]const u8 {
     const trimmed = std.mem.trim(u8, arg, " \t");
     const as_json = std.mem.eql(u8, trimmed, "--json") or std.ascii.eqlIgnoreCase(trimmed, "json");
 
-    var cfg_opt: ?config_module.Config = config_module.Config.load(self.allocator) catch null;
+    var cfg_opt: ?config_module.Config = config_module.Config.load(self.allocator, std.Options.debug_io) catch null;
     defer if (cfg_opt) |*cfg| cfg.deinit();
     const cfg_ptr: ?*const config_module.Config = if (cfg_opt) |*cfg| cfg else null;
 

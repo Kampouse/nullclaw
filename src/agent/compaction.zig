@@ -461,19 +461,44 @@ fn openWorkspaceAgentsFileGuarded(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
 ) ?std.Io.File {
-    _ = allocator;
-    _ = workspace_dir;
-    // TODO: Zig 0.16.0 - realpathAlloc and fs APIs changed, stubbed for now
-    return null;
+    // Try to open AGENTS.md file from workspace
+    const agents_path = std.fs.path.join(allocator, &.{ workspace_dir, "AGENTS.md" }) catch return null;
+    defer allocator.free(agents_path);
+
+    const file = std.Io.Dir.cwd().openFile(io, agents_path, .{}) catch return null;
+
+    // Check file size to prevent reading overly large files
+    const stat = file.stat(io) catch {
+        file.close(io);
+        return null;
+    };
+
+    if (stat.size > MAX_AGENTS_FILE_BYTES) {
+        file.close(io);
+        return null;
+    }
+
+    return file;
 }
 
 fn readWorkspaceContextForSummary(
     allocator: std.mem.Allocator,
     workspace_dir: ?[]const u8,
 ) ![]u8 {
-    _ = workspace_dir;
-    // TODO: Zig 0.16.0 - readToEndAlloc and file APIs changed, stubbed for now
-    return try allocator.dupe(u8, "");
+    if (workspace_dir) |dir| {
+        // Try to read AGENTS.md file from workspace
+        const agents_path = try std.fs.path.join(allocator, &.{ dir, "AGENTS.md" });
+        defer allocator.free(agents_path);
+
+        var read_buf: [8192]u8 = undefined;
+        const file = std.Io.Dir.cwd().openFile(io, agents_path, .{}) catch return allocator.dupe(u8, "");
+        defer file.close(io);
+
+        var reader = file.reader(io, &read_buf);
+        const content = reader.interface.readAlloc(allocator, MAX_AGENTS_FILE_BYTES) catch return allocator.dupe(u8, "");
+        return content;
+    }
+    return allocator.dupe(u8, "");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

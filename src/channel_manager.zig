@@ -4,7 +4,6 @@
 //! generic system that handles all configured channels.
 
 const std = @import("std");
-const io = std.Options.debug_io;
 const Allocator = std.mem.Allocator;
 const bus_mod = @import("bus.zig");
 const Config = @import("config.zig").Config;
@@ -360,13 +359,13 @@ pub const ChannelManager = struct {
 
     /// Monitoring loop: check health, restart failed channels with backoff.
     /// Blocks until shutdown.
-    pub fn supervisionLoop(self: *ChannelManager, state: *daemon.DaemonState) void {
+    pub fn supervisionLoop(self: *ChannelManager, state: *daemon.DaemonState, io: std.Io) void {
         const STALE_THRESHOLD_SECS: i64 = 600;
         const WATCH_INTERVAL_SECS: u64 = 10;
 
         while (!daemon.isShutdownRequested()) {
             // Sleep between iterations to avoid busy-waiting
-            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = WATCH_INTERVAL_SECS * std.time.ns_per_s }, .real) catch {};
+            std.Io.sleep(io, .{ .nanoseconds = WATCH_INTERVAL_SECS * std.time.ns_per_s }, .real) catch {};
             if (daemon.isShutdownRequested()) break;
 
             for (self.entries.items) |*entry| {
@@ -385,7 +384,7 @@ pub const ChannelManager = struct {
                             log.info("Restarting {s} gateway (attempt {d})", .{ entry.name, entry.supervised.restart_count });
                             state.markError("channels", "gateway health check failed");
                             entry.channel.stop();
-                            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = @as(i96, entry.supervised.currentBackoffMs()) * std.time.ns_per_ms }, .real) catch {};
+                            std.Io.sleep(io, .{ .nanoseconds = @as(i96, entry.supervised.currentBackoffMs()) * std.time.ns_per_ms }, .real) catch {};
                             entry.channel.start() catch |err| {
                                 log.err("Failed to restart {s} gateway: {}", .{ entry.name, err });
                                 continue;
@@ -430,7 +429,7 @@ pub const ChannelManager = struct {
                         self.stopPollingThread(entry);
 
                         // Backoff
-                        std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = @as(i96, entry.supervised.currentBackoffMs()) * std.time.ns_per_ms }, .real) catch {};
+                        std.Io.sleep(io, .{ .nanoseconds = @as(i96, entry.supervised.currentBackoffMs()) * std.time.ns_per_ms }, .real) catch {};
 
                         // Respawn
                         if (self.runtime) |rt| {

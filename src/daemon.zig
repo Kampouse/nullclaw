@@ -404,6 +404,7 @@ fn channelSupervisorThread(
     channel_registry: *dispatch.ChannelRegistry,
     channel_rt: ?*channel_loop.ChannelRuntime,
     event_bus: *bus_mod.Bus,
+    io: std.Io,
 ) void {
     var mgr = channel_manager.ChannelManager.init(allocator, config, channel_registry) catch {
         state.markError("channels", "init_failed");
@@ -430,7 +431,7 @@ fn channelSupervisorThread(
     if (started > 0) {
         state.markRunning("channels");
         health.markComponentOk("channels");
-        mgr.supervisionLoop(state); // blocks until shutdown
+        mgr.supervisionLoop(state, io); // blocks until shutdown
     } else {
         health.markComponentOk("channels");
     }
@@ -758,7 +759,7 @@ fn inboundDispatcherThread(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(runtime.config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(runtime.config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
     }
 }
@@ -974,7 +975,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     var chan_thread: ?std.Thread = null;
     if (has_supervised_channels) {
         if (std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, channelSupervisorThread, .{
-            allocator, config, &state, &channel_registry, channel_rt, &event_bus,
+            allocator, config, &state, &channel_registry, channel_rt, &event_bus, std.Options.debug_io,
         })) |thread| {
             chan_thread = thread;
         } else |err| {
@@ -1933,7 +1934,7 @@ test "channelSupervisorThread respects shutdown" {
 
     std.debug.print("Spawning channelSupervisorThread...\n", .{});
     const thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, channelSupervisorThread, .{
-        std.testing.allocator, &config, &state, &channel_registry, null, &event_bus,
+        std.testing.allocator, &config, &state, &channel_registry, null, &event_bus, std.Options.debug_io,
     });
     std.debug.print("Thread spawned, joining...\n", .{});
     thread.join();

@@ -50,9 +50,23 @@ pub fn exportSnapshot(allocator: std.mem.Allocator, mem: Memory, workspace_dir: 
 
     try json_buf.appendSlice(allocator, "\n]\n");
 
-    // Write to file
-    // TODO: Zig 0.16.0 - file write API changed, stubbed for now
-    _ = workspace_dir;
+    // Write to file (Zig 0.16.0 I/O API)
+    const snapshot_path = try std.fs.path.join(allocator, &.{ workspace_dir, SNAPSHOT_FILENAME });
+    defer allocator.free(snapshot_path);
+
+    const file = std.Io.Dir.cwd().createFile(io, snapshot_path, .{}) catch |err| {
+        std.log.err("Failed to create snapshot file: {}", .{err});
+        return error.SnapshotWriteFailed;
+    };
+    defer file.close(io);
+
+    var write_buf: [8192]u8 = undefined;
+    var bw = file.writer(io, &write_buf);
+    const w = &bw.interface;
+
+    try w.writeAll(json_buf.items);
+    try w.flush();
+
     return entries.len;
 }
 
@@ -68,11 +82,59 @@ const SnapshotEntry = struct {
 /// Restore memory entries from a JSON snapshot file.
 /// Returns the number of entries hydrated.
 pub fn hydrateFromSnapshot(allocator: std.mem.Allocator, mem: Memory, workspace_dir: []const u8) !usize {
-    _ = allocator;
-    _ = mem;
-    _ = workspace_dir;
-    // TODO: Zig 0.16.0 - readFileAlloc API change, stubbed for now
-    return 0;
+    const snapshot_path = try std.fs.path.join(allocator, &.{ workspace_dir, SNAPSHOT_FILENAME });
+    defer allocator.free(snapshot_path);
+
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, snapshot_path, allocator, .limited(10 * 1024 * 1024)) catch |err| {
+        std.log.err("Failed to read snapshot file: {}", .{err});
+        return error.SnapshotReadFailed;
+    };
+    defer allocator.free(json_bytes);
+
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch |err| {
+        std.log.err("Failed to parse snapshot JSON: {}", .{err});
+        return error.SnapshotParseFailed;
+    };
+    defer parsed.deinit();
+
+    const root_array = switch (parsed.value) {
+        .array => |arr| arr,
+        else => return error.SnapshotInvalidFormat,
+    };
+
+    var hydrated_count: usize = 0;
+    for (root_array.items) |entry_val| {
+        const entry_obj = switch (entry_val) {
+            .object => |obj| obj,
+            else => continue,
+        };
+
+        const key = switch (entry_obj.get("key") orelse continue) {
+            .string => |s| s,
+            else => continue,
+        };
+
+        const content = switch (entry_obj.get("content") orelse continue) {
+            .string => |s| s,
+            else => continue,
+        };
+
+        const category_str = switch (entry_obj.get("category") orelse continue) {
+            .string => |s| s,
+            else => continue,
+        };
+
+        const category = MemoryCategory.fromString(category_str);
+
+        mem.store(key, content, category, null) catch |err| {
+            std.log.err("Failed to hydrate memory entry {s}: {}", .{key, err});
+            continue;
+        };
+
+        hydrated_count += 1;
+    }
+
+    return hydrated_count;
 }
 
 // ── Should hydrate ────────────────────────────────────────────────

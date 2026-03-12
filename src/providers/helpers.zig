@@ -30,7 +30,7 @@ pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) 
     var auth_buf: [512]u8 = undefined;
     const auth_val = std.fmt.bufPrint(&auth_buf, "Bearer {s}", .{api_key}) catch return error.NoApiKey;
 
-    var client: std.http.Client = .{ .allocator = allocator, .io = undefined }; // TODO: Zig 0.16.0 needs proper io
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
     var aw: std.Io.Writer.Allocating = .init(allocator);

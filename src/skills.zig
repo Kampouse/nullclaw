@@ -1227,8 +1227,9 @@ fn removeGitMetadata(skill_path: []const u8) !void {
     var git_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
     const git_dir = std.fmt.bufPrint(&git_dir_buf, "{s}/.git", .{skill_path}) catch
         return error.PathTooLong;
-    // TODO: Zig 0.16 - deleteTreeAbsolute API changed, skip for now
-    _ = git_dir;
+
+    // Remove .git directory if it exists
+    std.Io.Dir.cwd().deleteTree(io, git_dir) catch {};
 }
 
 fn pathExists(path: []const u8) bool {
@@ -1348,16 +1349,16 @@ fn installSkillDirectoryToWorkspace(
 
     copyDirRecursiveSecure(allocator, source_path, target_path) catch |err| {
         if (!target_existed) {
-            // TODO: Zig 0.16 - deleteTreeAbsolute API changed
-            // std.fs.deleteTreeAbsolute(target_path) catch {};
+            // Clean up failed copy attempt
+            std.Io.Dir.cwd().deleteTree(io, target_path) catch {};
         }
         return err;
     };
 
     auditSkillDirectory(allocator, target_path) catch |err| {
         if (!target_existed) {
-            // TODO: Zig 0.16 - deleteTreeAbsolute API changed
-            // std.fs.deleteTreeAbsolute(target_path) catch {};
+            // Clean up failed audit attempt
+            std.Io.Dir.cwd().deleteTree(io, target_path) catch {};
         }
         return err;
     };
@@ -1479,8 +1480,8 @@ fn installSkillFromGit(
 
     var cleanup_cloned_dir = true;
     defer if (cleanup_cloned_dir) {
-        // TODO: Zig 0.16 - deleteTreeAbsolute API changed
-        // std.fs.deleteTreeAbsolute(cloned_dir) catch {};
+        // Clean up cloned directory on failure
+        std.Io.Dir.cwd().deleteTree(io, cloned_dir) catch {};
     };
 
     try removeGitMetadata(cloned_dir);

@@ -168,7 +168,7 @@ pub fn run(allocator: std.mem.Allocator) !void {
     const stdout = &bw.interface;
     const color = shouldColorize(stdout_file);
 
-    var cfg = Config.load(allocator) catch {
+    var cfg = Config.load(allocator, std.Options.debug_io) catch {
         const prefix = if (color)
             Color.red ++ "[ERR]" ++ Color.reset
         else
@@ -652,7 +652,7 @@ fn checkChannels(allocator: std.mem.Allocator, cfg: *const Config, items: *std.A
 
 /// Check a specific diagnostic (utility for programmatic access).
 pub fn checkConfig(allocator: std.mem.Allocator) DiagResult {
-    var cfg = Config.load(allocator) catch {
+    var cfg = Config.load(allocator, std.Options.debug_io) catch {
         return .{ .name = "config", .ok = false, .message = "No config found" };
     };
     cfg.deinit();

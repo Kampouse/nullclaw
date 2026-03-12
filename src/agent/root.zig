@@ -683,7 +683,7 @@ pub const Agent = struct {
             self.system_prompt_has_conversation_context != turn_has_conversation_context;
 
         if (!self.has_system_prompt or conversation_context_changed) {
-            var cfg_for_caps_opt: ?Config = Config.load(self.allocator) catch null;
+            var cfg_for_caps_opt: ?Config = Config.load(self.allocator, std.Options.debug_io) catch null;
             defer if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded.deinit();
             const cfg_for_caps_ptr: ?*const Config = if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded else null;
 
@@ -906,8 +906,7 @@ pub const Agent = struct {
                     }
 
                     // Retry once
-                    // TODO: Zig 0.16.0 - Thread.sleep API changed, stubbed for now
-                    _ = 500 * std.time.ns_per_ms;
+                    util.sleep(500 * std.time.ns_per_ms);
                     response_attempt = 2;
                     self.logLlmRequest(iteration + 1, 2, messages, native_tools_enabled, false);
                     break :retry_blk self.provider.chat(

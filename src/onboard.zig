@@ -581,7 +581,7 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     try stdout.writeAll("  Quick Setup -- generating config with sensible defaults...\n\n");
 
     // Load or create config
-    var cfg = Config.load(allocator) catch try initFreshConfig(allocator);
+    var cfg = Config.load(allocator, std.Options.debug_io) catch try initFreshConfig(allocator);
     defer cfg.deinit();
 
     // Apply overrides
@@ -624,7 +624,7 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
 
     // Save config so subsequent commands can find it
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     // Print concise summary
     try stdout.print("  [OK] Workspace:  {s}\n", .{cfg.workspace_dir});
@@ -674,7 +674,7 @@ pub fn runChannelsOnly(allocator: std.mem.Allocator) !void {
     var input_buf: [512]u8 = undefined;
     resetStdinLineReader();
 
-    var cfg = Config.load(allocator) catch {
+    var cfg = Config.load(allocator, std.Options.debug_io) catch {
         try stdout.writeAll("No existing config found. Run `nullclaw onboard` first.\n");
         try stdout.flush();
         return error.ConfigNotFound;
@@ -684,7 +684,7 @@ pub fn runChannelsOnly(allocator: std.mem.Allocator) !void {
     try stdout.writeAll("Channel setup wizard:\n");
     const changed = try configureChannelsInteractive(allocator, &cfg, stdout, &input_buf, "");
     if (changed) {
-        try cfg.save();
+        try cfg.save(std.Options.debug_io);
         try stdout.writeAll("Channel configuration saved.\n\n");
     } else {
         try stdout.writeAll("No channel changes applied.\n\n");
@@ -1339,7 +1339,7 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     var input_buf: [512]u8 = undefined;
 
     // Load existing or create fresh config
-    var cfg = Config.load(allocator) catch try initFreshConfig(allocator);
+    var cfg = Config.load(allocator, std.Options.debug_io) catch try initFreshConfig(allocator);
     defer cfg.deinit();
 
     // ── Step 1: Provider selection ──
@@ -1531,7 +1531,7 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
 
     // Save config
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     // Print summary
     try out.writeAll("  ── Configuration complete ──\n\n");

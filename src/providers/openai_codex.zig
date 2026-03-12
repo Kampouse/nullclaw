@@ -5,6 +5,7 @@
 //! Plus/Pro subscriptions can use this without separate API tokens.
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const root = @import("root.zig");
 const sse = @import("sse.zig");
 const platform = @import("../platform.zig");
@@ -810,9 +811,53 @@ pub fn extractAccountIdFromJwt(allocator: std.mem.Allocator, token: []const u8) 
 /// Returns an OAuthToken with access_token, refresh_token, and decoded JWT exp.
 /// Returns null on any error (file not found, parse failure, etc.).
 pub fn tryLoadCodexCliToken(allocator: std.mem.Allocator) ?auth.OAuthToken {
-    _ = allocator;
-    // TODO: Zig 0.16.0 - readFileAlloc API change, stubbed for now
-    return null;
+    // Keep tests deterministic and side-effect free: never read or write real
+    // ~/.codex credentials while running under std.testing.
+    if (@import("builtin").is_test) return null;
+
+    const home = platform.getHomeDir(allocator) catch return null;
+    defer allocator.free(home);
+
+    const path = std.fs.path.join(allocator, &.{ home, ".codex", "auth.json" }) catch return null;
+    defer allocator.free(path);
+
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024)) catch return null;
+    defer allocator.free(json_bytes);
+
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return null;
+    defer parsed.deinit();
+
+    const root_obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    const access_token = switch (root_obj.get("access_token") orelse return null) {
+        .string => |s| s,
+        else => return null,
+    };
+
+    const refresh_token_val = root_obj.get("refresh_token") orelse null;
+    const refresh_token: ?[]const u8 = if (refresh_token_val) |rt|
+        switch (rt) {
+            .string => |s| s,
+            else => null,
+        }
+    else
+        null;
+
+    // Decode JWT exp claim
+    const exp = decodeJwtExp(allocator, access_token);
+
+    return auth.OAuthToken{
+        .access_token = allocator.dupe(u8, access_token) catch return null,
+        .refresh_token = if (refresh_token) |rt|
+            allocator.dupe(u8, rt) catch null
+        else
+            null,
+        .expires_at = exp,
+        .token_type = "Bearer",
+    };
 }
 
 /// Decode the "exp" claim from a JWT, returning the Unix timestamp or 0 if not decodable.

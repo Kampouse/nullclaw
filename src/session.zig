@@ -9,7 +9,7 @@
 //! sessions are processed in parallel.
 
 const std = @import("std");
-const io = std.Options.debug_io;
+const util = @import("util.zig");
 const Allocator = std.mem.Allocator;
 const Config = @import("config.zig").Config;
 const Agent = @import("agent/root.zig").Agent;
@@ -334,9 +334,9 @@ pub const SessionManager = struct {
     }
 
     /// Evict sessions idle longer than max_idle_secs. Returns number evicted.
-    pub fn evictIdle(self: *SessionManager, max_idle_secs: u64) usize {
-        self.mutex.lock(std.Options.debug_io) catch return 0;
-        defer self.mutex.unlock(std.Options.debug_io);
+    pub fn evictIdle(self: *SessionManager, max_idle_secs: u64, io: std.Io) usize {
+        self.mutex.lock(io) catch return 0;
+        defer self.mutex.unlock(io);
 
         const now_ns = std.Io.Clock.real.now(io).nanoseconds;
         const now = @as(u64, @intCast(@as(u128, @intCast(now_ns)) / 1_000_000_000));
@@ -708,7 +708,7 @@ test "processMessage updates last_active" {
     const before = session.last_active;
 
     // Small sleep so timestamp changes
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+    util.sleep(10 * std.time.ns_per_ms);
 
     const resp = try sm.processMessage("user:2", "hello", null);
     defer testing.allocator.free(resp);
@@ -970,7 +970,7 @@ test "evictIdle removes old sessions" {
     // Force last_active to the past
     session.last_active = 0 - 1000;
 
-    const evicted = sm.evictIdle(500);
+    const evicted = sm.evictIdle(500, std.Options.debug_io);
     try testing.expectEqual(@as(usize, 1), evicted);
     try testing.expectEqual(@as(usize, 0), sm.sessionCount());
 }
@@ -984,7 +984,7 @@ test "evictIdle preserves recent sessions" {
     _ = try sm.getOrCreate("recent:1");
     // This session was just created, last_active is now
 
-    const evicted = sm.evictIdle(3600); // 1 hour threshold
+    const evicted = sm.evictIdle(3600, std.Options.debug_io); // 1 hour threshold
     try testing.expectEqual(@as(usize, 0), evicted);
     try testing.expectEqual(@as(usize, 1), sm.sessionCount());
 }
@@ -1004,7 +1004,7 @@ test "evictIdle returns correct count" {
     s2.last_active = 0 - 2000;
     // s3 stays recent
 
-    const evicted = sm.evictIdle(1000);
+    const evicted = sm.evictIdle(1000, std.Options.debug_io);
     try testing.expectEqual(@as(usize, 2), evicted);
     try testing.expectEqual(@as(usize, 1), sm.sessionCount());
 }
@@ -1015,7 +1015,7 @@ test "evictIdle with no sessions returns 0" {
     var sm = testSessionManager(testing.allocator, &mock, &cfg);
     defer sm.deinit();
 
-    try testing.expectEqual(@as(usize, 0), sm.evictIdle(60));
+    try testing.expectEqual(@as(usize, 0), sm.evictIdle(60, std.Options.debug_io));
 }
 
 // ---------------------------------------------------------------------------
@@ -1293,7 +1293,7 @@ test "session deinit frees session_key memory" {
     try testing.expectEqual(@as(usize, 1), sm.sessionCount());
     
     // Evict should free the session_key
-    const evicted = sm.evictIdle(0); // Evict all
+    const evicted = sm.evictIdle(0, std.Options.debug_io); // Evict all
     try testing.expectEqual(@as(usize, 1), evicted);
     try testing.expectEqual(@as(usize, 0), sm.sessionCount());
 }
@@ -1347,7 +1347,7 @@ test "sessionCount after evictIdle" {
     _ = try sm.getOrCreate("count:c");
     try testing.expectEqual(@as(usize, 3), sm.sessionCount());
     
-    _ = sm.evictIdle(0);
+    _ = sm.evictIdle(0, std.Options.debug_io);
     try testing.expectEqual(@as(usize, 0), sm.sessionCount());
 }
 

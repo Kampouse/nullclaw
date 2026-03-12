@@ -1573,7 +1573,7 @@ pub fn cliResumeJob(allocator: std.mem.Allocator, id: []const u8) !void {
 }
 
 pub fn cliRunJob(allocator: std.mem.Allocator, id: []const u8) !void {
-    var cfg_opt: ?Config = Config.load(allocator) catch null;
+    var cfg_opt: ?Config = Config.load(allocator, io) catch null;
     defer if (cfg_opt) |*cfg| cfg.deinit();
 
     var scheduler = CronScheduler.init(allocator, 1024, true);

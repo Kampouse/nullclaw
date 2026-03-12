@@ -127,7 +127,7 @@ fn parseAgentArgs(args: []const []const u8) AgentArgParseResult {
 /// Run the agent in single-message or interactive REPL mode.
 /// This is the main entry point called by `nullclaw agent`.
 pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
-    var cfg = Config.load(allocator) catch {
+    var cfg = Config.load(allocator, io) catch {
         log.err("No config found. Run `nullclaw onboard` first.", .{});
         return;
     };

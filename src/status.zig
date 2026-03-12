@@ -4,7 +4,7 @@ const version = @import("version.zig");
 const channel_catalog = @import("channel_catalog.zig");
 
 pub fn run(allocator: std.mem.Allocator) !void {
-    var cfg = Config.load(allocator) catch {
+    var cfg = Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("nullclaw Status (no config found -- run `nullclaw onboard` first)\n", .{});
         std.debug.print("\nVersion: {s}\n", .{version.string});
         return;

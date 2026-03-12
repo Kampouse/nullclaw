@@ -271,11 +271,7 @@ pub fn tryLoadGeminiCliToken(allocator: std.mem.Allocator) ?GeminiCliCredentials
     const path = std.fs.path.join(allocator, &.{ home, ".gemini", "oauth_creds.json" }) catch return null;
     defer allocator.free(path);
 
-    const file = openFileAbsolute(path, .{}) catch return null;
-    defer file.close(io);
-
-    // TODO: Zig 0.16.0 - use reader pattern
-    const json_bytes: []const u8 = "";
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024)) catch return null;
     defer allocator.free(json_bytes);
 
     const creds = parseCredentialsJson(allocator, json_bytes) orelse return null;

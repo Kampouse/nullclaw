@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const io = std.Options.debug_io;
+const util = @import("../../util.zig");
 const build_options = @import("build_options");
 const root = @import("../root.zig");
 const Memory = root.Memory;
@@ -119,10 +120,15 @@ fn archiveOldFiles(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
     const archive_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory", "archive" });
     defer allocator.free(archive_path);
 
-    // TODO: Zig 0.16.0 - makeDir API changed, skip directory creation for now
+    // Create archive directory if it doesn't exist
+    std.Io.Dir.cwd().createDirPath(io, archive_path) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
 
-    const cutoff_secs = 0 - @as(i64, @intCast(config.archive_after_days)) * 24 * 60 * 60;
-    const moved: u64 = 0;
+    const now_secs = util.timestampUnix();
+    const cutoff_secs = now_secs - @as(i64, @intCast(config.archive_after_days)) * 24 * 60 * 60;
+    var moved: u64 = 0;
 
     var iter = memory_dir.iterate();
     while (iter.next(io) catch null) |entry| {
@@ -132,13 +138,33 @@ fn archiveOldFiles(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
         // Only process .md files
         if (!std.mem.endsWith(u8, name, ".md")) continue;
 
-        // Check file modification time
-        // TODO: Zig 0.16.0 - Io.Timestamp API changed, skip time check for now
-        const mtime_secs: i64 = 0;
+        // Get file modification time
+        const file_path = try std.fs.path.join(allocator, &.{ memory_dir_path, name });
+        defer allocator.free(file_path);
+
+        const file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+        const stat = file.stat(io) catch {
+            file.close(io);
+            continue;
+        };
+        file.close(io);
+
+        const mtime_secs = @divFloor(stat.mtime.nanoseconds, std.time.ns_per_s);
         if (mtime_secs >= cutoff_secs) continue;
 
-        // TODO: Zig 0.16.0 - rename API changed, skip archiving for now
-        continue;
+        // Move file to archive
+        const archive_file_path = try std.fs.path.join(allocator, &.{ archive_path, name });
+        defer allocator.free(archive_file_path);
+
+        std.Io.Dir.renameAbsolute(file_path, archive_file_path, io) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+
+        moved += 1;
     }
 
     return moved;
@@ -149,12 +175,46 @@ fn purgeOldArchives(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
     const archive_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory", "archive" });
     defer allocator.free(archive_path);
 
-    _ = config.purge_after_days; // TODO: Zig 0.16.0 - Io.Timestamp API changed, skip time check for now
     var archive_dir = std.Io.Dir.cwd().openDir(io, archive_path, .{ .iterate = true }) catch return 0;
     defer archive_dir.close(io);
-    const removed: u64 = 0;
 
-    // TODO: Zig 0.16.0 - file iteration and deleteFile API changed, skip for now
+    const now_secs = util.timestampUnix();
+    const cutoff_secs = now_secs - @as(i64, @intCast(config.purge_after_days)) * 24 * 60 * 60;
+    var removed: u64 = 0;
+
+    var iter = archive_dir.iterate();
+    while (iter.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const name = entry.name;
+
+        // Only process .md files
+        if (!std.mem.endsWith(u8, name, ".md")) continue;
+
+        // Get file modification time
+        const file_path = try std.fs.path.join(allocator, &.{ archive_path, name });
+        defer allocator.free(file_path);
+
+        const file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+        const stat = file.stat(io) catch {
+            file.close(io);
+            continue;
+        };
+        file.close(io);
+
+        const mtime_secs = @divFloor(stat.mtime.nanoseconds, std.time.ns_per_s);
+        if (mtime_secs >= cutoff_secs) continue;
+
+        // Delete the file
+        std.Io.Dir.cwd().deleteFile(io, file_path) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+
+        removed += 1;
+    }
 
     return removed;
 }

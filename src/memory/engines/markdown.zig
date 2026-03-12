@@ -61,17 +61,18 @@ pub const MarkdownMemory = struct {
 
     fn ensureDir(path: []const u8) !void {
         if (std.fs.path.dirname(path)) |dir| {
-            // TODO: Zig 0.16.0 - makeDirAbsolute removed
-            // For now, skip directory creation
-            _ = dir;
+            // Create parent directory if it doesn't exist
+            std.Io.Dir.cwd().createDirPath(io, dir) catch |err| switch (err) {
+                error.PathAlreadyExists => {},
+                else => {},
+            };
         }
     }
 
     fn appendToFile(path: []const u8, content: []const u8, allocator: std.mem.Allocator) !void {
         try ensureDir(path);
 
-        // TODO: Zig 0.16.0 - Simplified append without seeking
-        // For now, just append content directly
+        // Append to file (truncate=false preserves existing content)
         const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .read = false });
         defer file.close(io);
 
@@ -179,7 +180,14 @@ pub const MarkdownMemory = struct {
                 if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
                 const fpath = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ md, entry.name });
                 defer allocator.free(fpath);
-                // TODO: Zig 0.16.0 - readFileAlloc API change, skip loading for now
+
+                // Read and parse markdown file
+                const content = std.Io.Dir.cwd().readFileAlloc(io, fpath, allocator, .limited(10 * 1024 * 1024)) catch continue;
+                defer allocator.free(content);
+
+                const entries = try parseEntries(content, entry.name, .core, allocator);
+                defer allocator.free(entries);
+                for (entries) |e| try all.append(allocator, e);
             }
         } else |_| {}
 

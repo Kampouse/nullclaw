@@ -47,15 +47,51 @@ pub const McpServer = struct {
 
     /// Spawn child process and perform the MCP initialize handshake.
     pub fn connect(self: *McpServer) !void {
-        _ = self;
-        // TODO: Fix for Zig 0.16.0 - Child process API changed
-        // Need to update to use std.process.spawn()
-        return error.McpNotSupported;
-        
-        // Old code (needs update):
-        // var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_list.items });
-        // child.stdin_behavior = .Pipe;
-        // ...
+        // Build argv list
+        var argv_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer argv_list.deinit(self.allocator);
+
+        try argv_list.append(self.allocator, self.config.command);
+        for (self.config.args) |arg| {
+            try argv_list.append(self.allocator, arg);
+        }
+
+        // Build environment list
+        var env_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer {
+            for (env_list.items) |env| {
+                self.allocator.free(env);
+            }
+            env_list.deinit(self.allocator);
+        }
+
+        // Copy existing environment and add custom vars
+        for (self.config.env) |env_var| {
+            const env_str = try std.fmt.allocPrint(self.allocator, "{s}={s}", .{ env_var.key, env_var.value });
+            try env_list.append(self.allocator, env_str);
+        }
+
+        // Spawn child process with stdio pipes
+        self.child = std.process.spawn(io, .{
+            .argv = argv_list.items,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .ignore,
+        }) catch |err| {
+            log.err("Failed to spawn MCP server '{s}': {}", .{ self.name, err });
+            return err;
+        };
+
+        // Send initialize notification
+        const init_msg = \\{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"nullclaw","version":"0.1.0"}}}
+        ++ "\n";
+        const stdin = self.child.?.stdin orelse return error.NoStdin;
+        try stdin.writeStreamingAll(io, init_msg);
+
+        // Send initialized notification
+        const initialized_msg = \\{"jsonrpc":"2.0","method":"notifications/initialized"}
+        ++ "\n";
+        try stdin.writeStreamingAll(io, initialized_msg);
     }
 
     /// Request the list of tools from the MCP server.
@@ -133,26 +169,28 @@ pub const McpServer = struct {
     }
 
     fn readLine(self: *McpServer, allocator: Allocator) ![]const u8 {
-        _ = self;
-        _ = allocator;
-        // TODO: Fix for Zig 0.16.0 - read() API changed
-        return error.McpNotSupported;
-        
-        // Old code (needs reader API):
-        // var line_buf: std.ArrayList(u8) = .{};
-        // errdefer line_buf.deinit(allocator);
-        // var byte: [1]u8 = undefined;
-        // const stdout = self.child.?.stdout orelse return error.NoStdout;
-        // while (true) {
-        //     const n = stdout.read(&byte) catch return error.ReadFailed;
-        //     if (n == 0) return error.EndOfStream;
-        //     if (byte[0] == '\n') break;
-        //     if (byte[0] != '\r') { // skip CR
-        //         try line_buf.append(allocator, byte[0]);
-        //     }
-        // }
-        // if (line_buf.items.len == 0) return error.EmptyLine;
-        // return line_buf.toOwnedSlice(allocator);
+        var line_buf: std.ArrayList(u8) = .{};
+        errdefer line_buf.deinit(allocator);
+
+        var byte_buf: [1]u8 = undefined;
+        const stdout_file = self.child.?.stdout orelse return error.NoStdout;
+        var reader_buf: [1024]u8 = undefined;
+        var reader = stdout_file.reader(io, &reader_buf);
+
+        while (true) {
+            const n = reader.interface.readSliceShort(&byte_buf) catch |err| {
+                if (err == error.EndOfStream) return error.EndOfStream;
+                return error.ReadFailed;
+            };
+            if (n == 0) return error.EndOfStream;
+            if (byte_buf[0] == '\n') break;
+            if (byte_buf[0] != '\r') { // skip CR
+                try line_buf.append(allocator, byte_buf[0]);
+            }
+        }
+
+        if (line_buf.items.len == 0) return error.EmptyLine;
+        return line_buf.toOwnedSlice(allocator);
     }
 };
 

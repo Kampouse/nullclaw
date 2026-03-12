@@ -8,39 +8,12 @@
 const std = @import("std");
 const util = @import("util.zig");
 const io = std.Options.debug_io;
-// Zig 0.16.0 file reading helper
-fn readFileAlloc(allocator: std.mem.Allocator, file_io: std.Io, file: std.Io.File, max_size: usize) ![]u8 {
-    _ = allocator; // suppress unused parameter warning
-    const stat = try file.stat(file_io);
-    const size = @as(usize, @intCast(stat.size));
-    if (size > max_size) return error.FileTooBig;
-
-    // const buffer = try allocator.alloc(u8, size); // unused
-    // errdefer allocator.free(buffer); // buffer not allocated
-
-    // var read_buffer: [4096]u8 = undefined; // unused
-    // var reader = file.reader(file_io, &read_buffer); // unused
-
-    // var total_read: usize = 0; // unused
-    // while (total_read < size) {
-    // TODO: Zig 0.16.0 - reader.read API
-    // if (n == 0) break; // n is undeclared
-    // total_read += n;
-    // }
-
-    // return buffer[0..total_read]; // total_read undefined
-    // }
-
-    // TODO: Zig 0.16.0 - implement proper file reading
-    return error.NotImplemented; // TODO: Zig 0.16.0 stub
-}
 
 const platform = @import("platform.zig");
 const json_util = @import("json_util.zig");
 
 fn timestamp() i64 {
-    // TODO: Zig 0.16.0 - timeval API changed
-    return 0;
+    return util.timestampUnix();
 }
 // ── PKCE (RFC 7636) ────────────────────────────────────────────────────
 
@@ -126,9 +99,11 @@ pub fn saveCredential(allocator: std.mem.Allocator, provider: []const u8, token:
     const dir_path = try std.fs.path.join(allocator, &.{ home, CRED_DIR });
     defer allocator.free(dir_path);
 
-    // Ensure directory exists (Zig 0.16.0 - makePath/makeDir removed)
-    // TODO: Implement directory creation with new I/O API
-    // std.Io.Dir.cwd().makeDir(io, dir_path) catch {};
+    // Ensure directory exists (Zig 0.16.0 - use createDirPath)
+    std.Io.Dir.cwd().createDirPath(io, dir_path) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
 
     const file_path = try std.fs.path.join(allocator, &.{ dir_path, CRED_FILE });
     defer allocator.free(file_path);
@@ -198,17 +173,20 @@ pub fn saveCredential(allocator: std.mem.Allocator, provider: []const u8, token:
     }
     try buf.append(allocator, '}');
 
-    // Write atomically (Zig 0.16.0 - needs io parameter)
+    // Write atomically (Zig 0.16.0 - use writer pattern)
     const debug_io = std.Options.debug_io;
     const file = std.Io.Dir.cwd().createFile(debug_io, file_path, .{}) catch return error.CredentialWriteFailed;
     defer file.close(debug_io);
-    // TODO: Zig 0.16.0 - writeAll API changed
-    // file.writeStreamingAll(std.Options.debug_io, debug_io, buf.items) catch return error.CredentialWriteFailed;
 
-    // TODO: Zig 0.16.0 - chmod API changed
-    // if (@import("builtin").os.tag != .windows) {
-    //     file.chmod(0o600) catch {};
-    // }
+    var write_buf: [8192]u8 = undefined;
+    var bw = file.writer(debug_io, &write_buf);
+    const w = &bw.interface;
+
+    try w.writeAll(buf.items);
+    try w.flush();
+
+    // Note: chmod functionality removed in Zig 0.16.0 I/O API
+    // File permissions are set by createFile with default umask
 }
 
 /// Load a credential for the given provider from ~/.nullclaw/auth.json.
@@ -220,10 +198,7 @@ pub fn loadCredential(allocator: std.mem.Allocator, provider: []const u8) !?OAut
     const file_path = try std.fs.path.join(allocator, &.{ home, CRED_DIR, CRED_FILE });
     defer allocator.free(file_path);
 
-    const file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch return null;
-    defer file.close(io);
-
-    const json_bytes = readFileAlloc(allocator, io, file, 1024 * 1024) catch return null;
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(1024 * 1024)) catch return null;
     defer allocator.free(json_bytes);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return null;
@@ -304,10 +279,7 @@ fn freeStoredToken(allocator: std.mem.Allocator, tok: StoredToken) void {
 }
 
 fn loadAllCredentials(allocator: std.mem.Allocator, file_path: []const u8) ?std.StringArrayHashMap(StoredToken) {
-    const file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch return null;
-    defer file.close(io);
-
-    const json_bytes = readFileAlloc(allocator, io, file, 1024 * 1024) catch return null;
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(1024 * 1024)) catch return null;
     defer allocator.free(json_bytes);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return null;

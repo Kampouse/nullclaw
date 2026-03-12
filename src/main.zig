@@ -174,7 +174,7 @@ fn applyGatewayDaemonOverrides(cfg: *yc.config.Config, sub_args: []const []const
 // ── Gateway ──────────────────────────────────────────────────────
 
 fn runGateway(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -219,7 +219,7 @@ fn runService(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
         std.process.exit(1);
     };
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -409,7 +409,7 @@ fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
 
     const subcmd = sub_args[0];
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -475,7 +475,7 @@ fn runSkills(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
         std.process.exit(1);
     }
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -651,7 +651,7 @@ fn runMigrate(io: std.Io, allocator: std.mem.Allocator, sub_args: []const []cons
             }
         }
 
-        var cfg = yc.config.Config.load(allocator) catch {
+        var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
             std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
             std.process.exit(1);
         };
@@ -765,7 +765,7 @@ fn runMemory(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
         std.process.exit(1);
     }
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -979,7 +979,7 @@ fn runWorkspace(allocator: std.mem.Allocator, sub_args: []const []const u8) !voi
         std.process.exit(1);
     }
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -1047,7 +1047,7 @@ fn runCapabilities(allocator: std.mem.Allocator, sub_args: []const []const u8) !
         }
     }
 
-    var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator) catch null;
+    var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator, std.Options.debug_io) catch null;
     defer if (cfg_opt) |*cfg| cfg.deinit();
     const cfg_ptr: ?*const yc.config.Config = if (cfg_opt) |*cfg| cfg else null;
 
@@ -1080,7 +1080,7 @@ fn runModels(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
     const subcmd = sub_args[0];
 
     if (std.mem.eql(u8, subcmd, "list")) {
-        var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator) catch null;
+        var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator, std.Options.debug_io) catch null;
         defer if (cfg_opt) |*c| c.deinit();
 
         std.debug.print("Current configuration:\n", .{});
@@ -1423,7 +1423,7 @@ fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8) !void
     }
 
     // Load config
-    var config = yc.config.Config.load(allocator) catch {
+    var config = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -2216,7 +2216,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
     }
 }

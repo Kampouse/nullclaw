@@ -557,12 +557,56 @@ pub const OpenRouterProvider = struct {
 
 /// HTTP GET via curl subprocess with auth header.
 fn curlGet(allocator: std.mem.Allocator, url: []const u8, auth_hdr: []const u8) ![]u8 {
-    // TODO: Zig 0.16.0 - Child API changed
-    _ = allocator; // suppress unused
-    _ = url; // suppress unused
-    _ = auth_hdr; // suppress unused
-    _ = allocator; // suppress unused parameter warning
-    return error.NotSupported;
+    var argv = std.ArrayListUnmanaged([]const u8){};
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{
+        "curl", "-s",
+        "-H", auth_hdr,
+        url,
+    });
+
+    const io = std.Options.debug_io;
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
+
+    // Close stdin
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    const stdout_file = child.stdout orelse return error.CurlFailed;
+    var read_buf: [4096]u8 = undefined;
+    var reader = stdout_file.reader(io, &read_buf);
+    const output = reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024)) catch return error.CurlFailed;
+
+    const term = child.wait(io) catch {
+        allocator.free(output);
+        return error.CurlFailed;
+    };
+
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) {
+                allocator.free(output);
+                return error.CurlFailed;
+            }
+        },
+        else => {
+            allocator.free(output);
+            return error.CurlFailed;
+        },
+    }
+
+    return output;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
