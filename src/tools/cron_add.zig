@@ -103,7 +103,7 @@ test "cron_add_requires_command" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"expression\": \"*/5 * * * *\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "command") != null);
 }
@@ -113,7 +113,7 @@ test "cron_add_requires_schedule" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"command\": \"echo hello\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "expression") != null or
         std.mem.indexOf(u8, result.error_msg.?, "delay") != null);
@@ -124,7 +124,7 @@ test "cron_add_with_expression" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"expression\": \"*/5 * * * *\", \"command\": \"echo hello\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Created cron job") != null);
@@ -136,7 +136,7 @@ test "cron_add_with_delay" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"delay\": \"30m\", \"command\": \"echo later\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Created cron job") != null);
@@ -148,7 +148,7 @@ test "cron_add_rejects_invalid_expression" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"expression\": \"bad cron\", \"command\": \"echo fail\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Invalid cron expression") != null);
 }

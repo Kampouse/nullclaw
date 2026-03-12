@@ -2580,12 +2580,12 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
                 const subagent_manager = allocator.create(subagent_mod.SubagentManager) catch null;
                 if (subagent_manager) |mgr| {
-                    mgr.* = subagent_mod.SubagentManager.init(allocator, cfg, event_bus, .{});
+                    mgr.* = subagent_mod.SubagentManager.init(allocator, io, cfg, event_bus, .{});
                     subagent_manager_opt = mgr;
                 }
 
                 // Tools.
-                tools_slice = tools_mod.allTools(allocator, cfg.workspace_dir, .{
+                tools_slice = tools_mod.allTools(allocator, cfg.workspace_dir, io, .{
                     .http_enabled = cfg.http_request.enabled,
                     .http_allowed_domains = cfg.http_request.allowed_domains,
                     .http_max_response_size = cfg.http_request.max_response_size,
@@ -4587,12 +4587,12 @@ test "jsonWrapResponse with clean input" {
 // ── GatewayThreadObserver tests ─────────────────────────────────
 
 test "GatewayThreadObserver init/deinit no leaks" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     obs.deinit();
 }
 
 test "GatewayThreadObserver records tool events and collectSince works" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     defer obs.deinit();
 
     const seq_before = obs.currentSeq();
@@ -4615,7 +4615,7 @@ test "GatewayThreadObserver records tool events and collectSince works" {
 }
 
 test "GatewayThreadObserver collectSince filters by sequence" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     defer obs.deinit();
 
     const event1 = observability.ObserverEvent{ .tool_call = .{ .tool = "shell", .duration_ms = 10, .success = true } };
@@ -4636,7 +4636,7 @@ test "GatewayThreadObserver collectSince filters by sequence" {
 }
 
 test "GatewayThreadObserver collectSince OOM frees partial output" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     defer obs.deinit();
 
     const event1 = observability.ObserverEvent{ .tool_call = .{ .tool = "shell", .duration_ms = 10, .success = true } };

@@ -415,7 +415,7 @@ test "zig_build rejects missing operation" {
     const t = zt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -425,7 +425,7 @@ test "zig_build rejects unknown operation" {
     const t = zt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"publish\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
@@ -436,7 +436,7 @@ test "zig_build blocks injection in args" {
     const t = zt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"build\", \"args\": \"-Drelease-fast; rm -rf /\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
 }
@@ -446,7 +446,7 @@ test "zig_build init missing project_name" {
     const t = zt.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"init\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -557,7 +557,7 @@ test "zig_build tool can be used by agent - tool invocation" {
     defer parsed.deinit();
 
     // This should succeed (zig version always works if zig is installed)
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     // zig version should succeed
@@ -572,7 +572,7 @@ test "zig_build tool validates operation parameter" {
     {
         const parsed = try root.parseTestArgs("{}");
         defer parsed.deinit();
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);
@@ -584,7 +584,7 @@ test "zig_build tool validates operation parameter" {
     {
         const parsed = try root.parseTestArgs("{\"operation\": \"invalid_op\"}");
         defer parsed.deinit();
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);
@@ -600,7 +600,7 @@ test "zig_build tool handles init operation correctly" {
     {
         const parsed = try root.parseTestArgs("{\"operation\": \"init\"}");
         defer parsed.deinit();
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);
@@ -630,7 +630,7 @@ test "zig_build tool supports all documented operations" {
         const parsed = try root.parseTestArgs(json);
         defer parsed.deinit();
 
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         // Operations will fail without a real Zig project (except version), but they should be recognized
@@ -658,7 +658,7 @@ test "zig_build tool prevents command injection via args" {
         const parsed = try root.parseTestArgs(injection);
         defer parsed.deinit();
 
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);

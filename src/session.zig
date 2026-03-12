@@ -530,6 +530,7 @@ fn testSessionManagerWithMemory(allocator: Allocator, mock: *MockProvider, cfg: 
     var noop = observability.NoopObserver{};
     return SessionManager.init(
         allocator,
+        std.testing.io,
         cfg,
         mock.provider(),
         &.{},
@@ -641,6 +642,7 @@ test "processMessageStreaming forwards provider deltas" {
     var noop = observability.NoopObserver{};
     var sm = SessionManager.init(
         testing.allocator,
+        std.testing.io,
         &cfg,
         mock.provider(),
         &.{},
@@ -789,6 +791,7 @@ test "processMessage /new clears autosave only for current session" {
     var noop = observability.NoopObserver{};
     var sm = SessionManager.init(
         testing.allocator,
+        std.testing.io,
         &cfg,
         mock.provider(),
         &.{},
@@ -828,6 +831,7 @@ test "processMessage /new with model clears autosave only for current session" {
     var noop = observability.NoopObserver{};
     var sm = SessionManager.init(
         testing.allocator,
+        std.testing.io,
         &cfg,
         mock.provider(),
         &.{},
@@ -866,6 +870,7 @@ test "processMessage /reset clears autosave only for current session" {
     var noop = observability.NoopObserver{};
     var sm = SessionManager.init(
         testing.allocator,
+        std.testing.io,
         &cfg,
         mock.provider(),
         &.{},
@@ -904,6 +909,7 @@ test "processMessage /restart clears autosave only for current session" {
     var noop = observability.NoopObserver{};
     var sm = SessionManager.init(
         testing.allocator,
+        std.testing.io,
         &cfg,
         mock.provider(),
         &.{},

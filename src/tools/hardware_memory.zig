@@ -180,7 +180,7 @@ test "hardware_memory no boards returns error" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "peripherals") != null);
 }
@@ -191,7 +191,7 @@ test "hardware_memory missing action returns error" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "action") != null);
 }
@@ -202,7 +202,7 @@ test "hardware_memory unsupported board" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\", \"board\": \"esp32\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "nucleo") != null);
@@ -214,7 +214,7 @@ test "hardware_memory read without probe-rs" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\", \"address\": \"0x20000000\", \"length\": 64}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // Only free heap-allocated output/error_msg (probe-rs failure returns a
     // heap-allocated error when the command runs but fails, or allocPrint output
     // on success; ToolResult.fail() returns a string literal that must NOT be freed).
@@ -240,7 +240,7 @@ test "hardware_memory write without probe-rs" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"write\", \"address\": \"0x20000000\", \"value\": \"DEADBEEF\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     const has_probe = probeRsAvailable(std.testing.allocator);
     defer result.deinit(std.testing.allocator);
     defer if (has_probe) {
@@ -262,7 +262,7 @@ test "hardware_memory write missing value" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"write\", \"address\": \"0x20000000\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "value") != null);
 }
@@ -273,7 +273,7 @@ test "hardware_memory unknown action" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"delete\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
 }

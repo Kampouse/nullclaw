@@ -459,7 +459,7 @@ test "composio missing action returns error" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "action") != null);
 }
@@ -469,7 +469,7 @@ test "composio unknown action returns error" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"unknown\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown action") != null);
@@ -480,7 +480,7 @@ test "composio no api key returns error" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"list\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "API key") != null);
 }
@@ -490,7 +490,7 @@ test "composio list action invokes curl" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"list\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // curl actually runs — may succeed with API error JSON or fail with network error
     // Either way, we get a result (not a Zig error)
@@ -502,7 +502,7 @@ test "composio list with app filter invokes curl" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"list\", \"app\": \"gmail\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.output.len > 0 or result.error_msg != null);
 }
@@ -512,7 +512,7 @@ test "composio execute missing action_name" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"execute\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "action_name") != null);
 }
@@ -522,7 +522,7 @@ test "composio execute with action_name invokes curl" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"execute\", \"action_name\": \"GMAIL_SEND\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // curl runs against real API — may return error JSON or network failure
     try std.testing.expect(result.output.len > 0 or result.error_msg != null);
@@ -533,7 +533,7 @@ test "composio connect missing app" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"connect\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "app") != null);
 }
@@ -543,7 +543,7 @@ test "composio connect with app invokes curl" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"connect\", \"app\": \"gmail\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // curl runs — result depends on network, but should not crash
     try std.testing.expect(result.output.len > 0 or result.error_msg != null);

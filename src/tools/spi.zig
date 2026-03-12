@@ -286,7 +286,7 @@ test "spi list action on non-linux" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"list\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer std.testing.allocator.free(result.output);
     if (comptime builtin.os.tag != .linux) {
         try std.testing.expect(result.success);
@@ -300,7 +300,7 @@ test "spi transfer on non-linux returns error" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"transfer\", \"data\": \"FF 0A\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not supported") != null);
@@ -312,7 +312,7 @@ test "spi read on non-linux returns error" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not supported") != null);
@@ -323,7 +323,7 @@ test "spi missing action" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -333,7 +333,7 @@ test "spi unknown action" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"unknown\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown action") != null);
 }

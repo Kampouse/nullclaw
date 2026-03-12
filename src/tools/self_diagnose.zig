@@ -90,7 +90,7 @@ test "agent_health tool executes successfully" {
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
 
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);

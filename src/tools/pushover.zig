@@ -191,7 +191,7 @@ test "pushover execute missing message" {
     const t = pt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "message") != null);
 }
@@ -201,7 +201,7 @@ test "pushover execute empty message" {
     const t = pt.tool();
     const parsed = try root.parseTestArgs("{\"message\": \"\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "message") != null);
 }
@@ -211,7 +211,7 @@ test "pushover priority -3 rejected" {
     const t = pt.tool();
     const parsed = try root.parseTestArgs("{\"message\": \"hello\", \"priority\": -3}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "priority") != null or
         std.mem.indexOf(u8, result.error_msg.?, "-2..=2") != null);
@@ -222,7 +222,7 @@ test "pushover priority 5 rejected" {
     const t = pt.tool();
     const parsed = try root.parseTestArgs("{\"message\": \"hello\", \"priority\": 5}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "priority") != null or
         std.mem.indexOf(u8, result.error_msg.?, "-2..=2") != null);
@@ -233,7 +233,7 @@ test "pushover priority 2 accepted (credential error expected)" {
     const t = pt.tool();
     const parsed = try root.parseTestArgs("{\"message\": \"hello\", \"priority\": 2}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // Should fail on credentials, not on priority validation
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "priority") == null);
@@ -245,7 +245,7 @@ test "pushover priority -2 accepted (credential error expected)" {
     const t = pt.tool();
     const parsed = try root.parseTestArgs("{\"message\": \"hello\", \"priority\": -2}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "priority") == null);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "credential") != null);

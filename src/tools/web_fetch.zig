@@ -589,7 +589,7 @@ test "WebFetchTool missing url fails" {
     var wft = WebFetchTool{};
     const parsed = try root.parseTestArgs("{\"max_chars\":1000}");
     defer parsed.deinit();
-    const result = try wft.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wft.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing required 'url' parameter", result.error_msg.?);
 }
@@ -598,7 +598,7 @@ test "WebFetchTool non-http url fails" {
     var wft = WebFetchTool{};
     const parsed = try root.parseTestArgs("{\"url\":\"ftp://example.com\"}");
     defer parsed.deinit();
-    const result = try wft.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wft.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Only http:// and https:// URLs are allowed", result.error_msg.?);
 }
@@ -607,7 +607,7 @@ test "WebFetchTool localhost blocked" {
     var wft = WebFetchTool{};
     const parsed = try root.parseTestArgs("{\"url\":\"http://localhost:8080/api\"}");
     defer parsed.deinit();
-    const result = try wft.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wft.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Blocked local/private host", result.error_msg.?);
 }
@@ -616,15 +616,15 @@ test "WebFetchTool private IP blocked" {
     var wft = WebFetchTool{};
     const p1 = try root.parseTestArgs("{\"url\":\"http://192.168.1.1/\"}");
     defer p1.deinit();
-    const r1 = try wft.execute(testing.allocator, p1.parsed.value.object);
+    const r1 = try wft.execute(testing.allocator, p1.parsed.value.object, std.testing.io);
     try testing.expect(!r1.success);
     const p2 = try root.parseTestArgs("{\"url\":\"http://10.0.0.1/\"}");
     defer p2.deinit();
-    const r2 = try wft.execute(testing.allocator, p2.parsed.value.object);
+    const r2 = try wft.execute(testing.allocator, p2.parsed.value.object, std.testing.io);
     try testing.expect(!r2.success);
     const p3 = try root.parseTestArgs("{\"url\":\"http://127.0.0.1/\"}");
     defer p3.deinit();
-    const r3 = try wft.execute(testing.allocator, p3.parsed.value.object);
+    const r3 = try wft.execute(testing.allocator, p3.parsed.value.object, std.testing.io);
     try testing.expect(!r3.success);
 }
 
@@ -632,7 +632,7 @@ test "WebFetchTool loopback decimal alias blocked" {
     var wft = WebFetchTool{};
     const parsed = try root.parseTestArgs("{\"url\":\"http://2130706433/\"}");
     defer parsed.deinit();
-    const result = try wft.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wft.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Blocked local/private host", result.error_msg.?);
 }

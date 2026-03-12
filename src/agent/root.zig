@@ -1661,7 +1661,7 @@ pub const Agent = struct {
 
         return multimodal.prepareMessagesForProvider(arena, m, .{
             .allowed_dirs = allowed,
-        });
+        }, self.io);
     }
 
     fn appendMultimodalAllowedDir(
@@ -1824,6 +1824,7 @@ test "Agent trim history preserves system prompt" {
     // by creating an Agent with minimal fields
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -1878,6 +1879,7 @@ test "Agent clear history" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -1980,6 +1982,7 @@ test "Agent initial state" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2007,6 +2010,7 @@ test "Agent tokens tracking" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2035,6 +2039,7 @@ test "Agent trimHistory no-op when under limit" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2070,6 +2075,7 @@ test "Agent trimHistory without system prompt" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2105,6 +2111,7 @@ test "Agent clearHistory resets all state" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2149,6 +2156,7 @@ test "Agent buildMessageSlice" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2224,6 +2232,7 @@ test "Agent buildProviderMessages uses model-aware vision capability" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = prov,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2311,6 +2320,7 @@ test "Agent buildProviderMessages allows workspace image paths" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = prov,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2364,6 +2374,7 @@ test "Agent trimHistory keeps most recent messages" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2407,6 +2418,7 @@ test "Agent clearHistory then add messages" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2444,6 +2456,7 @@ fn makeTestAgent(allocator: std.mem.Allocator) !Agent {
     var noop = observability.NoopObserver{};
     return Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2480,7 +2493,7 @@ test "Agent.fromConfig resolves token limit from model lookup when unset" {
     cfg.agent.token_limit_explicit = false;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u64, 128_000), agent.token_limit);
@@ -2501,7 +2514,7 @@ test "Agent.fromConfig keeps explicit token_limit override" {
     cfg.agent.token_limit_explicit = true;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u64, 64_000), agent.token_limit);
@@ -2519,7 +2532,7 @@ test "Agent.fromConfig resolves max_tokens from provider lookup when unset" {
     cfg.max_tokens = null;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u32, 32_768), agent.max_tokens);
@@ -2537,7 +2550,7 @@ test "Agent.fromConfig keeps explicit max_tokens override" {
     cfg.max_tokens = 1536;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u32, 1536), agent.max_tokens);
@@ -2557,7 +2570,7 @@ test "Agent.fromConfig clamps max_tokens to token_limit" {
     cfg.max_tokens = 8192;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u64, 4096), agent.token_limit);
@@ -2662,6 +2675,7 @@ test "turn bare /new routes through fresh-session prompt" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2734,6 +2748,7 @@ test "turn /reset with argument stays slash-only command" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3189,6 +3204,7 @@ test "slash /approve executes pending bash command" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{shell_tool},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3285,6 +3301,7 @@ test "turn includes reasoning and usage footer when enabled" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3368,6 +3385,7 @@ test "turn refreshes system prompt after workspace markdown change" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3455,6 +3473,7 @@ test "turn refreshes system prompt after TOOLS.md change" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3542,6 +3561,7 @@ test "turn refreshes system prompt after USER.md change" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3584,6 +3604,7 @@ test "exec security deny blocks shell tool execution" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{shell_tool},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3623,6 +3644,7 @@ test "exec ask always registers pending approval from tool path" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{shell_tool},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3705,6 +3727,7 @@ test "Agent streaming fields default to null" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3804,7 +3827,8 @@ test "Agent turn skips duplicate memory_store when TOOLS.md is updated in same b
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap) !tools_mod.ToolResult {
+        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap, io: std.Io) !tools_mod.ToolResult {
+            _ = io;
             self.count.* += 1;
             return .{ .success = true, .output = "file_write probe ok" };
         }
@@ -3824,7 +3848,8 @@ test "Agent turn skips duplicate memory_store when TOOLS.md is updated in same b
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap) !tools_mod.ToolResult {
+        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap, io: std.Io) !tools_mod.ToolResult {
+            _ = io;
             self.count.* += 1;
             return .{ .success = true, .output = "memory_store probe ok" };
         }
@@ -3914,6 +3939,7 @@ test "Agent turn skips duplicate memory_store when TOOLS.md is updated in same b
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &tool_list,
         .tool_specs = specs,
@@ -3950,7 +3976,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
         .allocator = allocator,
     };
 
-    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, .{});
+    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, std.testing.io, .{});
     defer tools_mod.deinitTools(allocator, tools);
 
     var sqlite_mem = try memory_mod.SqliteMemory.init(allocator, ":memory:");
@@ -3999,6 +4025,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
         tools,
         mem,
         noop.observer(),
+        std.testing.io,
     );
     defer agent.deinit();
 
@@ -4006,7 +4033,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
     const store_args = try tools_mod.parseTestArgs("{\"key\":\"preference.test\",\"content\":\"123\"}");
     defer store_args.deinit();
 
-    const store_result = try store_tool.execute(allocator, store_args.parsed.value.object);
+    const store_result = try store_tool.execute(allocator, store_args.parsed.value.object, std.testing.io);
     defer if (store_result.output.len > 0) allocator.free(store_result.output);
     try std.testing.expect(store_result.success);
     try std.testing.expect(std.mem.indexOf(u8, store_result.output, "Stored memory") != null);
@@ -4022,7 +4049,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
     const recall_args = try tools_mod.parseTestArgs("{\"query\":\"preference.test\"}");
     defer recall_args.deinit();
 
-    const recall_result = try recall_tool.execute(allocator, recall_args.parsed.value.object);
+    const recall_result = try recall_tool.execute(allocator, recall_args.parsed.value.object, std.testing.io);
     defer if (recall_result.output.len > 0) allocator.free(recall_result.output);
     try std.testing.expect(recall_result.success);
     try std.testing.expect(std.mem.indexOf(u8, recall_result.output, "preference.test") != null);
@@ -4041,7 +4068,8 @@ test "Agent tool loop frees dynamic tool outputs" {
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(_: *Self, allocator: std.mem.Allocator, _: tools_mod.JsonObjectMap) !tools_mod.ToolResult {
+        pub fn execute(_: *Self, allocator: std.mem.Allocator, _: tools_mod.JsonObjectMap, io: std.Io) !tools_mod.ToolResult {
+            _ = io;
             return tools_mod.ToolResult.okAlloc(allocator, "dynamic-tool-output");
         }
     };
@@ -4123,6 +4151,7 @@ test "Agent tool loop frees dynamic tool outputs" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &tool_list,
         .tool_specs = specs,
@@ -4152,6 +4181,7 @@ test "Agent streaming fields can be set" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),

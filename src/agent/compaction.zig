@@ -512,6 +512,7 @@ fn makeTestAgent(allocator: std.mem.Allocator) !Agent {
     var noop = observability.NoopObserver{};
     return Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -531,7 +532,7 @@ fn makeTestAgent(allocator: std.mem.Allocator) !Agent {
 
 /// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
 fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
-    const result = try dir.realPathFileAlloc(std.Options.debug_io, ".", allocator);
+    const result = try dir.realPathFileAlloc(std.testing.io, ".", allocator);
     // result is [:0]u8 with allocation size len+1 (includes sentinel)
     // Dupe the content without sentinel, then free the original
     const path = try allocator.dupe(u8, result[0..result.len]);

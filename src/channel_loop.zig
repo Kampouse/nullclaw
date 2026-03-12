@@ -488,7 +488,7 @@ pub const ChannelRuntime = struct {
 
         // MCP tools
         const mcp_tools: ?[]const tools_mod.Tool = if (config.mcp_servers.len > 0)
-            mcp.initMcpTools(allocator, config.mcp_servers) catch |err| blk: {
+            mcp.initMcpTools(allocator, io, config.mcp_servers) catch |err| blk: {
                 log.warn("MCP init failed: {}", .{err});
                 break :blk null;
             }
@@ -499,7 +499,7 @@ pub const ChannelRuntime = struct {
         const subagent_manager = allocator.create(subagent_mod.SubagentManager) catch null;
         errdefer if (subagent_manager) |mgr| allocator.destroy(mgr);
         if (subagent_manager) |mgr| {
-            mgr.* = subagent_mod.SubagentManager.init(allocator, config, null, .{});
+            mgr.* = subagent_mod.SubagentManager.init(allocator, io, config, null, .{});
             errdefer {
                 mgr.deinit();
             }
@@ -525,7 +525,7 @@ pub const ChannelRuntime = struct {
         };
 
         // Tools
-        const tools = tools_mod.allTools(allocator, config.workspace_dir, .{
+        const tools = tools_mod.allTools(allocator, config.workspace_dir, io, .{
             .http_enabled = config.http_request.enabled,
             .http_allowed_domains = config.http_request.allowed_domains,
             .http_max_response_size = config.http_request.max_response_size,

@@ -29,14 +29,16 @@ pub const McpToolDef = struct {
 
 pub const McpServer = struct {
     allocator: Allocator,
+    io: std.Io,
     name: []const u8,
     config: McpServerConfig,
     child: ?std.process.Child,
     next_id: u32,
 
-    pub fn init(allocator: Allocator, config: McpServerConfig) McpServer {
+    pub fn init(allocator: Allocator, io: std.Io, config: McpServerConfig) McpServer {
         return .{
             .allocator = allocator,
+            .io = io,
             .name = config.name,
             .config = config,
             .child = null,
@@ -71,7 +73,7 @@ pub const McpServer = struct {
         }
 
         // Spawn child process with stdio pipes
-        self.child = std.process.spawn(io, .{
+        self.child = std.process.spawn(self.io, .{
             .argv = argv_list.items,
             .stdin = .pipe,
             .stdout = .pipe,
@@ -85,12 +87,12 @@ pub const McpServer = struct {
         const init_msg = \\{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"nullclaw","version":"0.1.0"}}}
         ++ "\n";
         const stdin = self.child.?.stdin orelse return error.NoStdin;
-        try stdin.writeStreamingAll(io, init_msg);
+        try stdin.writeStreamingAll(self.io, init_msg);
 
         // Send initialized notification
         const initialized_msg = \\{"jsonrpc":"2.0","method":"notifications/initialized"}
         ++ "\n";
-        try stdin.writeStreamingAll(io, initialized_msg);
+        try stdin.writeStreamingAll(self.io, initialized_msg);
     }
 
     /// Request the list of tools from the MCP server.
@@ -121,11 +123,11 @@ pub const McpServer = struct {
         if (self.child) |*child| {
             // Close stdin to signal the server to exit
             if (child.stdin) |stdin| {
-                stdin.close(io);
+                stdin.close(self.io);
                 child.stdin = null;
             }
-            child.kill(io);
-            _ = child.wait(io) catch {};
+            child.kill(self.io);
+            _ = child.wait(self.io) catch {};
         }
         self.child = null;
     }
@@ -147,7 +149,7 @@ pub const McpServer = struct {
         defer allocator.free(msg);
 
         const stdin = self.child.?.stdin orelse return error.NoStdin;
-        try stdin.writeStreamingAll(io, msg);
+        try stdin.writeStreamingAll(self.io, msg);
 
         return try self.readLine(allocator);
     }
@@ -164,7 +166,7 @@ pub const McpServer = struct {
         defer self.allocator.free(msg);
 
         const stdin = self.child.?.stdin orelse return error.NoStdin;
-        try stdin.writeStreamingAll(io, msg);
+        try stdin.writeStreamingAll(self.io, msg);
     }
 
     fn readLine(self: *McpServer, allocator: Allocator) ![]const u8 {
@@ -174,7 +176,7 @@ pub const McpServer = struct {
         var byte_buf: [1]u8 = undefined;
         const stdout_file = self.child.?.stdout orelse return error.NoStdout;
         var reader_buf: [1024]u8 = undefined;
-        var reader = stdout_file.reader(io, &reader_buf);
+        var reader = stdout_file.reader(self.io, &reader_buf);
 
         while (true) {
             const n = reader.interface.readSliceShort(&byte_buf) catch |err| {
@@ -353,7 +355,7 @@ pub const McpToolWrapper = struct {
 /// Initialize MCP tools from config. Connects to each server, discovers
 /// tools, and returns them wrapped in the standard Tool vtable.
 /// Errors from individual servers are logged and skipped.
-pub fn initMcpTools(allocator: Allocator, configs: []const McpServerConfig) ![]tools_mod.Tool {
+pub fn initMcpTools(allocator: Allocator, io: std.Io, configs: []const McpServerConfig) ![]tools_mod.Tool {
     var all_tools: std.ArrayList(tools_mod.Tool) = .{};
     errdefer {
         for (all_tools.items) |t| {
@@ -364,7 +366,7 @@ pub fn initMcpTools(allocator: Allocator, configs: []const McpServerConfig) ![]t
 
     for (configs) |cfg| {
         var server = try allocator.create(McpServer);
-        server.* = McpServer.init(allocator, cfg);
+        server.* = McpServer.init(allocator, io, cfg);
 
         server.connect() catch |err| {
             log.err("MCP server '{s}': connect failed: {}", .{ cfg.name, err });
@@ -432,7 +434,7 @@ test "McpServer init fields" {
         .args = &.{"hello"},
         .env = &.{.{ .key = "FOO", .value = "bar" }},
     };
-    const server = McpServer.init(std.testing.allocator, cfg);
+    const server = McpServer.init(std.testing.allocator, std.testing.io, cfg);
     try std.testing.expectEqualStrings("test-server", server.name);
     try std.testing.expectEqual(@as(u32, 1), server.next_id);
     try std.testing.expect(server.child == null);
@@ -506,7 +508,7 @@ test "parseCallToolResponse invalid json" {
 }
 
 test "McpToolWrapper vtable name" {
-    var server = McpServer.init(std.testing.allocator, .{
+    var server = McpServer.init(std.testing.allocator, std.testing.io, .{
         .name = "fs",
         .command = "echo",
     });
@@ -524,7 +526,7 @@ test "McpToolWrapper vtable name" {
 }
 
 test "McpToolWrapper vtable description" {
-    var server = McpServer.init(std.testing.allocator, .{
+    var server = McpServer.init(std.testing.allocator, std.testing.io, .{
         .name = "fs",
         .command = "echo",
     });
@@ -542,7 +544,7 @@ test "McpToolWrapper vtable description" {
 }
 
 test "McpToolWrapper vtable parameters_json" {
-    var server = McpServer.init(std.testing.allocator, .{
+    var server = McpServer.init(std.testing.allocator, std.testing.io, .{
         .name = "fs",
         .command = "echo",
     });
@@ -560,7 +562,7 @@ test "McpToolWrapper vtable parameters_json" {
 }
 
 test "initMcpTools empty configs" {
-    const tools = try initMcpTools(std.testing.allocator, &.{});
+    const tools = try initMcpTools(std.testing.allocator, std.testing.io, &.{});
     defer std.testing.allocator.free(tools);
     try std.testing.expectEqual(@as(usize, 0), tools.len);
 }

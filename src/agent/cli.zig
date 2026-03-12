@@ -184,7 +184,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8, io: std.Io)
     // Initialize MCP tools from config
     const mcp_mod = @import("../mcp.zig");
     const mcp_tools: ?[]const tools_mod.Tool = if (cfg.mcp_servers.len > 0)
-        mcp_mod.initMcpTools(allocator, cfg.mcp_servers) catch |err| blk: {
+        mcp_mod.initMcpTools(allocator, io, cfg.mcp_servers) catch |err| blk: {
             log.warn("MCP: init failed: {}", .{err});
             break :blk null;
         }
@@ -212,11 +212,11 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8, io: std.Io)
     defer runtime_provider.deinit();
     const resolved_api_key = runtime_provider.primaryApiKey();
 
-    var subagent_manager = subagent_mod.SubagentManager.init(allocator, &cfg, null, .{});
+    var subagent_manager = subagent_mod.SubagentManager.init(allocator, io, &cfg, null, .{});
     defer subagent_manager.deinit();
 
     // Create tools (with agents config for delegate depth enforcement)
-    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, .{
+    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, io, .{
         .http_enabled = cfg.http_request.enabled,
         .http_allowed_domains = cfg.http_request.allowed_domains,
         .http_max_response_size = cfg.http_request.max_response_size,

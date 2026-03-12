@@ -93,7 +93,7 @@ test "cron_runs_requires_job_id" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }
@@ -103,7 +103,7 @@ test "cron_runs_not_found" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-xyz\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -126,7 +126,7 @@ test "cron_runs_no_history" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"no-such-job-abc\"}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.error_msg) |e| allocator.free(e);
     try std.testing.expect(!result.success);
 }

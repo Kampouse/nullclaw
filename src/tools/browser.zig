@@ -164,7 +164,7 @@ test "browser open launches system browser" {
     // In test mode, spawn is skipped; verify the output message is correct.
     const parsed = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://example.com\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "example.com") != null);
@@ -176,7 +176,7 @@ test "browser open rejects http" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"http://example.com\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "https") != null);
 }
@@ -186,7 +186,7 @@ test "browser screenshot redirects to screenshot tool" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"screenshot\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "screenshot tool") != null);
 }
@@ -198,7 +198,7 @@ test "browser missing action parameter" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "action") != null);
 }
@@ -208,7 +208,7 @@ test "browser open missing url" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"open\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "url") != null);
 }
@@ -218,7 +218,7 @@ test "browser click action requires CDP" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"click\", \"selector\": \"#btn\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "CDP") != null);
@@ -230,7 +230,7 @@ test "browser read missing url" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "url") != null);
 }
@@ -241,7 +241,7 @@ test "browser open returns output with URL" {
     // In test mode, spawn is skipped; verify the "Opened ..." message format.
     const parsed = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://docs.example.com/api\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "docs.example.com") != null);
@@ -284,7 +284,7 @@ test "browser tool execute with empty json" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -299,14 +299,14 @@ test "browser open rejects URL with shell metacharacters on Windows" {
     // & can chain commands in cmd.exe
     const p1 = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://example.com&whoami\"}");
     defer p1.deinit();
-    const r1 = try t.execute(std.testing.allocator, p1.value.object);
+    const r1 = try t.execute(std.testing.allocator, p1.value.object, std.testing.io);
     try std.testing.expect(!r1.success);
     try std.testing.expect(std.mem.indexOf(u8, r1.error_msg.?, "metacharacter") != null);
 
     // | can pipe in cmd.exe
     const p2 = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://example.com|calc\"}");
     defer p2.deinit();
-    const r2 = try t.execute(std.testing.allocator, p2.value.object);
+    const r2 = try t.execute(std.testing.allocator, p2.value.object, std.testing.io);
     try std.testing.expect(!r2.success);
 }
 
@@ -318,7 +318,7 @@ test "browser open allows URL with query params on Unix" {
     const t = bt.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"open\", \"url\": \"https://example.com/search?a=1&b=2\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "example.com") != null);

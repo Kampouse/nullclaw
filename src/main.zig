@@ -1667,7 +1667,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
 
     // Initialize MCP tools from config
     const mcp_tools: ?[]const yc.tools.Tool = if (config.mcp_servers.len > 0)
-        yc.mcp.initMcpTools(allocator, config.mcp_servers) catch |err| blk: {
+        yc.mcp.initMcpTools(allocator, io, config.mcp_servers) catch |err| blk: {
             std.debug.print("  MCP: init failed: {}\n", .{err});
             break :blk null;
         }
@@ -1691,11 +1691,11 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         .tracker = &tracker,
     };
 
-    var subagent_manager = yc.subagent.SubagentManager.init(allocator, config, null, .{});
+    var subagent_manager = yc.subagent.SubagentManager.init(allocator, io, config, null, .{});
     defer subagent_manager.deinit();
 
     // Create tools (for system prompt and tool calling)
-    const tools = yc.tools.allTools(allocator, config.workspace_dir, .{
+    const tools = yc.tools.allTools(allocator, config.workspace_dir, io, .{
         .http_enabled = config.http_request.enabled,
         .http_allowed_domains = config.http_request.allowed_domains,
         .http_max_response_size = config.http_request.max_response_size,
@@ -2043,7 +2043,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 
     // Initialize MCP tools from config
     const mcp_tools: ?[]const yc.tools.Tool = if (config.mcp_servers.len > 0)
-        yc.mcp.initMcpTools(allocator, config.mcp_servers) catch |err| blk: {
+        yc.mcp.initMcpTools(allocator, io, config.mcp_servers) catch |err| blk: {
             std.debug.print("  MCP: init failed: {}\n", .{err});
             break :blk null;
         }
@@ -2067,11 +2067,11 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         .tracker = &tracker,
     };
 
-    var subagent_manager = yc.subagent.SubagentManager.init(allocator, &config, null, .{});
+    var subagent_manager = yc.subagent.SubagentManager.init(allocator, io, &config, null, .{});
     defer subagent_manager.deinit();
 
     // Create tools (for system prompt and tool calling)
-    const tools = yc.tools.allTools(allocator, config.workspace_dir, .{
+    const tools = yc.tools.allTools(allocator, config.workspace_dir, io, .{
         .http_enabled = config.http_request.enabled,
         .http_allowed_domains = config.http_request.allowed_domains,
         .http_max_response_size = config.http_request.max_response_size,

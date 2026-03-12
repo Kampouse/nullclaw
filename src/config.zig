@@ -1228,7 +1228,7 @@ test "save includes channels section by default" {
 
     // Get the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -1239,12 +1239,12 @@ test "save includes channels section by default" {
         .config_path = config_path,
         .allocator = allocator,
     };
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [128 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -1258,7 +1258,7 @@ test "save writes configured telegram channel account" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -1282,12 +1282,12 @@ test "save writes configured telegram channel account" {
             },
         },
     };
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [128 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -1309,7 +1309,7 @@ test "save roundtrip preserves telegram interactive settings" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -1332,12 +1332,12 @@ test "save roundtrip preserves telegram interactive settings" {
             },
         },
     };
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [128 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -1363,7 +1363,7 @@ test "save roundtrip preserves diagnostics logging flags" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -1378,12 +1378,12 @@ test "save roundtrip preserves diagnostics logging flags" {
     cfg.diagnostics.log_message_receipts = true;
     cfg.diagnostics.log_message_payloads = true;
     cfg.diagnostics.log_llm_io = true;
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [128 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -1409,7 +1409,7 @@ test "save roundtrip preserves reliability settings" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -1440,12 +1440,12 @@ test "save roundtrip preserves reliability settings" {
     cfg.reliability.fallback_providers = &.{ "openrouter", "groq" };
     cfg.reliability.api_keys = &.{ "rk_a", "rk_b" };
     cfg.reliability.model_fallbacks = &model_fallbacks;
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [128 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -1499,7 +1499,7 @@ test "save roundtrip preserves extended config sections" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -1658,12 +1658,12 @@ test "save roundtrip preserves extended config sections" {
         },
     };
 
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [256 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -1726,7 +1726,7 @@ test "save escapes mcp_servers strings safely" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -1755,12 +1755,12 @@ test "save escapes mcp_servers strings safely" {
         },
     };
 
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [128 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -2695,7 +2695,7 @@ test "save and load roundtrip" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -2710,13 +2710,13 @@ test "save and load roundtrip" {
     cfg.default_model = try allocator.dupe(u8, "glm-4.7");
     cfg.workspace_dir_override = try allocator.dupe(u8, "C:\\Users\\menger\\Desktop\\myspace");
 
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
     // load back by reading and parsing the saved file
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [1024 * 64]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
 
     var cfg2 = Config{
@@ -2975,7 +2975,7 @@ test "save writes provider native_tools when false" {
 
     // Use the tmpDir's absolute path using realPath with a buffer
     var path_buf: [4096]u8 = undefined;
-    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
     const tmp_path = path_buf[0..tmp_path_len];
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
@@ -2994,12 +2994,12 @@ test "save writes provider native_tools when false" {
         },
     };
 
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, config_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [64 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -3985,7 +3985,7 @@ test "save includes nostr channel when configured" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(tmp_path);
@@ -4005,12 +4005,12 @@ test "save includes nostr channel when configured" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save(std.Options.debug_io);
+    try cfg.save(std.testing.io);
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [64 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -4038,7 +4038,7 @@ test "save includes dm_relays in nostr section" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(tmp_path);
@@ -4055,13 +4055,13 @@ test "save includes dm_relays in nostr section" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save(std.Options.debug_io);
-    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
+    try cfg.save(std.testing.io);
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, tmp_path) catch {};
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [64 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -4075,7 +4075,7 @@ test "dm_relays round-trips through save and load" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(tmp_path);
@@ -4092,13 +4092,13 @@ test "dm_relays round-trips through save and load" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save(std.Options.debug_io);
-    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
+    try cfg.save(std.testing.io);
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, tmp_path) catch {};
 
-    const file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
-    defer file.close(std.Options.debug_io);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file.close(std.testing.io);
     var read_buffer: [64 * 1024]u8 = undefined;
-    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file.reader(std.testing.io, &read_buffer);
     const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
@@ -4123,7 +4123,7 @@ test "nostr display_name with special chars round-trips correctly" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(tmp_path);
@@ -4141,13 +4141,13 @@ test "nostr display_name with special chars round-trips correctly" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save(std.Options.debug_io);
-    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
+    try cfg.save(std.testing.io);
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, tmp_path) catch {};
 
-    const file_content = try std.Io.Dir.cwd().openFile(std.Options.debug_io, tmp_path, .{});
-    defer file_content.close(std.Options.debug_io);
+    const file_content = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file_content.close(std.testing.io);
     var read_buffer: [64 * 1024]u8 = undefined;
-    var file_reader = file_content.reader(std.Options.debug_io, &read_buffer);
+    var file_reader = file_content.reader(std.testing.io, &read_buffer);
     const raw = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(raw);
 

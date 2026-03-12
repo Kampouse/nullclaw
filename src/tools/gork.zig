@@ -140,6 +140,7 @@ pub const GorkTool = struct {
     }
 
     fn discover(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const capability = root.getString(args, "capability") orelse
             return ToolResult.fail("Missing 'capability' parameter");
 
@@ -181,6 +182,7 @@ pub const GorkTool = struct {
     }
 
     fn send(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const to = root.getString(args, "to") orelse
             return ToolResult.fail("Missing 'to' parameter");
 
@@ -201,6 +203,7 @@ pub const GorkTool = struct {
     }
 
     fn whoami(self: *GorkTool, allocator: std.mem.Allocator, io: std.Io) !ToolResult {
+        _ = io;
         if (self.config.account_id.len == 0) {
             return ToolResult.fail("No account ID configured");
         }
@@ -210,7 +213,8 @@ pub const GorkTool = struct {
     }
 
     fn status(self: *GorkTool, allocator: std.mem.Allocator, io: std.Io) !ToolResult {
-        const state = if (self.hybrid) |h| h.getState(io) else .stopped;
+        _ = io;
+        const state = if (self.hybrid) |h| h.getState() else .stopped;
 
         const state_str = switch (state) {
             .stopped => "stopped",
@@ -231,8 +235,9 @@ pub const GorkTool = struct {
     }
 
     fn health(self: *GorkTool, allocator: std.mem.Allocator, io: std.Io) !ToolResult {
+        _ = io;
         if (self.hybrid) |h| {
-            const state = h.getState(io);
+            const state = h.getState();
             const is_healthy = state == .running or state == .degraded;
             const has_daemon = h.daemon != null;
             const has_poller = h.poller != null;

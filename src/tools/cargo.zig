@@ -346,7 +346,7 @@ test "cargo rejects missing operation" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
 }
@@ -356,7 +356,7 @@ test "cargo rejects unknown operation" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"publish\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown operation") != null);
@@ -367,7 +367,7 @@ test "cargo blocks injection in args" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"build\", \"args\": \"--release; rm -rf /\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unsafe") != null);
 }
@@ -377,7 +377,7 @@ test "cargo new missing package_name" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"operation\": \"new\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -520,7 +520,7 @@ test "cargo tool can be used by agent - tool invocation" {
 
     // This will fail because "version" isn't a valid cargo operation,
     // but it validates that the tool can be invoked by the agent
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     // Should fail gracefully with "Unknown operation" not a crash
@@ -536,7 +536,7 @@ test "cargo tool validates operation parameter" {
     {
         const parsed = try root.parseTestArgs("{}");
         defer parsed.deinit();
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);
@@ -548,7 +548,7 @@ test "cargo tool validates operation parameter" {
     {
         const parsed = try root.parseTestArgs("{\"operation\": \"invalid_op\"}");
         defer parsed.deinit();
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);
@@ -564,7 +564,7 @@ test "cargo tool handles new operation correctly" {
     {
         const parsed = try root.parseTestArgs("{\"operation\": \"new\"}");
         defer parsed.deinit();
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);
@@ -595,7 +595,7 @@ test "cargo tool supports all documented operations" {
         const parsed = try root.parseTestArgs(json);
         defer parsed.deinit();
 
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         // Operations will fail without a real Rust project, but they should be recognized
@@ -623,7 +623,7 @@ test "cargo tool prevents command injection via args" {
         const parsed = try root.parseTestArgs(injection);
         defer parsed.deinit();
 
-        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+        const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expect(!result.success);

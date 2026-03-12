@@ -222,7 +222,7 @@ test "schedule list returns success" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"list\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     // Either "No scheduled jobs." or a formatted job list
@@ -234,7 +234,7 @@ test "schedule unknown action" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"explode\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Unknown action") != null);
@@ -245,7 +245,7 @@ test "schedule create with expression" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"create\", \"expression\": \"*/5 * * * *\", \"command\": \"echo hello\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // Succeeds if HOME/.nullclaw is writable, otherwise may fail gracefully
     if (result.success) {
@@ -260,7 +260,7 @@ test "schedule missing action" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "action") != null);
 }
@@ -270,7 +270,7 @@ test "schedule get missing id" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"get\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "id") != null);
 }
@@ -280,7 +280,7 @@ test "schedule get nonexistent job" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"get\", \"id\": \"nonexistent-123\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -291,7 +291,7 @@ test "schedule cancel requires id" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"cancel\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -300,7 +300,7 @@ test "schedule cancel nonexistent job returns not found" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"cancel\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     // Job doesn't exist in the real scheduler, so cancel returns not-found or success if previously created
     if (!result.success) {
@@ -313,7 +313,7 @@ test "schedule remove nonexistent job returns not found" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"remove\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -325,7 +325,7 @@ test "schedule pause nonexistent job returns not found" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"pause\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -337,7 +337,7 @@ test "schedule resume nonexistent job returns not found" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"resume\", \"id\": \"job-nonexistent\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
@@ -349,7 +349,7 @@ test "schedule once creates one-shot task" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"once\", \"delay\": \"30m\", \"command\": \"echo later\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "one-shot") != null);
@@ -361,7 +361,7 @@ test "schedule add creates recurring job" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"add\", \"expression\": \"0 * * * *\", \"command\": \"echo hourly\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Created job") != null);
@@ -373,7 +373,7 @@ test "schedule create missing command" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"create\", \"expression\": \"* * * * *\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "command") != null);
 }
@@ -383,7 +383,7 @@ test "schedule create missing expression" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"create\", \"command\": \"echo hi\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "expression") != null);
 }
@@ -393,7 +393,7 @@ test "schedule once missing delay" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"once\", \"command\": \"echo hi\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "delay") != null);
 }
@@ -403,7 +403,7 @@ test "schedule pause requires id" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"pause\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -412,6 +412,6 @@ test "schedule resume requires id" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"resume\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }

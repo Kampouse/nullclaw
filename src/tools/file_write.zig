@@ -269,7 +269,7 @@ test "file_write creates file" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"out.txt\", \"content\": \"written!\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
@@ -297,7 +297,7 @@ test "file_write creates parent dirs" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"a/b/c/deep.txt\", \"content\": \"deep\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     if (!result.success) {
@@ -321,7 +321,7 @@ test "file_write overwrites existing" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"exist.txt\", \"content\": \"new\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
@@ -336,7 +336,7 @@ test "file_write blocks path traversal" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"../../etc/evil\", \"content\": \"bad\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not allowed") != null);
@@ -347,7 +347,7 @@ test "file_write blocks absolute path" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"/etc/evil\", \"content\": \"bad\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
@@ -357,7 +357,7 @@ test "file_write missing path param" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"content\": \"data\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
@@ -367,7 +367,7 @@ test "file_write missing content param" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"file.txt\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
@@ -382,7 +382,7 @@ test "file_write empty content" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\", \"content\": \"\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
@@ -412,7 +412,7 @@ test "file_write blocks symlink target escape outside workspace" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"escape.txt\", \"content\": \"pwned\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "outside allowed areas") != null);
 
@@ -452,7 +452,7 @@ test "file_write does not mutate outside inode through hard link" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"hl.txt\", \"content\": \"PWNED\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(result.error_msg == null);
@@ -481,7 +481,7 @@ test "file_write keeps symlink and updates target" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"link.txt\", \"content\": \"new\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
 
@@ -512,7 +512,7 @@ test "file_write preserves executable mode on overwrite" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"script.sh\", \"content\": \"#!/bin/sh\\necho new\\n\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     if (!result.success) {
         std.debug.print("\nERROR: {s}\n", .{result.error_msg orelse "unknown"});
@@ -549,7 +549,7 @@ test "file_write rejects disallowed absolute path without creating parent direct
     const t = ft.tool();
     const parsed = try root.parseTestArgs(json_args);
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "outside allowed areas") != null);
 

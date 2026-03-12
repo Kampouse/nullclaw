@@ -106,7 +106,7 @@ test "MessageTool execute without bus fails" {
     var mt = MessageTool{};
     const parsed = try root.parseTestArgs("{\"content\":\"hello\",\"channel\":\"tg\",\"chat_id\":\"c1\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Message tool not connected to event bus", result.error_msg.?);
 }
@@ -117,7 +117,7 @@ test "MessageTool execute without content fails" {
     var mt = MessageTool{ .event_bus = &event_bus };
     const parsed = try root.parseTestArgs("{\"channel\":\"tg\",\"chat_id\":\"c1\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing required 'content' parameter", result.error_msg.?);
 }
@@ -128,7 +128,7 @@ test "MessageTool execute with empty content fails" {
     var mt = MessageTool{ .event_bus = &event_bus };
     const parsed = try root.parseTestArgs("{\"content\":\"  \",\"channel\":\"tg\",\"chat_id\":\"c1\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("'content' must not be empty", result.error_msg.?);
 }
@@ -143,7 +143,7 @@ test "MessageTool execute without channel uses default" {
     };
     const parsed = try root.parseTestArgs("{\"content\":\"hello\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(result.success);
     try testing.expect(std.mem.indexOf(u8, result.output, "telegram") != null);
     // Free the allocated output
@@ -164,7 +164,7 @@ test "MessageTool execute with explicit channel overrides default" {
     };
     const parsed = try root.parseTestArgs("{\"content\":\"hi\",\"channel\":\"discord\",\"chat_id\":\"room1\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(result.success);
     try testing.expect(std.mem.indexOf(u8, result.output, "discord") != null);
     testing.allocator.free(result.output);
@@ -198,7 +198,7 @@ test "MessageTool sent_in_round is set after successful send" {
     try testing.expect(!mt.hasMessageBeenSent());
     const parsed = try root.parseTestArgs("{\"content\":\"ping\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(result.success);
     testing.allocator.free(result.output);
     try testing.expect(mt.hasMessageBeenSent());
@@ -218,7 +218,7 @@ test "MessageTool no channel and no default fails" {
     var mt = MessageTool{ .event_bus = &event_bus };
     const parsed = try root.parseTestArgs("{\"content\":\"hello\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("No channel specified and no default channel set", result.error_msg.?);
 }
@@ -233,7 +233,7 @@ test "MessageTool closed bus fails gracefully" {
     };
     const parsed = try root.parseTestArgs("{\"content\":\"hello\"}");
     defer parsed.deinit();
-    const result = try mt.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try mt.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Bus is closed, cannot send message", result.error_msg.?);
 }

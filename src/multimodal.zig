@@ -157,7 +157,7 @@ pub const DataUriImage = struct {
 /// Read a local image file, validate its size, and detect MIME type.
 /// Returns raw bytes and MIME type. Caller owns the returned `data` slice.
 /// Path is validated against `allowed_dirs` to prevent arbitrary file reads.
-pub fn readLocalImage(allocator: std.mem.Allocator, path: []const u8, config: MultimodalConfig) !ImageData {
+pub fn readLocalImage(allocator: std.mem.Allocator, path: []const u8, config: MultimodalConfig, io: std.Io) !ImageData {
     // Security: Reject paths with traversal patterns
     if (std.mem.indexOf(u8, path, "..") != null) {
         return error.PathTraversalNotAllowed;
@@ -175,16 +175,16 @@ pub fn readLocalImage(allocator: std.mem.Allocator, path: []const u8, config: Mu
     };
     if (!allowed) return error.PathNotAllowed;
 
-    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch return error.PathNotFound;
-    return readFromFile(allocator, file, config.max_image_size_bytes);
+    const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return error.PathNotFound;
+    return readFromFile(allocator, file, config.max_image_size_bytes, io);
 }
 
-fn readFromFile(allocator: std.mem.Allocator, file: std.Io.File, max_size: u64) !ImageData {
-    defer file.close(std.Options.debug_io);
+fn readFromFile(allocator: std.mem.Allocator, file: std.Io.File, max_size: u64, io: std.Io) !ImageData {
+    defer file.close(io);
 
     // Read file contents using new Zig 0.16 API
     var buf: [1024 * 1024]u8 = undefined; // 1MB buffer
-    var reader = file.reader(std.Options.debug_io, &buf);
+    var reader = file.reader(io, &buf);
 
     const data = reader.interface.readAlloc(allocator, @intCast(max_size)) catch {
         return error.ImageReadFailed;
@@ -269,6 +269,7 @@ pub fn prepareMessagesForProvider(
     arena: std.mem.Allocator,
     messages: []ChatMessage,
     config: MultimodalConfig,
+    io: std.Io,
 ) ![]ChatMessage {
     const result = try arena.alloc(ChatMessage, messages.len);
 
@@ -361,7 +362,7 @@ pub fn prepareMessagesForProvider(
                 try parts.append(arena, .{ .image_url = .{ .url = ref } });
             } else {
                 // Local file — read + base64 encode
-                const img = readLocalImage(arena, ref, config) catch |err| {
+                const img = readLocalImage(arena, ref, config, io) catch |err| {
                     log.warn("failed to read image '{s}': {}", .{ ref, err });
                     const note = try std.fmt.allocPrint(arena, "[Failed to load image: {s}]", .{display_ref});
                     try parts.append(arena, .{ .text = note });
@@ -649,7 +650,7 @@ test "prepareMessagesForProvider no markers passes through" {
         ChatMessage.assistant("Hi there"),
     };
 
-    const result = try prepareMessagesForProvider(arena, &msgs, .{});
+    const result = try prepareMessagesForProvider(arena, &msgs, .{}, std.testing.io);
     try std.testing.expectEqual(@as(usize, 3), result.len);
     // All should pass through unchanged
     try std.testing.expect(result[0].content_parts == null);
@@ -667,7 +668,7 @@ test "prepareMessagesForProvider with URL marker creates content_parts" {
         ChatMessage.user("Check this [IMAGE:https://example.com/cat.jpg] out"),
     };
 
-    const result = try prepareMessagesForProvider(arena, &msgs, .{});
+    const result = try prepareMessagesForProvider(arena, &msgs, .{}, std.testing.io);
     try std.testing.expectEqual(@as(usize, 1), result.len);
     try std.testing.expect(result[0].content_parts != null);
     const parts = result[0].content_parts.?;
@@ -690,7 +691,7 @@ test "prepareMessagesForProvider with URL marker allowed by config" {
         ChatMessage.user("Check this [IMAGE:https://example.com/cat.jpg] out"),
     };
 
-    const result = try prepareMessagesForProvider(arena, &msgs, .{ .allow_remote_fetch = true });
+    const result = try prepareMessagesForProvider(arena, &msgs, .{ .allow_remote_fetch = true }, std.testing.io);
     const parts = result[0].content_parts.?;
     try std.testing.expectEqual(@as(usize, 2), parts.len);
     try std.testing.expect(parts[1] == .image_url);
@@ -710,7 +711,7 @@ test "prepareMessagesForProvider adds note when markers exceed max_images" {
     const result = try prepareMessagesForProvider(arena, &msgs, .{
         .allow_remote_fetch = true,
         .max_images = 1,
-    });
+    }, std.testing.io);
     const parts = result[0].content_parts.?;
 
     var saw_limit_note = false;
@@ -740,7 +741,7 @@ test "prepareMessagesForProvider with data URI marker creates base64 image part"
         ChatMessage.user("Analyze [IMAGE:data:image/png;base64,iVBORw0KGgo=]"),
     };
 
-    const result = try prepareMessagesForProvider(arena, &msgs, .{});
+    const result = try prepareMessagesForProvider(arena, &msgs, .{}, std.testing.io);
     const parts = result[0].content_parts.?;
     try std.testing.expectEqual(@as(usize, 2), parts.len);
     try std.testing.expect(parts[1] == .image_base64);
@@ -758,13 +759,13 @@ test "prepareMessagesForProvider skips assistant messages" {
         ChatMessage.assistant("Here is [IMAGE:/tmp/a.png]"),
     };
 
-    const result = try prepareMessagesForProvider(arena, &msgs, .{});
+    const result = try prepareMessagesForProvider(arena, &msgs, .{}, std.testing.io);
     try std.testing.expect(result[0].content_parts == null);
 }
 
 test "readLocalImage rejects path traversal via allowed_dirs" {
     // Path traversal with ".." is now explicitly rejected
-    if (readLocalImage(std.testing.allocator, "/tmp/../etc/passwd", .{})) |_| {
+    if (readLocalImage(std.testing.allocator, "/tmp/../etc/passwd", .{}, std.testing.io)) |_| {
         @panic("expected readLocalImage to fail for traversal path");
     } else |err| {
         try std.testing.expect(err == error.PathTraversalNotAllowed or err == error.LocalReadNotAllowed);
@@ -772,29 +773,31 @@ test "readLocalImage rejects path traversal via allowed_dirs" {
 }
 
 test "readLocalImage rejects when no allowed_dirs" {
+    const io = std.testing.io;
     // Create a real temp file, then verify allowed_dirs rejection
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "test.png", .data = "\x89PNG\x0d\x0a\x1a\x0a" });
-    const dir_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "test.png", .data = "\x89PNG\x0d\x0a\x1a\x0a" });
+    const dir_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(dir_path.ptr[0 .. dir_path.len + 1]);
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ dir_path, "test.png" });
     defer std.testing.allocator.free(file_path);
 
-    const err = readLocalImage(std.testing.allocator, file_path, .{});
+    const err = readLocalImage(std.testing.allocator, file_path, .{}, std.testing.io);
     try std.testing.expectError(error.LocalReadNotAllowed, err);
 }
 
 test "prepareMessagesForProvider does not delete nullclaw temp image files" {
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile(std.Options.debug_io, .{
+    try tmp_dir.dir.writeFile(io, .{
         .sub_path = "nullclaw_photo_123.png",
         .data = "\x89PNG\x0d\x0a\x1a\x0a",
     });
 
-    const dir_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    const dir_path = try tmp_dir.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(dir_path.ptr[0 .. dir_path.len + 1]);
     const file_path = try std.fs.path.join(std.testing.allocator, &.{ dir_path, "nullclaw_photo_123.png" });
     defer std.testing.allocator.free(file_path);
@@ -811,9 +814,9 @@ test "prepareMessagesForProvider does not delete nullclaw temp image files" {
 
     _ = try prepareMessagesForProvider(arena, &msgs, .{
         .allowed_dirs = &.{dir_path},
-    });
+    }, std.testing.io);
 
-    try std.Io.Dir.accessAbsolute(std.Options.debug_io, file_path, .{});
+    try std.Io.Dir.accessAbsolute(io, file_path, .{});
 }
 
 test "parseImageMarkers mixed case markers" {
@@ -840,7 +843,7 @@ test "prepareMessagesForProvider only processes last user message" {
         ChatMessage.user("Now see [IMAGE:https://example.com/new.jpg]"),
     };
 
-    const result = try prepareMessagesForProvider(arena, &msgs, .{});
+    const result = try prepareMessagesForProvider(arena, &msgs, .{}, std.testing.io);
     try std.testing.expectEqual(@as(usize, 3), result.len);
     // First user message should NOT be processed (not the last)
     try std.testing.expect(result[0].content_parts == null);
@@ -860,7 +863,7 @@ test "quick-check handles mixed case IMAGE markers" {
         ChatMessage.user("[ImAgE:https://example.com/cat.jpg]"),
     };
 
-    const result = try prepareMessagesForProvider(arena, &msgs, .{});
+    const result = try prepareMessagesForProvider(arena, &msgs, .{}, std.testing.io);
     try std.testing.expect(result[0].content_parts != null);
 }
 

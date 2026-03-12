@@ -128,7 +128,7 @@ test "memory_list executes without backend" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not configured") != null);
@@ -148,7 +148,7 @@ test "memory_list filters internal keys by default" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"limit\":10}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);
@@ -169,7 +169,7 @@ test "memory_list include_internal true includes autosave entries" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"include_internal\":true}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);
@@ -189,7 +189,7 @@ test "memory_list filters markdown-encoded internal keys in content" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"limit\":10}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);
@@ -210,7 +210,7 @@ test "memory_list filters bootstrap internal keys by default" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"limit\":10}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);

@@ -84,7 +84,7 @@ test "screenshot execute returns mock in test mode" {
     var st = ScreenshotTool{ .workspace_dir = "/tmp/workspace" };
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try st.execute(allocator, parsed.parsed.value.object);
+    const result = try st.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer allocator.free(result.output);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "[IMAGE:") != null);
@@ -96,7 +96,7 @@ test "screenshot execute with custom filename" {
     var st = ScreenshotTool{ .workspace_dir = "/tmp" };
     const parsed = try root.parseTestArgs("{\"filename\":\"capture.png\"}");
     defer parsed.deinit();
-    const result = try st.execute(allocator, parsed.parsed.value.object);
+    const result = try st.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer allocator.free(result.output);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "capture.png") != null);

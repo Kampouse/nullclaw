@@ -305,7 +305,7 @@ test "WebSearchTool missing query fails" {
     var wst = WebSearchTool{};
     const parsed = try root.parseTestArgs("{\"count\":5}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing required 'query' parameter", result.error_msg.?);
 }
@@ -314,7 +314,7 @@ test "WebSearchTool empty query fails" {
     var wst = WebSearchTool{};
     const parsed = try root.parseTestArgs("{\"query\":\"  \"}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("'query' must not be empty", result.error_msg.?);
 }
@@ -323,7 +323,7 @@ test "WebSearchTool without working provider chain returns aggregate error" {
     var wst = WebSearchTool{};
     const parsed = try root.parseTestArgs("{\"query\":\"zig programming\"}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.error_msg) |e| testing.allocator.free(e);
     try testing.expect(!result.success);
     try testing.expect(std.mem.indexOf(u8, result.error_msg.?, "All web_search providers failed") != null);
@@ -333,7 +333,7 @@ test "WebSearchTool invalid searxng URL reports config error" {
     var wst = WebSearchTool{ .searxng_base_url = "https://searx.example.com?bad=1", .provider = "searxng" };
     const parsed = try root.parseTestArgs("{\"query\":\"zig\"}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Invalid http_request.search_base_url") != null);
 }

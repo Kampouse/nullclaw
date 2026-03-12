@@ -24,7 +24,8 @@ pub const CronListTool = struct {
         };
     }
 
-    pub fn execute(_: *CronListTool, allocator: std.mem.Allocator, _: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronListTool, allocator: std.mem.Allocator, _: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         var scheduler = loadScheduler(allocator) catch {
             return ToolResult{ .success = true, .output = try allocator.dupe(u8, "No scheduled cron jobs.") };
         };
@@ -129,7 +130,7 @@ test "cron_list execute returns success" {
     const t = cl.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     // Either "No scheduled cron jobs." or a formatted job list

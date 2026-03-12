@@ -777,7 +777,7 @@ test "tool spec generation" {
 }
 
 test "all tools includes extras when enabled" {
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{
         .http_enabled = true,
         .browser_enabled = true,
     });
@@ -792,7 +792,7 @@ test "all tools includes extras when enabled" {
 }
 
 test "all tools excludes extras when disabled" {
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{});
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{});
     defer deinitTools(std.testing.allocator, tools);
 
     // Order: shell, file_read, file_write, file_edit, git, cargo, zig_build,
@@ -807,7 +807,7 @@ test "all tools wires http and web_search config into tool instances" {
     const search_url = "https://searx.example.com";
     const search_fallbacks = [_][]const u8{ "jina", "duckduckgo" };
 
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{
         .http_enabled = true,
         .http_allowed_domains = &domains,
         .http_max_response_size = 321_000,
@@ -853,10 +853,10 @@ test "all tools wires subagent manager into spawn tool" {
         .config_path = "/tmp/yc_test/config.json",
         .allocator = std.testing.allocator,
     };
-    var manager = subagent_mod.SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var manager = subagent_mod.SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer manager.deinit();
 
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{
         .subagent_manager = &manager,
     });
     defer deinitTools(std.testing.allocator, tools);
@@ -885,7 +885,8 @@ test "bindMemoryTools matches by vtable, not by colliding tool name" {
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(_: *@This(), _: std.mem.Allocator, _: JsonObjectMap) anyerror!ToolResult {
+        pub fn execute(_: *@This(), _: std.mem.Allocator, _: JsonObjectMap, io: std.Io) anyerror!ToolResult {
+            _ = io;
             return ToolResult.ok("");
         }
     };

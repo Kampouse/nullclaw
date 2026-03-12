@@ -51,6 +51,7 @@ const ThreadContext = struct {
 
 pub const SubagentManager = struct {
     allocator: Allocator,
+    io: std.Io,
     tasks: std.AutoHashMapUnmanaged(u64, *TaskState),
     next_id: u64,
     mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
@@ -67,12 +68,14 @@ pub const SubagentManager = struct {
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         cfg: *const config_mod.Config,
         bus: ?*bus_mod.Bus,
         subagent_config: SubagentConfig,
     ) SubagentManager {
         return .{
             .allocator = allocator,
+            .io = io,
             .tasks = .{},
             .next_id = 1,
             .mutex = .{ .state = .init(.unlocked) },
@@ -112,9 +115,9 @@ pub const SubagentManager = struct {
         origin_channel: []const u8,
         origin_chat_id: []const u8,
     ) !u64 {
-        const io = std.Options.debug_io;
-        self.mutex.lockUncancelable(io);
-        defer self.mutex.unlock(io);
+        // io: use self.io;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
 
         if (self.getRunningCountLocked() >= self.config.max_concurrent)
             return error.TooManyConcurrentSubagents;
@@ -165,9 +168,9 @@ pub const SubagentManager = struct {
     }
 
     pub fn getTaskStatus(self: *SubagentManager, task_id: u64) ?TaskStatus {
-        const io = std.Options.debug_io;
-        self.mutex.lockUncancelable(io);
-        defer self.mutex.unlock(io);
+        // io: use self.io;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         if (self.tasks.get(task_id)) |state| {
             return state.status;
         }
@@ -175,9 +178,9 @@ pub const SubagentManager = struct {
     }
 
     pub fn getTaskResult(self: *SubagentManager, task_id: u64) ?[]const u8 {
-        const io = std.Options.debug_io;
-        self.mutex.lockUncancelable(io);
-        defer self.mutex.unlock(io);
+        // io: use self.io;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         if (self.tasks.get(task_id)) |state| {
             return state.result;
         }
@@ -185,9 +188,9 @@ pub const SubagentManager = struct {
     }
 
     pub fn getRunningCount(self: *SubagentManager) u32 {
-        const io = std.Options.debug_io;
-        self.mutex.lockUncancelable(io);
-        defer self.mutex.unlock(io);
+        // io: use self.io;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         return self.getRunningCountLocked();
     }
 
@@ -208,9 +211,9 @@ pub const SubagentManager = struct {
 
         var label: []const u8 = "subagent";
         {
-            const io = std.Options.debug_io;
-            self.mutex.lockUncancelable(io);
-            defer self.mutex.unlock(io);
+            // io: use self.io;
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
             if (self.tasks.get(task_id)) |state| {
                 state.status = if (owned_err != null) .failed else .completed;
                 state.result = owned_result;
@@ -299,7 +302,7 @@ test "SubagentManager init and deinit" {
         .config_path = "/tmp/yc/config.json",
         .allocator = std.testing.allocator,
     };
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
     try std.testing.expectEqual(@as(u64, 1), mgr.next_id);
     try std.testing.expect(mgr.bus == null);
@@ -334,7 +337,7 @@ test "SubagentManager getRunningCount empty" {
         .config_path = "/tmp/yc/config.json",
         .allocator = std.testing.allocator,
     };
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
     try std.testing.expectEqual(@as(u32, 0), mgr.getRunningCount());
 }
@@ -345,7 +348,7 @@ test "SubagentManager getTaskStatus unknown id" {
         .config_path = "/tmp/yc/config.json",
         .allocator = std.testing.allocator,
     };
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
     try std.testing.expect(mgr.getTaskStatus(999) == null);
 }
@@ -356,7 +359,7 @@ test "SubagentManager getTaskResult unknown id" {
         .config_path = "/tmp/yc/config.json",
         .allocator = std.testing.allocator,
     };
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
     try std.testing.expect(mgr.getTaskResult(999) == null);
 }
@@ -367,7 +370,7 @@ test "SubagentManager completeTask updates state" {
         .config_path = "/tmp/yc/config.json",
         .allocator = std.testing.allocator,
     };
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
 
     // Manually insert a task state to test completeTask
@@ -391,7 +394,7 @@ test "SubagentManager completeTask with error" {
         .config_path = "/tmp/yc/config.json",
         .allocator = std.testing.allocator,
     };
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
 
     const state = try std.testing.allocator.create(TaskState);
@@ -417,7 +420,7 @@ test "SubagentManager completeTask routes via bus" {
     var bus = bus_mod.Bus.init();
     defer bus.close();
 
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, &bus, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, &bus, .{});
     defer mgr.deinit();
 
     const state = try std.testing.allocator.create(TaskState);
@@ -446,13 +449,13 @@ test "SubagentManager spawn stores session key" {
         .config_path = "/tmp/yc/config.json",
         .allocator = std.testing.allocator,
     };
-    var mgr = SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var mgr = SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
 
     const task_id = try mgr.spawn("quick task", "session-check", "agent", "session:42");
-    const io_test = std.Options.debug_io;
-    mgr.mutex.lockUncancelable(io_test);
-    defer mgr.mutex.unlock(io_test);
+    // io_test: use self.io;
+    mgr.mutex.lockUncancelable(mgr.io);
+    defer mgr.mutex.unlock(mgr.io);
     const state = mgr.tasks.get(task_id) orelse return error.TestUnexpectedResult;
     try std.testing.expect(state.session_key != null);
     try std.testing.expectEqualStrings("session:42", state.session_key.?);
@@ -466,7 +469,7 @@ test "SubagentManager spawn rollback removes task on out-of-memory" {
         .config_path = "/tmp/yc/config.json",
         .allocator = alloc,
     };
-    var mgr = SubagentManager.init(alloc, &cfg, null, .{});
+    var mgr = SubagentManager.init(alloc, std.testing.io, &cfg, null, .{});
     defer mgr.deinit();
 
     try mgr.tasks.ensureTotalCapacity(alloc, 1);
