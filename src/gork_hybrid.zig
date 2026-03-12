@@ -344,8 +344,7 @@ pub fn waitWithTimeout(child: *std.process.Child, timeout_ms: u64) !std.process.
         .{},
         struct {
             fn watchdog(child_ptr: *std.process.Child, timeout: u64) void {
-                _ = timeout; // TODO: use for sleep duration after Zig 0.16 migration
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(timeout * std.time.ns_per_ms);
                 _ = child_ptr.kill() catch {};
             }
         }.watchdog,

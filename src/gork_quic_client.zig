@@ -90,7 +90,8 @@ pub const GorkQuicClient = struct {
         self.bridge_process = child;
 
         // Wait for bridge to initialize
-        // std.Thread.sleep() - TODO: Fix for Zig 0.16
+        const util = @import("../util.zig");
+        util.sleep(100 * std.time.ns_per_ms);
 
         const elapsed = @divTrunc(0 - start_time, 1_000_000);
         self.metrics.connection_time_ms.store(@intCast(elapsed), .monotonic);

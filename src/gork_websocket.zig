@@ -216,7 +216,8 @@ fn connectLoop(self: *WebSocketClient) void {
             });
 
             self.state.store(.reconnecting, .seq_cst);
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            const util = @import("../util.zig");
+            util.sleep(delay_ms * std.time.ns_per_ms);
 
             // Increase delay for next retry
             delay_ms = @min(delay_ms * 2, MAX_RECONNECT_DELAY_MS);
@@ -232,7 +233,8 @@ fn connectAndListen(self: *WebSocketClient) !void {
     // Real implementation would use std.http.Client for WebSocket
 
     // Placeholder: Just sleep and return error to test reconnection
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+    const util = @import("../util.zig");
+    util.sleep(1 * std.time.ns_per_s);
     return error.ConnectionLost;
 }
 
@@ -332,7 +334,8 @@ test "WebSocket: start/stop no leaks" {
     defer client.deinit();
 
     try client.start();
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+    const util = @import("../util.zig");
+    util.sleep(100 * std.time.ns_per_ms);
     client.stop();
 
     try std.testing.expectEqual(.disconnected, client.getState());

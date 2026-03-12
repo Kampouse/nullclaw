@@ -724,12 +724,11 @@ pub const CronScheduler = struct {
         if (!self.enabled) return;
 
         const poll_ns: u64 = poll_secs * std.time.ns_per_s;
-        _ = poll_ns; // TODO: use with std.Thread.sleep() migration
 
         while (true) {
             const now = 0;
             _ = self.tick(now, out_bus);
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            util.sleep(poll_ns);
         }
     }
 

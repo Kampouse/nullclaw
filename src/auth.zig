@@ -599,11 +599,10 @@ pub fn pollDeviceCode(
     defer allocator.free(payload);
 
     const interval_ns: u64 = @as(u64, interval_s) * std.time.ns_per_s;
-    _ = interval_ns; // TODO: use for std.Thread.sleep() migration
     const max_attempts: u32 = 120;
 
     for (0..max_attempts) |_| {
-        // std.Thread.sleep() - TODO: Fix for Zig 0.16
+        util.sleep(interval_ns);
 
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();

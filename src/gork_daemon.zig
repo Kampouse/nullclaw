@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const util = @import("util.zig");
 
 pub const DaemonProcess = @This();
 
@@ -228,7 +229,7 @@ fn logParserLoop(self: *DaemonProcess, stdout_file: *std.Io.File) void {
 /// Health monitor thread - checks daemon health
 fn healthMonitorLoop(daemon: *DaemonProcess) void {
     while (true) {
-        // std.Thread.sleep() - TODO: Fix for Zig 0.16
+        util.sleep(1 * std.time.ns_per_s);
 
         daemon.mutex.lock();
         const state = daemon.state;
