@@ -312,7 +312,7 @@ pub const DiscordChannel = struct {
             task.channel.sendTypingIndicator(task.channel_id);
             var elapsed: u64 = 0;
             while (elapsed < TYPING_INTERVAL_NS and !task.stop_requested.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(TYPING_SLEEP_STEP_NS);
                 elapsed += TYPING_SLEEP_STEP_NS;
             }
         }
@@ -454,7 +454,7 @@ pub const DiscordChannel = struct {
             // Backoff between reconnects (interruptible).
             var slept: u64 = 0;
             while (slept < backoff_ms and self.running.load(.acquire)) {
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(100 * std.time.ns_per_ms);
                 slept += 100;
             }
         }
@@ -524,14 +524,14 @@ pub const DiscordChannel = struct {
     fn heartbeatLoop(self: *DiscordChannel, ws: *websocket.WsClient) void {
         // Wait for interval to be set
         while (!self.heartbeat_stop.load(.acquire) and self.heartbeat_interval_ms.load(.acquire) == 0) {
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            util.sleep(100 * std.time.ns_per_ms);
         }
         while (!self.heartbeat_stop.load(.acquire)) {
             const interval_ms = self.heartbeat_interval_ms.load(.acquire);
             var elapsed: u64 = 0;
             while (elapsed < interval_ms) {
                 if (self.heartbeat_stop.load(.acquire)) return;
-                // std.Thread.sleep() - TODO: Fix for Zig 0.16
+                util.sleep(100 * std.time.ns_per_ms);
                 elapsed += 100;
             }
             if (self.heartbeat_stop.load(.acquire)) return;
@@ -1002,7 +1002,7 @@ test "discord startTyping stores handle and stopTyping clears it" {
 
     try ch.startTyping("123456");
     try std.testing.expect(ch.typing_handles.get("123456") != null);
-    // std.Thread.sleep() - TODO: Fix for Zig 0.16
+    util.sleep(10 * std.time.ns_per_ms);
     try ch.stopTyping("123456");
     try std.testing.expect(ch.typing_handles.get("123456") == null);
 }
