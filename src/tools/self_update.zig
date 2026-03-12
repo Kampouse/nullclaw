@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
+const slog = @import("../structured_log.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -47,7 +48,7 @@ pub const SelfUpdateTool = struct {
     }
 
     fn executeGit(allocator: std.mem.Allocator, args: []const []const u8, cwd: []const u8) ![]const u8 {
-        std.debug.print("[TRACE] executeGit: start, cwd={s}\n", .{cwd});
+        slog.logStructured("DEBUG", "self_update", "git_start", .{.cwd = cwd});
 
         var argv_buf: [32][]const u8 = undefined;
         argv_buf[0] = "git";
@@ -56,25 +57,25 @@ pub const SelfUpdateTool = struct {
             argv_buf[i] = a;
         }
 
-        std.debug.print("[TRACE] executeGit: calling process_util.run\n", .{});
+        slog.logStructured("DEBUG", "self_update", "git_calling_process", .{});
         const result = try process_util.run(allocator, argv_buf[0 .. arg_count + 1], .{ .cwd = cwd });
-        std.debug.print("[TRACE] executeGit: process_util.run returned\n", .{});
+        slog.logStructured("DEBUG", "self_update", "git_process_returned", .{});
         defer result.deinit(allocator);
 
         if (!result.success) {
-            std.debug.print("[TRACE] executeGit: command failed\n", .{});
+            slog.logStructured("ERROR", "self_update", "git_failed", .{});
             return error.GitCommandFailed;
         }
 
-        std.debug.print("[TRACE] executeGit: returning stdout\n", .{});
+        slog.logStructured("DEBUG", "self_update", "git_success", .{});
         return allocator.dupe(u8, result.stdout);
     }
 
     fn getCurrentBranch(allocator: std.mem.Allocator, repo_dir: []const u8) ![]const u8 {
-        std.debug.print("[TRACE] getCurrentBranch: start\n", .{});
+        slog.logStructured("DEBUG", "self_update", "get_branch_start", .{});
         const output = try executeGit(allocator, &.{ "rev-parse", "--abbrev-ref", "HEAD" }, repo_dir);
         defer allocator.free(output);
-        std.debug.print("[TRACE] getCurrentBranch: returning\n", .{});
+        slog.logStructured("DEBUG", "self_update", "get_branch_success", .{});
         return std.mem.trim(u8, output, &std.ascii.whitespace);
     }
 
@@ -244,11 +245,11 @@ pub const SelfUpdateTool = struct {
     }
 
     pub fn execute(self: *const SelfUpdateTool, allocator: std.mem.Allocator, args: JsonObjectMap) ToolResult {
-        std.debug.print("[TRACE] self_update.execute: start\n", .{});
+        slog.logStructured("DEBUG", "self_update", "execute_start", .{});
 
         const operation_obj = args.get("operation");
         const operation = if (operation_obj) |op| op.string else "status";
-        std.debug.print("[TRACE] self_update.execute: operation={s}\n", .{operation});
+        slog.logStructured("DEBUG", "self_update", "execute_operation", .{.op = operation});
 
         // Determine working directory
         // Priority: 1) explicit cwd arg, 2) detect from executable path, 3) workspace_dir
@@ -257,31 +258,31 @@ pub const SelfUpdateTool = struct {
 
         const repo_dir: []const u8 = blk: {
             if (args.get("cwd")) |cwd| {
-                std.debug.print("[TRACE] self_update.execute: using explicit cwd={s}\n", .{cwd.string});
+                slog.logStructured("DEBUG", "self_update", "using_cwd", .{.cwd = cwd.string});
                 break :blk cwd.string;
             }
 
             // Try to detect source repo from executable path
             if (detectSourceRepo(allocator)) |detected| {
-                std.debug.print("[TRACE] self_update.execute: detected source repo at {s}\n", .{detected});
+                slog.logStructured("DEBUG", "self_update", "detected_repo", .{.path = detected});
                 detected_repo = detected;
                 break :blk detected;
             }
 
-            std.debug.print("[TRACE] self_update.execute: falling back to workspace_dir={s}\n", .{self.workspace_dir});
+            slog.logStructured("DEBUG", "self_update", "fallback_workspace", .{.path = self.workspace_dir});
             break :blk self.workspace_dir;
         };
-        std.debug.print("[TRACE] self_update.execute: repo_dir={s}\n", .{repo_dir});
+        slog.logStructured("DEBUG", "self_update", "repo_dir", .{.path = repo_dir});
 
         // Resolve and validate path
-        std.debug.print("[TRACE] self_update.execute: resolving path\n", .{});
+        slog.logStructured("DEBUG", "self_update", "resolving_path", .{});
         const resolved_repo_dir = resolvePathAlloc(allocator, repo_dir) catch |err| {
-            std.debug.print("[TRACE] self_update.execute: path resolution failed: {}\n", .{err});
+            slog.logStructured("ERROR", "self_update", "path_resolution_failed", .{.err = err});
             const err_msg = std.fmt.allocPrint(allocator, "Failed to resolve repository path: {}", .{err}) catch return ToolResult.fail("Failed to resolve repository path");
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         };
         defer allocator.free(resolved_repo_dir);
-        std.debug.print("[TRACE] self_update.execute: resolved_repo_dir={s}\n", .{resolved_repo_dir});
+        slog.logStructured("DEBUG", "self_update", "resolved_repo_dir", .{.path = resolved_repo_dir});
 
         // Security check
         // Note: We bypass the security check if we detected the source repo from the executable path.
@@ -289,9 +290,9 @@ pub const SelfUpdateTool = struct {
         // 1. The detected path comes from git rev-parse, not user input
         // 2. The self_update tool is specifically for updating the agent's own source code
         // 3. The user explicitly ran this tool to perform self-update
-        std.debug.print("[TRACE] self_update.execute: checking path security\n", .{});
+        slog.logStructured("DEBUG", "self_update", "checking_path_security", .{});
         if (detected_repo == null and !isResolvedPathAllowed(allocator, resolved_repo_dir, self.workspace_dir, self.allowed_paths)) {
-            std.debug.print("[TRACE] self_update.execute: path not allowed\n", .{});
+            slog.logStructured("WARN", "self_update", "path_not_allowed", .{});
             const err_msg = std.fmt.allocPrint(allocator, "Path '{s}' is not allowed", .{resolved_repo_dir}) catch return ToolResult.fail("Path not allowed");
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         }
@@ -299,16 +300,16 @@ pub const SelfUpdateTool = struct {
         const working_dir = resolved_repo_dir;
 
         const trimmed_op = std.mem.trim(u8, operation, &std.ascii.whitespace);
-        std.debug.print("[TRACE] self_update.execute: trimmed_op={s}\n", .{trimmed_op});
+        slog.logStructured("DEBUG", "self_update", "trimmed_op", .{.op = trimmed_op});
 
         if (std.mem.eql(u8, trimmed_op, "status")) {
-            std.debug.print("[TRACE] self_update.execute: calling showStatus\n", .{});
+            slog.logStructured("DEBUG", "self_update", "calling_show_status", .{});
             return self.showStatus(allocator, working_dir);
         } else if (std.mem.eql(u8, trimmed_op, "check")) {
-            std.debug.print("[TRACE] self_update.execute: calling checkForUpdates\n", .{});
+            slog.logStructured("DEBUG", "self_update", "calling_check_updates", .{});
             return self.checkForUpdates(allocator, working_dir, args);
         } else if (std.mem.eql(u8, trimmed_op, "pull")) {
-            std.debug.print("[TRACE] self_update.execute: calling pullUpdates\n", .{});
+            slog.logStructured("DEBUG", "self_update", "calling_pull_updates", .{});
             return self.pullUpdates(allocator, working_dir, args);
         } else if (std.mem.eql(u8, trimmed_op, "compile")) {
             return self.compileAgent(allocator, working_dir);

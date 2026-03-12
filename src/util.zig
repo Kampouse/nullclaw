@@ -1,4 +1,5 @@
 const std = @import("std");
+const slog = @import("structured_log.zig");
 
 /// CRITICAL: std.Options.debug_io uses a .failing allocator (see Io/Threaded.zig:1622)
 /// This causes OutOfMemory when std.process.run() creates internal ArenaAllocator.
@@ -9,11 +10,11 @@ const std = @import("std");
 var global_threaded_io: ?std.Io.Threaded = null;
 
 pub fn createProcessIo() std.Io {
-    std.debug.print("[TRACE] createProcessIo: start\n", .{});
+    slog.logStructured("DEBUG", "util", "create_process_io_start", .{});
 
     // Initialize global instance once
     if (global_threaded_io == null) {
-        std.debug.print("[TRACE] createProcessIo: initializing global_threaded_io\n", .{});
+        slog.logStructured("DEBUG", "util", "init_global_threaded_io", .{});
         global_threaded_io = std.Io.Threaded{
             .allocator = std.heap.page_allocator,
             .stack_size = std.Thread.SpawnConfig.default_stack_size,
@@ -29,11 +30,11 @@ pub fn createProcessIo() std.Io {
             .worker_threads = .init(null),
             .disable_memory_mapping = false,
         };
-        std.debug.print("[TRACE] createProcessIo: global_threaded_io initialized\n", .{});
+        slog.logStructured("DEBUG", "util", "global_threaded_io_initialized", .{});
     }
-    std.debug.print("[TRACE] createProcessIo: calling ioBasic()\n", .{});
+    slog.logStructured("DEBUG", "util", "calling_io_basic", .{});
     const io = global_threaded_io.?.ioBasic();
-    std.debug.print("[TRACE] createProcessIo: returning io\n", .{});
+    slog.logStructured("DEBUG", "util", "returning_io", .{});
     return io;
 }
 

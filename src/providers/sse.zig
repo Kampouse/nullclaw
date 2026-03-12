@@ -8,6 +8,7 @@ const AnthropicSseResult = union(enum) {
 
 const std = @import("std");
 const root = @import("root.zig");
+const slog = @import("../structured_log.zig");
 
 /// Result of parsing a single SSE line.
 pub const SseLineResult = union(enum) {
@@ -82,9 +83,9 @@ pub fn curlStream(
     callback: root.StreamCallback,
     ctx: *anyopaque,
 ) !root.StreamChatResult {
-    std.debug.print("[TRACE] sse.curlStream: START\n", .{});
+    slog.logStructured("DEBUG", "sse", "curl_stream_start", .{});
     _ = timeout_secs;
-    std.debug.print("[TRACE] sse.curlStream: START\n", .{});
+    slog.logStructured("DEBUG", "sse", "curl_stream_start", .{});
     const sse = @import("../sse_client.zig");
 
     // Build headers array
@@ -115,35 +116,35 @@ pub fn curlStream(
     const headers_slice = header_buf[0..n_headers];
 
     // Create SSE connection and connect
-    std.debug.print("[TRACE] sse.curlStream: creating SSE connection\n", .{});
+    slog.logStructured("DEBUG", "sse", "creating_connection", .{});
     var conn = try sse.SseConnection.initAndConnect(allocator, url, headers_slice, body);
-    std.debug.print("[TRACE] sse.curlStream: SSE connection created, setting up defer for conn.deinit\n", .{});
+    slog.logStructured("DEBUG", "sse", "connection_created", .{});
     defer {
-        std.debug.print("[TRACE] sse.curlStream: DEFER - starting conn.deinit()\n", .{});
+        slog.logStructured("DEBUG", "sse", "defer_conn_deinit_start", .{});
         conn.deinit();
-        std.debug.print("[TRACE] sse.curlStream: DEFER - conn.deinit() completed\n", .{});
+        slog.logStructured("DEBUG", "sse", "defer_conn_deinit_complete", .{});
     }
 
     var accumulated_content = std.ArrayList(u8).initCapacity(allocator, 4096) catch return error.OutOfMemory;
     defer {
-        std.debug.print("[TRACE] sse.curlStream: DEFER - starting accumulated_content.deinit\n", .{});
+        slog.logStructured("DEBUG", "sse", "defer_content_deinit_start", .{});
         accumulated_content.deinit(allocator);
-        std.debug.print("[TRACE] sse.curlStream: DEFER - accumulated_content.deinit completed\n", .{});
+        slog.logStructured("DEBUG", "sse", "defer_content_deinit_complete", .{});
     }
     var total_tokens: u32 = 0;
     var line_count: usize = 0;
 
     // Read and parse SSE events
-    std.debug.print("[TRACE] sse.curlStream: starting read loop\n", .{});
+    slog.logStructured("DEBUG", "sse", "read_loop_start", .{});
     var line_buf: [4096]u8 = undefined;
     while (true) {
         const line_len = conn.readLine(&line_buf) catch |err| switch (err) {
             error.ConnectionClosed => {
-                std.debug.print("[TRACE] sse.curlStream: ConnectionClosed, breaking\n", .{});
+                slog.logStructured("DEBUG", "sse", "connection_closed", .{});
                 break;
             },
             else => {
-                std.debug.print("[TRACE] sse.curlStream: readLine error: {}\n", .{err});
+                slog.logStructured("WARN", "sse", "read_line_error", .{.err = err});
                 return err;
             },
         };
@@ -171,19 +172,19 @@ pub fn curlStream(
             },
             .done => {
                 // Send final chunk
-                std.debug.print("[TRACE] sse.curlStream: received [DONE], sending final chunk\n", .{});
+                slog.logStructured("DEBUG", "sse", "received_done", .{});
                 callback(ctx, root.StreamChunk.finalChunk());
-                std.debug.print("[TRACE] sse.curlStream: final chunk sent, breaking loop\n", .{});
+                slog.logStructured("DEBUG", "sse", "final_chunk_sent", .{});
                 break;
             },
             .skip => {},
         }
     }
 
-    std.debug.print("[TRACE] sse.curlStream: loop exited, building result\n", .{});
+    slog.logStructured("DEBUG", "sse", "loop_exited", .{});
     const owned_content = try accumulated_content.toOwnedSlice(allocator);
-    std.debug.print("[TRACE] sse.curlStream: content owned, tokens={d}\n", .{total_tokens});
-    std.debug.print("[TRACE] sse.curlStream: about to return result (defers will run now)\n", .{});
+    slog.logStructured("DEBUG", "sse", "building_result", .{.tokens = total_tokens});
+    slog.logStructured("DEBUG", "sse", "returning_result", .{});
     return .{
         .content = owned_content,
         .usage = .{ .total_tokens = total_tokens },

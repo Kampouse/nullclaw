@@ -1,6 +1,7 @@
 const std = @import("std");
 const platform = @import("../platform.zig");
 const root = @import("root.zig");
+const slog = @import("../structured_log.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -43,14 +44,14 @@ pub const ShellTool = struct {
     }
 
     pub fn execute(self: *ShellTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
-        std.debug.print("[TRACE] shell.execute: start\n", .{});
+        slog.logStructured("DEBUG", "shell", "execute_start", .{});
 
         // Parse the command from the pre-parsed JSON object
         const command = root.getString(args, "command") orelse {
-            std.debug.print("[TRACE] shell.execute: missing command parameter\n", .{});
+            slog.logStructured("WARN", "shell", "missing_command", .{});
             return ToolResult.fail("Missing 'command' parameter");
         };
-        std.debug.print("[TRACE] shell.execute: command={s}\n", .{command});
+        slog.logStructured("DEBUG", "shell", "executing_command", .{.command = command});
 
         // Validate command against security policy
         if (self.policy) |pol| {

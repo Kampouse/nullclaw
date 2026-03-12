@@ -6,6 +6,7 @@
 const std = @import("std");
 const io = std.Options.debug_io; // For Zig 0.16.0 I/O
 const log = std.log.scoped(.agent);
+const slog = @import("../structured_log.zig");
 const Config = @import("../config.zig").Config;
 const providers = @import("../providers/root.zig");
 const Provider = providers.Provider;
@@ -30,9 +31,9 @@ const CliStreamCtx = struct {
 };
 
 fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
-    std.debug.print("[TRACE] cliStreamSinkCallback: stage={}\n", .{event.stage});
+    slog.logStructured("DEBUG", "cli", "stream_sink_stage", .{.stage = event.stage});
     if (event.stage != .chunk or event.text.len == 0) {
-        std.debug.print("[TRACE] cliStreamSinkCallback: skipping (chunk={}\n", .{event.text.len});
+        slog.logStructured("DEBUG", "cli", "stream_sink_skip", .{.chunk_len = event.text.len});
         return;
     }
     // Write directly to stdout file descriptor without buffering.
@@ -40,15 +41,15 @@ fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
     // std.c.write is used here instead of buffered I/O to avoid delay.
     // Errors are intentionally ignored as stdout write failures are not recoverable.
     _ = std.c.write(1, event.text.ptr, event.text.len);
-    std.debug.print("[TRACE] cliStreamSinkCallback: wrote {} bytes\n", .{event.text.len});
+    slog.logStructured("DEBUG", "cli", "stream_sink_wrote", .{.bytes = event.text.len});
 }
 
 /// Streaming callback that forwards provider chunks into unified stream sink events.
 fn cliStreamCallback(ctx_ptr: *anyopaque, chunk: providers.StreamChunk) void {
-    std.debug.print("[TRACE] cliStreamCallback: received chunk, is_final={}\n", .{chunk.is_final});
+    slog.logStructured("DEBUG", "cli", "stream_callback_chunk", .{.is_final = chunk.is_final});
     const stream_ctx: *CliStreamCtx = @ptrCast(@alignCast(ctx_ptr));
     streaming.forwardProviderChunk(stream_ctx.sink, chunk);
-    std.debug.print("[TRACE] cliStreamCallback: forwarded chunk\n", .{});
+    slog.logStructured("DEBUG", "cli", "stream_callback_forward", .{});
 }
 
 fn hasOpenAiCodexCredential(allocator: std.mem.Allocator) bool {

@@ -2,6 +2,7 @@ const std = @import("std");
 const root = @import("root.zig");
 const sse = @import("sse.zig");
 const error_classify = @import("error_classify.zig");
+const slog = @import("../structured_log.zig");
 
 const Provider = root.Provider;
 const ChatMessage = root.ChatMessage;
@@ -497,7 +498,7 @@ pub const OpenAiCompatibleProvider = struct {
         callback: root.StreamCallback,
         callback_ctx: *anyopaque,
     ) anyerror!root.StreamChatResult {
-        std.debug.print("[TRACE] compatible.streamChatImpl: START\n", .{});
+        slog.logStructured("DEBUG", "compatible", "stream_chat_start", .{});
         const self: *OpenAiCompatibleProvider = @ptrCast(@alignCast(ptr));
         const effective_model = self.normalizeProviderModel(model);
 
@@ -518,9 +519,9 @@ pub const OpenAiCompatibleProvider = struct {
         else
             null;
 
-        std.debug.print("[TRACE] compatible.streamChatImpl: calling sse.curlStream\n", .{});
+        slog.logStructured("DEBUG", "compatible", "curl_stream_start", .{});
         const result = sse.curlStream(allocator, url, body, auth_hdr, &.{}, request.timeout_secs, callback, callback_ctx);
-        std.debug.print("[TRACE] compatible.streamChatImpl: sse.curlStream returned\n", .{});
+        slog.logStructured("DEBUG", "compatible", "curl_stream_complete", .{});
         return result;
     }
 
