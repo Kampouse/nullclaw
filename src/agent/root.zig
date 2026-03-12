@@ -26,6 +26,7 @@ const observability = @import("../observability.zig");
 const Observer = observability.Observer;
 const ObserverEvent = observability.ObserverEvent;
 const SecurityPolicy = @import("../security/policy.zig").SecurityPolicy;
+const util = @import("../util.zig");
 
 const cache = memory_mod.cache;
 pub const dispatcher = @import("dispatcher.zig");
@@ -805,7 +806,7 @@ pub const Agent = struct {
             // Build messages slice for provider (arena-owned; freed at end of iteration)
             const messages = try self.buildProviderMessages(arena);
 
-            const timer_start = 0; // TODO: Zig 0.16.0 - util.timestampUnix() API changed
+            const timer_start = util.timestampUnix();
             const is_streaming = self.stream_callback != null and self.provider.supportsStreaming();
             const native_tools_enabled = !is_streaming and self.provider.supportsNativeTools();
 
@@ -832,7 +833,7 @@ pub const Agent = struct {
                     self.stream_ctx.?,
                 ) catch |err| {
                     slog.logStructured("ERROR", "agent", "llm_error", .{.err_msg = err});
-                    const fail_duration: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, timer_start)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
+                    const fail_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
                         .model = self.model_name,
@@ -868,7 +869,7 @@ pub const Agent = struct {
                     self.temperature,
                 ) catch |err| retry_blk: {
                     // Record the failed attempt
-                    const fail_duration: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, timer_start)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
+                    const fail_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
                         .model = self.model_name,
@@ -953,7 +954,7 @@ pub const Agent = struct {
             self.logLlmResponse(iteration + 1, response_attempt, &response);
             slog.debug("agent", "turn_after_log_llm_response", .{});
 
-            const duration_ms: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, timer_start)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
+            const duration_ms: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
             const resp_event = ObserverEvent{ .llm_response = .{
                 .provider = self.provider.getName(),
                 .model = self.model_name,
@@ -1199,7 +1200,7 @@ pub const Agent = struct {
                 self.observer.recordEvent(&tool_start_event);
                 slog.debug("agent", "turn_tool_call_start_event_recorded", .{});
 
-                const tool_timer = 0; // TODO: Zig 0.16.0 - util.timestampUnix() API changed
+                const tool_timer = util.timestampUnix();
 
                 slog.debug("agent", "turn_checking_duplicate_memory_store", .{});
                 const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call)) blk: {
@@ -1215,7 +1216,7 @@ pub const Agent = struct {
                     break :blk self.executeTool(arena, call);
                 };
                 slog.debug("agent", "turn_execute_tool_returned", .{.tool = call.name});
-                const tool_duration: u64 = @as(u64, @intCast(@max(0, @as(i64, 0) - @as(i64, tool_timer)))); // TODO: Zig 0.16.0 - util.timestampUnix() API changed
+                const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
 
                 if (self.log_tool_calls) {
                     log.info(
@@ -3744,8 +3745,8 @@ test "slash /model dupe prevents use-after-free" {
 // Simulate by verifying the @max(0, ...) clamping logic.
 test "milliTimestamp negative difference clamps to zero" {
     // Simulate: timer_start is in the future relative to "now" (negative diff)
-    const timer_start = @as(i64, 0) + 10_000; // TODO: Zig 0.16.0 - util.timestampUnix() API changed
-    const diff = @as(i64, 0) - timer_start; // TODO: Zig 0.16.0 - util.timestampUnix() API changed
+    const timer_start = @as(i64, 0) + 10_000;
+    const diff = @as(i64, 0) - timer_start;
     // diff < 0 here; @max(0, diff) must clamp to 0 without panic
     const clamped = @max(0, diff);
     const duration: u64 = @as(u64, @intCast(clamped));

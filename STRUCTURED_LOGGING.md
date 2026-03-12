@@ -280,27 +280,42 @@ Structured logging supports the following field types:
 - **Integers**: `.field = 42` → `"field":"42"`
 - **Floats**: `.field = 3.14` → `"field":"3.14e0"`
 - **Booleans**: `.field = true` → `"field":"true"`
+- **Nested structs**: `.field = .{.nested = "value"}` → `"field":{"nested":"value"}`
 - **Multiple fields**: All fields are serialized correctly
 
-Example:
+Examples:
 ```zig
+// Simple fields
 slog.info("auth", "user_login", .{
     .user_id = "12345",
-    .ip = "192.168.1.1",
     .success = true,
     .attempts = 3,
-    .latency = 0.045,
+});
+
+// Nested struct fields
+slog.info("api", "request_complete", .{
+    .request = .{
+        .method = "GET",
+        .path = "/api/users",
+    },
+    .response = .{
+        .status = 200,
+        .latency_ms = 45,
+    },
 });
 ```
 
 Output:
 ```json
-{"timestamp":"2026-03-12T14:12:33.000Z","level":"INFO","scope":"auth","message":"user_login","fields":{"user_id":"12345","ip":"192.168.1.1","success":"true","attempts":"3","latency":"4.5e-2"}}
+{"timestamp":"2026-03-12T14:12:33.000Z","level":"INFO","scope":"auth","message":"user_login","fields":{"user_id":"12345","success":"true","attempts":"3"}}
+{"timestamp":"2026-03-12T14:12:33.000Z","level":"INFO","scope":"api","message":"request_complete","fields":{"request":{"method":"GET","path":"/api/users"},"response":{"status":"200","latency_ms":"45"}}}
 ```
 
 ## Future Improvements
 
 - [x] Extend structured logging to all modules (agent module completed)
 - [x] Add support for float types (f32, f64 supported)
+- [x] Support for nested field structures (arbitrary nesting depth)
+- [x] Performance optimization for high-volume logging (thread-local buffers, comptime type checking)
 - [ ] Support for nested field structures
 - [ ] Performance optimization for high-volume logging

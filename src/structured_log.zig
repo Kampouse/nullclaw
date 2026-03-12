@@ -194,6 +194,49 @@ pub fn logStructured(
             } else if (@typeInfo(T) == .float) {
                 // Float types (f32, f64, etc.)
                 std.debug.print("{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"{s}\",\"fields\":{{\"{s}\":\"{e}\"}}}}\n", .{ timestamp, level, scope, message, field.name, value });
+            } else if (@typeInfo(T) == .@"struct") {
+                // Nested struct - serialize recursively
+                std.debug.print("{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"{s}\",\"fields\":{{\"{s}\":{{", .{ timestamp, level, scope, message, field.name });
+                const struct_info = @typeInfo(T).@"struct";
+                inline for (struct_info.fields, 0..) |nested_field, i| {
+                    if (i > 0) std.debug.print(",", .{});
+                    const nested_value = @field(value, nested_field.name);
+                    std.debug.print("\"{s}\":", .{nested_field.name});
+
+                    // Recursively format the nested value
+                    const NestedT = @TypeOf(nested_value);
+                    if (NestedT == []const u8 or NestedT == []u8) {
+                        std.debug.print("\"{s}\"", .{nested_value});
+                    } else if (@typeInfo(NestedT) == .pointer) {
+                        const nested_ptr_info = @typeInfo(NestedT).pointer;
+                        const NestedChild = nested_ptr_info.child;
+                        if (@typeInfo(NestedChild) == .array) {
+                            const array_ptr: [*]const u8 = nested_value;
+                            const array_len = @typeInfo(NestedChild).array.len;
+                            var actual_len: usize = 0;
+                            while (actual_len < array_len and array_ptr[actual_len] != 0) : (actual_len += 1) {}
+                            const slice = array_ptr[0..actual_len];
+                            std.debug.print("\"{s}\"", .{slice});
+                        } else if (nested_ptr_info.size == .many and NestedChild == u8) {
+                            const c_str: [*:0]const u8 = @ptrCast(nested_value);
+                            const slice = std.mem.span(c_str);
+                            std.debug.print("\"{s}\"", .{slice});
+                        } else {
+                            std.debug.print("\"?\"", .{});
+                        }
+                    } else if (NestedT == u32 or NestedT == u64 or NestedT == i32 or NestedT == i64 or NestedT == usize or NestedT == isize) {
+                        std.debug.print("\"{d}\"", .{nested_value});
+                    } else if (@typeInfo(NestedT) == .int or NestedT == comptime_int) {
+                        std.debug.print("\"{d}\"", .{nested_value});
+                    } else if (@typeInfo(NestedT) == .float) {
+                        std.debug.print("\"{e}\"", .{nested_value});
+                    } else if (NestedT == bool) {
+                        std.debug.print("\"{any}\"", .{nested_value});
+                    } else {
+                        std.debug.print("\"?\"", .{});
+                    }
+                }
+                std.debug.print("}}}}\n", .{});
             } else if (T == bool) {
                 // Boolean
                 std.debug.print("{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"{s}\",\"fields\":{{\"{s}\":\"{any}\"}}}}\n", .{ timestamp, level, scope, message, field.name, value });
@@ -251,6 +294,49 @@ pub fn logStructured(
                 } else if (@typeInfo(T) == .float) {
                     // Float types (f32, f64, etc.)
                     std.debug.print("\"{e}\"", .{value});
+                } else if (@typeInfo(T) == .@"struct") {
+                    // Nested struct - serialize recursively
+                    std.debug.print("{{", .{});
+                    const struct_info = @typeInfo(T).@"struct";
+                    inline for (struct_info.fields, 0..) |nested_field, j| {
+                        if (j > 0) std.debug.print(",", .{});
+                        const nested_value = @field(value, nested_field.name);
+                        std.debug.print("\"{s}\":", .{nested_field.name});
+
+                        // Recursively format the nested value
+                        const NestedT = @TypeOf(nested_value);
+                        if (NestedT == []const u8 or NestedT == []u8) {
+                            std.debug.print("\"{s}\"", .{nested_value});
+                        } else if (@typeInfo(NestedT) == .pointer) {
+                            const nested_ptr_info = @typeInfo(NestedT).pointer;
+                            const NestedChild = nested_ptr_info.child;
+                            if (@typeInfo(NestedChild) == .array) {
+                                const array_ptr: [*]const u8 = nested_value;
+                                const array_len = @typeInfo(NestedChild).array.len;
+                                var actual_len: usize = 0;
+                                while (actual_len < array_len and array_ptr[actual_len] != 0) : (actual_len += 1) {}
+                                const slice = array_ptr[0..actual_len];
+                                std.debug.print("\"{s}\"", .{slice});
+                            } else if (nested_ptr_info.size == .many and NestedChild == u8) {
+                                const c_str: [*:0]const u8 = @ptrCast(nested_value);
+                                const slice = std.mem.span(c_str);
+                                std.debug.print("\"{s}\"", .{slice});
+                            } else {
+                                std.debug.print("\"?\"", .{});
+                            }
+                        } else if (NestedT == u32 or NestedT == u64 or NestedT == i32 or NestedT == i64 or NestedT == usize or NestedT == isize) {
+                            std.debug.print("\"{d}\"", .{nested_value});
+                        } else if (@typeInfo(NestedT) == .int or NestedT == comptime_int) {
+                            std.debug.print("\"{d}\"", .{nested_value});
+                        } else if (@typeInfo(NestedT) == .float) {
+                            std.debug.print("\"{e}\"", .{nested_value});
+                        } else if (NestedT == bool) {
+                            std.debug.print("\"{any}\"", .{nested_value});
+                        } else {
+                            std.debug.print("\"?\"", .{});
+                        }
+                    }
+                    std.debug.print("}}", .{});
                 } else if (T == bool) {
                     std.debug.print("\"{any}\"", .{value});
                 } else {
@@ -347,5 +433,28 @@ test "logStructured with float fields" {
         .pi_f32 = @as(f32, 3.14159),
         .pi_f64 = @as(f64, 3.14159265359),
         .large = @as(f64, 1.0e10),
+    });
+}
+
+test "logStructured with nested struct fields" {
+    debug("test", "nested_struct", .{
+        .user = .{
+            .id = "12345",
+            .name = "Alice",
+            .age = 30,
+        },
+    });
+}
+
+test "logStructured with multiple nested structs" {
+    info("test", "multiple_nested", .{
+        .request = .{
+            .method = "GET",
+            .path = "/api/users",
+        },
+        .response = .{
+            .status = 200,
+            .latency_ms = 45,
+        },
     });
 }
