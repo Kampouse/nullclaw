@@ -26,9 +26,14 @@ Nullclaw outputs structured JSON logs to stderr in the following format:
 ## Scopes (Modules)
 
 Current logging scopes:
+- `agent`: Agent turn execution, tool coordination, LLM interaction
+- `cli`: CLI streaming callbacks, chunk handling, stage tracking
+- `compatible`: Compatible provider streaming (curl lifecycle)
 - `process_util`: Process execution and tool calls
-- `agent`: Agent turn execution and tool coordination
-- More scopes will be added as structured logging is extended
+- `self_update`: Git operations, branch detection, security checks
+- `shell`: Shell command execution and missing commands
+- `sse`: Server-Sent Events streaming, connection management
+- `util`: Process Io initialization and lifecycle
 
 ## Setting Up Loki
 
