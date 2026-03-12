@@ -30,7 +30,8 @@ pub const HttpRequestTool = struct {
         };
     }
 
-    pub fn execute(self: *HttpRequestTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *HttpRequestTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const url = root.getString(args, "url") orelse
             return ToolResult.fail("Missing 'url' parameter");
 
@@ -106,7 +107,6 @@ pub const HttpRequestTool = struct {
         }
 
         // Execute request using std.http.Client (Zig 0.16.0 API)
-        const io = std.Options.debug_io;
         var client: std.http.Client = .{ .allocator = allocator, .io = io };
         defer client.deinit();
 

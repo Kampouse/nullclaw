@@ -25,7 +25,8 @@ pub const ScheduleTool = struct {
         };
     }
 
-    pub fn execute(_: *ScheduleTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *ScheduleTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const action = root.getString(args, "action") orelse
             return ToolResult.fail("Missing 'action' parameter");
 

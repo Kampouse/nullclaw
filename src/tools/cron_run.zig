@@ -26,7 +26,8 @@ pub const CronRunTool = struct {
         };
     }
 
-    pub fn execute(_: *CronRunTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronRunTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const job_id = root.getString(args, "job_id") orelse
             return ToolResult.fail("Missing 'job_id' parameter");
 

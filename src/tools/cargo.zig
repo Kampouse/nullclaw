@@ -55,7 +55,8 @@ pub const CargoTool = struct {
         return true;
     }
 
-    pub fn execute(self: *CargoTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *CargoTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const operation = root.getString(args, "operation") orelse
             return ToolResult.fail("Missing 'operation' parameter");
 

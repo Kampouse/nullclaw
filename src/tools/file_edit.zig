@@ -8,7 +8,6 @@ const isPathSafe = path_security.isPathSafe;
 const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
 const resolvePathAlloc = path_security.resolvePathAlloc;
 
-const io = std.Options.debug_io;
 
 /// Default maximum file size to read for editing (10MB).
 const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -34,7 +33,8 @@ pub const FileEditTool = struct {
         };
     }
 
-    pub fn execute(self: *FileEditTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *FileEditTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 

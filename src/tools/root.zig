@@ -189,15 +189,16 @@ pub const Tool = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        execute: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap) anyerror!ToolResult,
+        execute: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) anyerror!ToolResult,
         name: *const fn (ptr: *anyopaque) []const u8,
         description: *const fn (ptr: *anyopaque) []const u8,
         parameters_json: *const fn (ptr: *anyopaque) []const u8,
         deinit: ?*const fn (ptr: *anyopaque, allocator: std.mem.Allocator) void = null,
     };
 
-    pub fn execute(self: Tool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
-        return self.vtable.execute(self.ptr, allocator, args);
+    pub fn execute(self: Tool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
+        return self.vtable.execute(self.ptr, allocator, args, io);
     }
 
     pub fn name(self: Tool) []const u8 {

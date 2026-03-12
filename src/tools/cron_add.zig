@@ -23,7 +23,8 @@ pub const CronAddTool = struct {
         };
     }
 
-    pub fn execute(_: *CronAddTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronAddTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const command = root.getString(args, "command") orelse
             return ToolResult.fail("Missing required 'command' parameter");
 

@@ -33,7 +33,8 @@ pub const DelegateTool = struct {
         };
     }
 
-    pub fn execute(self: *DelegateTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *DelegateTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const agent_name = root.getString(args, "agent") orelse
             return ToolResult.fail("Missing 'agent' parameter");
 

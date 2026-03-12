@@ -8,8 +8,6 @@ const isPathSafe = path_security.isPathSafe;
 const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
 const resolvePathAlloc = path_security.resolvePathAlloc;
 
-const io = std.Options.debug_io;
-
 /// Default maximum file size to read (10MB).
 const DEFAULT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
@@ -34,7 +32,8 @@ pub const FileReadTool = struct {
         };
     }
 
-    pub fn execute(self: *FileReadTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *FileReadTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 

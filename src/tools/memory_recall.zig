@@ -30,7 +30,8 @@ pub const MemoryRecallTool = struct {
         };
     }
 
-    pub fn execute(self: *MemoryRecallTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *MemoryRecallTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const query = root.getString(args, "query") orelse
             return ToolResult.fail("Missing 'query' parameter");
         if (query.len == 0) return ToolResult.fail("'query' must not be empty");

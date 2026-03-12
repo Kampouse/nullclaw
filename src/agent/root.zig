@@ -1491,7 +1491,7 @@ pub const Agent = struct {
                 }
 
                 slog.debug("agent", "execute_tool_calling_tool_execute", .{});
-                const result = t.execute(tool_allocator, args) catch |err| {
+                const result = t.execute(tool_allocator, args, self.io) catch |err| {
                     slog.debug("agent", "execute_tool_failed", .{.error_msg = @errorName(err)});
                     return .{
                         .name = call.name,

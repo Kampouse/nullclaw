@@ -244,7 +244,8 @@ pub const SelfUpdateTool = struct {
         return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 
-    pub fn execute(self: *const SelfUpdateTool, allocator: std.mem.Allocator, args: JsonObjectMap) ToolResult {
+    pub fn execute(self: *const SelfUpdateTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) ToolResult {
+        _ = io;
         slog.logStructured("DEBUG", "self_update", "execute_start", .{});
 
         const operation_obj = args.get("operation");

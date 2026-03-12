@@ -5,7 +5,6 @@
 //! decentralized P2P network with NEAR blockchain trust verification.
 
 const std = @import("std");
-const io = std.Options.debug_io;
 const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
@@ -18,6 +17,7 @@ pub const GorkTool = struct {
     hybrid: ?*hybrid_mod.Hybrid,
     config: hybrid_mod.Config,
     allocator_for_callbacks: std.mem.Allocator,  // Stored for callbacks
+    io: std.Io,  // I/O context
 
     pub const tool_name = "gork";
     pub const tool_description =
@@ -39,9 +39,9 @@ pub const GorkTool = struct {
 
     const vtable: root.Tool.VTable = .{
         .execute = &struct {
-            fn f(ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap) anyerror!root.ToolResult {
+            fn f(ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) anyerror!root.ToolResult {
                 const self: *GorkTool = @ptrCast(@alignCast(ptr));
-                return self.execute(allocator, args);
+                return self.execute(allocator, args, io);
             }
         }.f,
         .name = &struct {
@@ -68,13 +68,14 @@ pub const GorkTool = struct {
         }.f,
     };
 
-    pub fn init(allocator: std.mem.Allocator, config: hybrid_mod.Config) !*GorkTool {
+    pub fn init(allocator: std.mem.Allocator, config: hybrid_mod.Config, io: std.Io) !*GorkTool {
         const gork_tool = try allocator.create(GorkTool);
         gork_tool.* = .{
             .allocator = allocator,
             .hybrid = null,
             .config = config,
             .allocator_for_callbacks = allocator,
+            .io = io,
         };
         return gork_tool;
     }
@@ -87,7 +88,8 @@ pub const GorkTool = struct {
     }
 
     /// Initialize the hybrid system
-    pub fn start(self: *GorkTool) !void {
+    pub fn start(self: *GorkTool, io: std.Io) !void {
+        self.io = io;
         if (self.hybrid != null) return;
 
         const hybrid = try self.allocator.create(hybrid_mod.Hybrid);
@@ -116,20 +118,20 @@ pub const GorkTool = struct {
         }
     }
 
-    pub fn execute(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const action = root.getString(args, "action") orelse
             return ToolResult.fail("Missing 'action' parameter");
 
         if (std.mem.eql(u8, action, "discover")) {
-            return self.discover(allocator, args);
+            return self.discover(allocator, args, io);
         } else if (std.mem.eql(u8, action, "send")) {
-            return self.send(allocator, args);
+            return self.send(allocator, args, io);
         } else if (std.mem.eql(u8, action, "whoami")) {
-            return self.whoami(allocator);
+            return self.whoami(allocator, io);
         } else if (std.mem.eql(u8, action, "status")) {
-            return self.status(allocator);
+            return self.status(allocator, io);
         } else if (std.mem.eql(u8, action, "health")) {
-            return self.health(allocator);
+            return self.health(allocator, io);
         } else if (std.mem.eql(u8, action, "metrics")) {
             return self.metrics(allocator);
         } else {
@@ -137,7 +139,7 @@ pub const GorkTool = struct {
         }
     }
 
-    fn discover(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    fn discover(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const capability = root.getString(args, "capability") orelse
             return ToolResult.fail("Missing 'capability' parameter");
 
@@ -178,7 +180,7 @@ pub const GorkTool = struct {
         return ToolResult.ok(try output.toOwnedSlice(allocator));
     }
 
-    fn send(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    fn send(self: *GorkTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const to = root.getString(args, "to") orelse
             return ToolResult.fail("Missing 'to' parameter");
 
@@ -198,7 +200,7 @@ pub const GorkTool = struct {
         return ToolResult.ok(output);
     }
 
-    fn whoami(self: *GorkTool, allocator: std.mem.Allocator) !ToolResult {
+    fn whoami(self: *GorkTool, allocator: std.mem.Allocator, io: std.Io) !ToolResult {
         if (self.config.account_id.len == 0) {
             return ToolResult.fail("No account ID configured");
         }
@@ -207,8 +209,8 @@ pub const GorkTool = struct {
         return ToolResult.ok(output);
     }
 
-    fn status(self: *GorkTool, allocator: std.mem.Allocator) !ToolResult {
-        const state = if (self.hybrid) |h| h.getState() else .stopped;
+    fn status(self: *GorkTool, allocator: std.mem.Allocator, io: std.Io) !ToolResult {
+        const state = if (self.hybrid) |h| h.getState(io) else .stopped;
 
         const state_str = switch (state) {
             .stopped => "stopped",
@@ -228,9 +230,9 @@ pub const GorkTool = struct {
         return ToolResult.ok(output);
     }
 
-    fn health(self: *GorkTool, allocator: std.mem.Allocator) !ToolResult {
+    fn health(self: *GorkTool, allocator: std.mem.Allocator, io: std.Io) !ToolResult {
         if (self.hybrid) |h| {
-            const state = h.getState();
+            const state = h.getState(io);
             const is_healthy = state == .running or state == .degraded;
             const has_daemon = h.daemon != null;
             const has_poller = h.poller != null;
@@ -278,20 +280,7 @@ fn handleHybridEvent(allocator: std.mem.Allocator, event: hybrid_mod.Event) void
     switch (mut_event) {
         .message_received => |*msg| {
             // Replay protection: check timestamp
-            const now_ns = std.Io.Clock.real.now(io).nanoseconds;
-            const now: u64 = @intCast(@divTrunc(now_ns, 1_000_000_000));
-            const msg_time = msg.timestamp;
-
-            if (now > msg_time) {
-                const age = now - msg_time;
-                std.log.info("Gork: Message received from {s}: {s} (age: {d}s)", .{ msg.from, msg.content, age });
-
-                // TODO: Full replay protection would require checking seen_messages cache
-                // and rejecting messages older than max_message_age_secs
-                // This needs access to the Hybrid instance which isn't available here
-                if (age > 300) { // Log warning for messages > 5 minutes old
-                    std.log.warn("Gork: Very old message received, possible replay attack", .{});
-                }
+            // TODO: Need io context in callback - skip timestamp check for now
             } else {
                 // Message from the future - clock skew
                 const skew = msg_time - now;

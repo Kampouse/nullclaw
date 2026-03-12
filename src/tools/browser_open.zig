@@ -27,7 +27,8 @@ pub const BrowserOpenTool = struct {
         };
     }
 
-    pub fn execute(self: *BrowserOpenTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *BrowserOpenTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const url = root.getString(args, "url") orelse
             return ToolResult.fail("Missing 'url' parameter");
 

@@ -1,5 +1,4 @@
 const std = @import("std");
-const io = std.Options.debug_io;
 const slog = @import("../structured_log.zig");
 
 /// Result of a child process execution.

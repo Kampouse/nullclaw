@@ -43,7 +43,8 @@ pub const ShellTool = struct {
         };
     }
 
-    pub fn execute(self: *ShellTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *ShellTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         slog.logStructured("DEBUG", "shell", "execute_start", .{});
 
         // Parse the command from the pre-parsed JSON object

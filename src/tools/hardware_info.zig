@@ -64,7 +64,8 @@ pub const HardwareBoardInfoTool = struct {
         };
     }
 
-    pub fn execute(self: *HardwareBoardInfoTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *HardwareBoardInfoTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         if (self.boards.len == 0) {
             return ToolResult.fail("No peripherals configured. Add boards to config.toml [peripherals.boards].");
         }

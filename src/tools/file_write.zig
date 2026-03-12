@@ -9,7 +9,6 @@ const isPathSafe = path_security.isPathSafe;
 const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
 const resolvePathAlloc = path_security.resolvePathAlloc;
 
-const io = std.Options.debug_io;
 
 // C API for hard link creation (POSIX link function)
 extern fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) c_int;
@@ -34,7 +33,8 @@ pub const FileWriteTool = struct {
         };
     }
 
-    pub fn execute(self: *FileWriteTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *FileWriteTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 
@@ -80,7 +80,7 @@ pub const FileWriteTool = struct {
         // For hard links this is the security boundary we care about, because we
         // write through temp+rename (inode swap) rather than in-place mutation.
         const parent_to_check = std.fs.path.dirname(full_path) orelse full_path;
-        const resolved_ancestor = resolveNearestExistingAncestor(allocator, parent_to_check) catch |err| {
+        const resolved_ancestor = resolveNearestExistingAncestor(allocator, parent_to_check, io) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve path: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
@@ -92,7 +92,7 @@ pub const FileWriteTool = struct {
 
         const existing_is_symlink = if (resolved_target != null) blk: {
             if (comptime builtin.os.tag == .windows) break :blk false;
-            break :blk isSymlinkPath(full_path) catch |err| {
+            break :blk isSymlinkPath(full_path, io) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to inspect path: {}", .{err});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
@@ -211,7 +211,7 @@ pub const FileWriteTool = struct {
     }
 };
 
-fn resolveNearestExistingAncestor(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+fn resolveNearestExistingAncestor(allocator: std.mem.Allocator, path: []const u8, io: std.Io) ![]const u8 {
     // Try to resolve the path using realPathFileAlloc
     const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator) catch {
         // If resolution fails, return the parent path
@@ -224,7 +224,7 @@ fn resolveNearestExistingAncestor(allocator: std.mem.Allocator, path: []const u8
     return allocator.dupe(u8, resolved[0..resolved.len]);
 }
 
-fn isSymlinkPath(path: []const u8) !bool {
+fn isSymlinkPath(path: []const u8, io: std.Io) !bool {
     const dir_path = std.fs.path.dirname(path) orelse ".";
     const entry_name = std.fs.path.basename(path);
 

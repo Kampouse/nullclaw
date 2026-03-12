@@ -26,7 +26,8 @@ pub const MemoryListTool = struct {
         };
     }
 
-    pub fn execute(self: *MemoryListTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *MemoryListTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const m = self.memory orelse {
             const msg = try std.fmt.allocPrint(allocator, "Memory backend not configured. Cannot list entries.", .{});
             return ToolResult{ .success = false, .output = msg, .owns_output = true };

@@ -26,7 +26,8 @@ pub const ScreenshotTool = struct {
         };
     }
 
-    pub fn execute(self: *ScreenshotTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *ScreenshotTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const filename = root.getString(args, "filename") orelse "screenshot.png";
 
         // Build output path: workspace_dir/filename

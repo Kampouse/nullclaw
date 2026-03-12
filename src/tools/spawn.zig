@@ -27,7 +27,8 @@ pub const SpawnTool = struct {
         };
     }
 
-    pub fn execute(self: *SpawnTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *SpawnTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const task = root.getString(args, "task") orelse
             return ToolResult.fail("Missing 'task' parameter");
 

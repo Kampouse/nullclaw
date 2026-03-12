@@ -56,7 +56,8 @@ pub const ZigBuildTool = struct {
         return true;
     }
 
-    pub fn execute(self: *ZigBuildTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *ZigBuildTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const operation = root.getString(args, "operation") orelse
             return ToolResult.fail("Missing 'operation' parameter");
 

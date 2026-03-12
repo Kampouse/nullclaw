@@ -4,7 +4,6 @@ const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
 
-const io = std.Options.debug_io;
 
 /// Maximum image file size (5MB).
 const MAX_IMAGE_BYTES: u64 = 5_242_880;
@@ -26,7 +25,8 @@ pub const ImageInfoTool = struct {
         };
     }
 
-    pub fn execute(_: *ImageInfoTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *ImageInfoTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 
@@ -42,10 +42,10 @@ pub const ImageInfoTool = struct {
             const msg = try std.fmt.allocPrint(allocator, "Relative paths not yet supported in Zig 0.16.0: {s}", .{path});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
-        return executeWithFile(file, allocator, path);
+        return executeWithFile(file, allocator, path, io);
     }
 
-    fn executeWithFile(file: std.Io.File, allocator: std.mem.Allocator, path: []const u8) !ToolResult {
+    fn executeWithFile(file: std.Io.File, allocator: std.mem.Allocator, path: []const u8, io: std.Io) !ToolResult {
         defer file.close(io);
 
         // Read file contents for format detection and dimensions

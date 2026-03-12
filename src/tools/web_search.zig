@@ -72,7 +72,8 @@ pub const WebSearchTool = struct {
         };
     }
 
-    pub fn execute(self: *WebSearchTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *WebSearchTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const query = root.getString(args, "query") orelse
             return ToolResult.fail("Missing required 'query' parameter");
 

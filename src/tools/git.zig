@@ -102,7 +102,8 @@ pub const GitTool = struct {
         return write_ops.has(operation);
     }
 
-    pub fn execute(self: *GitTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *GitTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const operation = root.getString(args, "operation") orelse
             return ToolResult.fail("Missing 'operation' parameter");
 

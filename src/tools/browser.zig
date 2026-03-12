@@ -29,7 +29,8 @@ pub const BrowserTool = struct {
         };
     }
 
-    pub fn execute(_: *BrowserTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *BrowserTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const action = root.getString(args, "action") orelse
             return ToolResult.fail("Missing 'action' parameter");
 

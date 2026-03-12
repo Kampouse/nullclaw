@@ -28,7 +28,8 @@ pub const MemoryStoreTool = struct {
         };
     }
 
-    pub fn execute(self: *MemoryStoreTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *MemoryStoreTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const key = root.getString(args, "key") orelse
             return ToolResult.fail("Missing 'key' parameter");
         if (key.len == 0) return ToolResult.fail("'key' must not be empty");

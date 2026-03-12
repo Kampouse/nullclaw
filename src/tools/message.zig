@@ -49,7 +49,8 @@ pub const MessageTool = struct {
         return self.sent_in_round;
     }
 
-    pub fn execute(self: *MessageTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *MessageTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const content = root.getString(args, "content") orelse
             return ToolResult.fail("Missing required 'content' parameter");
 

@@ -35,7 +35,8 @@ pub const WebScrapeTool = struct {
         };
     }
 
-    pub fn execute(self: *WebScrapeTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *WebScrapeTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const url = root.getString(args, "url") orelse
             return ToolResult.fail("Missing required 'url' parameter");
 

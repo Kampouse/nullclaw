@@ -29,7 +29,8 @@ pub const PushoverTool = struct {
         };
     }
 
-    pub fn execute(self: *PushoverTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *PushoverTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const message = root.getString(args, "message") orelse
             return ToolResult.fail("Missing required 'message' parameter");
 

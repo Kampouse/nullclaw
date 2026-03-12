@@ -33,7 +33,8 @@ pub const ComposioTool = struct {
         };
     }
 
-    pub fn execute(self: *ComposioTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *ComposioTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const action = root.getString(args, "action") orelse
             return ToolResult.fail("Missing 'action' parameter");
 

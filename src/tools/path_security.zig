@@ -5,7 +5,6 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const io = std.Options.debug_io;
 
 /// Resolve a path to its canonical absolute form.
 /// Returns the resolved path or the original path if resolution fails.

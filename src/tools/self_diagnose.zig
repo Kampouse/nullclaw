@@ -22,7 +22,8 @@ pub const SelfDiagnoseTool = struct {
         };
     }
 
-    pub fn execute(self: *SelfDiagnoseTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *SelfDiagnoseTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         _ = self;
         _ = args;
 
