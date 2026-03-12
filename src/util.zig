@@ -114,6 +114,34 @@ pub fn randomInt(comptime T: type) T {
     return std.mem.readInt(T, &bytes, .little);
 }
 
+/// Sleep for the specified number of nanoseconds (Zig 0.16.0 compatible)
+/// Replaces std.Thread.sleep() which was removed in Zig 0.16.0
+/// Uses C's nanosleep for cross-platform compatibility
+pub fn sleep(nanoseconds: u64) void {
+    const sec = nanoseconds / 1_000_000_000;
+    const nsec = nanoseconds % 1_000_000_000;
+
+    var req = std.c.timespec{
+        .sec = @as(isize, @intCast(sec)),
+        .nsec = @as(isize, @intCast(nsec)),
+    };
+
+    var rem: std.c.timespec = undefined;
+    while (true) {
+        const rc = std.c.nanosleep(&req, &rem);
+        if (rc == 0) {
+            // Success
+            break;
+        } else if (rc == -(@as(i32, @intFromEnum(std.posix.E.INTR)))) {
+            // Sleep was interrupted, continue with remaining time
+            req = rem;
+        } else {
+            // Other error, just break
+            break;
+        }
+    }
+}
+
 // ── FixedBufferStream Compatibility Layer for Zig 0.16.0 ───────────────
 
 /// FixedBufferStream provides a buffer stream compatible with Zig 0.16.0's IO interface.

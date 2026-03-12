@@ -1732,7 +1732,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
     while (true) {
         const messages = sg.pollMessages(allocator) catch |err| {
             std.debug.print("Signal poll error: {}\n", .{err});
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            yc.util.sleep(100_000_000); // 100ms
             continue;
         };
 
@@ -1817,7 +1817,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         }
 
         // Small delay between polls
-        // std.Thread.sleep() - TODO: Fix for Zig 0.16
+        yc.util.sleep(1_000_000_000); // 1 second
     }
 }
 
@@ -2120,7 +2120,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
     while (true) {
         const messages = tg.pollUpdates(allocator) catch |err| {
             std.debug.print("Poll error: {}\n", .{err});
-            // std.Thread.sleep() - TODO: Fix for Zig 0.16
+            yc.util.sleep(100_000_000); // 100ms
             continue;
         };
 
