@@ -2137,14 +2137,29 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 
     var evict_counter: u32 = 0;
     var persisted_update_id: i64 = tg.last_update_id;
+    var poll_error_count: u32 = 0;
 
     // Bot loop: poll → full agent loop (tool calling) → reply
     while (true) {
         const messages = tg.pollUpdates(allocator) catch |err| {
-            std.debug.print("Poll error: {}\n", .{err});
-            yc.util.sleep(100_000_000); // 100ms
+            poll_error_count += 1;
+            std.debug.print("Poll error: {} (count: {})\n", .{ err, poll_error_count });
+            
+            // Reset HTTP client after 3 consecutive errors
+            if (poll_error_count >= 3) {
+                log.warn("Too many polling errors, resetting Telegram connection pool", .{});
+                tg.resetConnections();
+                poll_error_count = 0;
+            }
+            
+            // Exponential backoff: 100ms → 200ms → 400ms → 800ms → 1000ms max
+            const shift_amount: u5 = @intCast(@min(poll_error_count, 4));
+            const backoff_ms: u64 = @min(100 * (@as(u32, 1) << shift_amount), 1000);
+            yc.util.sleep(backoff_ms * 1_000_000);
             continue;
         };
+        
+        poll_error_count = 0; // Reset on successful poll
 
         for (messages) |msg| {
             std.debug.print("[{s}] {s}: {s}\n", .{ msg.channel, msg.id, msg.content });

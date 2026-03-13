@@ -10,6 +10,98 @@ const Atomic = @import("../portable_atomic.zig").Atomic;
 
 const io = std.Options.debug_io;
 
+// Connection pool for HTTP clients (improves reliability)
+const ConnectionPool = struct {
+    clients: [3]?std.http.Client = [_]?std.http.Client{ null, null, null },
+    current_idx: usize = 0,
+    error_counts: [3]u32 = [_]u32{ 0, 0, 0 },
+    allocator: std.mem.Allocator,
+    
+    const MAX_ERRORS_BEFORE_ROTATION: u32 = 3;
+    
+    fn init(allocator: std.mem.Allocator) ConnectionPool {
+        return .{
+            .allocator = allocator,
+        };
+    }
+    
+    fn deinit(self: *ConnectionPool) void {
+        for (&self.clients) |*client| {
+            if (client.*) |*c| {
+                c.deinit();
+                client.* = null;
+            }
+        }
+    }
+    
+    fn getHealthy(self: *ConnectionPool) ?*std.http.Client {
+        // Try all connections in round-robin
+        for (0..3) |_| {
+            const idx = self.current_idx % 3;
+            
+            // Initialize if needed
+            if (self.clients[idx] == null) {
+                const http_io = root.http_util.getThreadedIo();
+                self.clients[idx] = .{ 
+                    .allocator = self.allocator, 
+                    .io = http_io 
+                };
+                self.error_counts[idx] = 0;
+            }
+            
+            // Check if this connection is healthy
+            if (self.error_counts[idx] < MAX_ERRORS_BEFORE_ROTATION) {
+                self.current_idx = (idx + 1) % 3;
+                return &self.clients[idx].?;
+            }
+            
+            // Too many errors, try next
+            self.current_idx = (idx + 1) % 3;
+        }
+        
+        // All connections have errors, reset and try first
+        for (&self.error_counts) |*count| {
+            count.* = 0;
+        }
+        if (self.clients[0]) |*client| {
+            return client;
+        }
+        return null;
+    }
+    
+    fn reportError(self: *ConnectionPool, client_ptr: *std.http.Client) void {
+        for (0..3) |i| {
+            if (self.clients[i]) |*c| {
+                if (@intFromPtr(c) == @intFromPtr(client_ptr)) {
+                    self.error_counts[i] += 1;
+                    break;
+                }
+            }
+        }
+    }
+    
+    fn reportSuccess(self: *ConnectionPool, client_ptr: *std.http.Client) void {
+        for (0..3) |i| {
+            if (self.clients[i]) |*c| {
+                if (@intFromPtr(c) == @intFromPtr(client_ptr)) {
+                    self.error_counts[i] = 0;
+                    break;
+                }
+            }
+        }
+    }
+    
+    fn reset(self: *ConnectionPool) void {
+        for (0..3) |i| {
+            if (self.clients[i]) |*c| {
+                c.deinit();
+                self.clients[i] = null;
+                self.error_counts[i] = 0;
+            }
+        }
+    }
+};
+
 /// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
 fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
     const result = try dir.realPathFileAlloc(io, ".", allocator);
@@ -460,8 +552,9 @@ pub const TelegramChannel = struct {
     last_update_id: i64 = 0,
     proxy: ?[]const u8,
 
-    // Persistent HTTP client for connection reuse (no TLS handshake per request)
-    http_client: ?std.http.Client = null,
+    // Persistent HTTP connection pool for reliability
+    http_pool: ConnectionPool,
+    http_client: ?std.http.Client = null, // Keep for backward compatibility
 
     // Pending media group messages (buffered across poll cycles until group is complete)
     pending_media_messages: std.ArrayListUnmanaged(root.ChannelMessage) = .empty,
@@ -493,9 +586,6 @@ pub const TelegramChannel = struct {
         group_allow_from: []const []const u8,
         group_policy: []const u8,
     ) TelegramChannel {
-        const http_io = root.http_util.getThreadedIo();
-        const client: std.http.Client = .{ .allocator = allocator, .io = http_io };
-
         return .{
             .allocator = allocator,
             .bot_token = bot_token,
@@ -503,7 +593,7 @@ pub const TelegramChannel = struct {
             .group_allow_from = group_allow_from,
             .group_policy = group_policy,
             .proxy = null,
-            .http_client = client,
+            .http_pool = ConnectionPool.init(allocator),
         };
     }
 
@@ -523,6 +613,7 @@ pub const TelegramChannel = struct {
     }
 
     pub fn deinit(self: *TelegramChannel) void {
+        self.http_pool.deinit();
         if (self.http_client) |*client| {
             client.deinit();
             self.http_client = null;
@@ -541,6 +632,20 @@ pub const TelegramChannel = struct {
         self.pending_media_received_at.deinit(self.allocator);
     }
 
+    /// Reset all HTTP connections in the pool (useful for recovering from persistent errors)
+    pub fn resetConnections(self: *TelegramChannel) void {
+        self.http_pool.reset();
+    }
+
+    /// Get error count from the pool (for monitoring)
+    pub fn getTotalErrorCount(self: *const TelegramChannel) u32 {
+        var total: u32 = 0;
+        for (self.http_pool.error_counts) |count| {
+            total += count;
+        }
+        return total;
+    }
+
     pub fn channelName(_: *TelegramChannel) []const u8 {
         return "telegram";
     }
@@ -553,30 +658,38 @@ pub const TelegramChannel = struct {
         return fbs.getWritten();
     }
 
-    /// Fast API POST using persistent HTTP client (connection reuse, no TLS handshake per call).
+    /// Fast API POST using connection pool (improves reliability with automatic failover).
     /// Returns allocated response body - caller must free with given allocator.
     pub fn apiPostAlloc(self: *TelegramChannel, allocator: std.mem.Allocator, method: []const u8, body: []const u8) ![]u8 {
-        if (self.http_client == null) return error.HttpClientNotInitialized;
-        const client = &self.http_client.?;
+        const client = self.http_pool.getHealthy() orelse return error.HttpClientNotInitialized;
 
         var url_buf: [512]u8 = undefined;
         const url = try self.apiUrl(&url_buf, method);
 
         const uri = try std.Uri.parse(url);
 
-        var req = try client.request(.POST, uri, .{
+        var req = client.request(.POST, uri, .{
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "application/json" },
             },
-        });
+        }) catch |err| {
+            self.http_pool.reportError(client);
+            return err;
+        };
         defer req.deinit();
 
         const body_dup = try allocator.dupe(u8, body);
         defer allocator.free(body_dup);
-        try req.sendBodyComplete(body_dup);
+        req.sendBodyComplete(body_dup) catch |err| {
+            self.http_pool.reportError(client);
+            return err;
+        };
 
         var redirect_buf: [4096]u8 = undefined;
-        var response = try req.receiveHead(&redirect_buf);
+        var response = req.receiveHead(&redirect_buf) catch |err| {
+            self.http_pool.reportError(client);
+            return err;
+        };
 
         // Read response body
         var transfer_buf: [16384]u8 = undefined;
@@ -594,6 +707,7 @@ pub const TelegramChannel = struct {
                     try response_body.appendSlice(allocator, data);
                     break;
                 }
+                self.http_pool.reportError(client);
                 return err;
             };
 
@@ -605,6 +719,7 @@ pub const TelegramChannel = struct {
             try response_body.appendSlice(allocator, data);
         }
 
+        self.http_pool.reportSuccess(client);
         return response_body.toOwnedSlice(allocator);
     }
 
