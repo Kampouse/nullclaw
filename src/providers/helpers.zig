@@ -5,6 +5,8 @@ const http_util = @import("../http_util.zig");
 const config_types = @import("../config_types.zig");
 const root = @import("root.zig");
 const ToolSpec = root.ToolSpec;
+const profiling = @import("../profiling.zig");
+const util = @import("../util.zig");
 
 /// Extract api_key from a config-like struct (supports both Config.defaultProviderKey() and plain .api_key field).
 fn resolveApiKeyFromCfg(cfg: anytype) ?[]const u8 {
@@ -21,9 +23,16 @@ fn resolveApiKeyFromCfg(cfg: anytype) ?[]const u8 {
 /// High-level complete function that routes to the right provider via HTTP.
 /// Used by agent.zig for backward compatibility.
 pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) ![]const u8 {
+    const zone = profiling.zoneNamed(@src(), "provider_complete");
+    defer zone.end();
+
     const api_key = resolveApiKeyFromCfg(cfg) orelse return error.NoApiKey;
     const url = providerUrl(cfg.default_provider);
     const model = cfg.default_model orelse return error.NoDefaultModel;
+
+    // Track provider in Tracy
+    zone.text("provider:{s}", .{cfg.default_provider});
+
     const body_str = try buildRequestBody(allocator, model, prompt, cfg.temperature, cfg.max_tokens orelse config_types.DEFAULT_MODEL_MAX_TOKENS);
     defer allocator.free(body_str);
 
@@ -36,6 +45,7 @@ pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) 
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
 
+    const start_time = util.nanoTimestamp();
     const result = try client.fetch(.{
         .location = .{ .url = url },
         .method = .POST,
@@ -46,6 +56,10 @@ pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) 
         },
         .response_writer = &aw.writer,
     });
+    const elapsed = util.nanoTimestamp() - start_time;
+
+    // Plot provider latency
+    profiling.plot("provider_latency_ns", @as(u64, @intCast(elapsed)));
 
     if (result.status != .ok) return error.ProviderError;
 
@@ -55,9 +69,16 @@ pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) 
 
 /// Like complete() but prepends a system prompt. OpenAI-compatible format.
 pub fn completeWithSystem(allocator: std.mem.Allocator, cfg: anytype, system_prompt: []const u8, prompt: []const u8) ![]const u8 {
+    const zone = profiling.zoneNamed(@src(), "provider_complete_with_system");
+    defer zone.end();
+
     const api_key = resolveApiKeyFromCfg(cfg) orelse return error.NoApiKey;
     const url = providerUrl(cfg.default_provider);
     const model = cfg.default_model orelse return error.NoDefaultModel;
+
+    // Track provider in Tracy
+    zone.text("provider:{s}", .{cfg.default_provider});
+
     const max_tok: u32 = if (cfg.max_tokens) |mt| @intCast(@min(mt, std.math.maxInt(u32))) else config_types.DEFAULT_MODEL_MAX_TOKENS;
     const body_str = try buildRequestBodyWithSystem(allocator, model, system_prompt, prompt, cfg.temperature, max_tok);
     defer allocator.free(body_str);
@@ -71,6 +92,7 @@ pub fn completeWithSystem(allocator: std.mem.Allocator, cfg: anytype, system_pro
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
 
+    const start_time = util.nanoTimestamp();
     const result = try client.fetch(.{
         .location = .{ .url = url },
         .method = .POST,
@@ -81,6 +103,10 @@ pub fn completeWithSystem(allocator: std.mem.Allocator, cfg: anytype, system_pro
         },
         .response_writer = &aw.writer,
     });
+    const elapsed = util.nanoTimestamp() - start_time;
+
+    // Plot provider latency
+    profiling.plot("provider_latency_ns", @as(u64, @intCast(elapsed)));
 
     if (result.status != .ok) return error.ProviderError;
 

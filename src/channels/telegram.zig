@@ -7,6 +7,7 @@ const platform = @import("../platform.zig");
 const config_types = @import("../config_types.zig");
 const interaction_choices = @import("../interactions/choices.zig");
 const Atomic = @import("../portable_atomic.zig").Atomic;
+const profiling = @import("../profiling.zig");
 
 const io = std.Options.debug_io;
 
@@ -1821,6 +1822,12 @@ pub const TelegramChannel = struct {
     /// Voice and audio messages are automatically transcribed via Groq Whisper
     /// when a Groq API key is configured (config or GROQ_API_KEY env var).
     pub fn pollUpdates(self: *TelegramChannel, allocator: std.mem.Allocator) ![]root.ChannelMessage {
+        const zone = profiling.zoneNamed(@src(), "telegram_poll");
+        defer zone.end();
+
+        // Mark frame boundary for Telegram polling
+        profiling.frameMarkNamed("telegram_poll");
+
         self.maybeSweepTempMediaFiles();
         self.cleanupExpiredInteractions();
 
@@ -1950,6 +1957,9 @@ pub const TelegramChannel = struct {
 
         // toOwnedSlice MUST run before manual deinit to avoid double-free via errdefer
         const final_messages = try messages.toOwnedSlice(allocator);
+
+        // Plot queue depth for monitoring
+        profiling.plot("telegram_queue_depth", final_messages.len);
 
         // Free remaining media_group_id tracking strings (all should be null at this point)
         for (media_group_ids.items) |mg| {

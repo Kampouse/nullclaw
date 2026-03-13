@@ -1,0 +1,94 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, beta-b, master]
+  pull_request:
+    branches: [main, beta-b, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2694+74f361a5c
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      
+      - name: Build
+        run: zig build
+      
+      - name: Build Release
+        run: zig build -Doptimize=ReleaseSmall
+      
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nullclaw-binary
+          path: zig-out/bin/nullclaw
+  
+  unit-tests:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2694+74f361a5c
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      
+      - name: Run unit tests
+        run: zig build test-critical --test-timeout 60s
+  
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2694+74f361a5c
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev curl
+      
+      - name: Run integration tests
+        run: bash tests/mock/runner.sh 2>&1
+      
+      - name: Run comprehensive tests
+        run: bash tests/mock/runner.sh comprehensive 2>&1
+  
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2694+74f361a5c
+      
+      - name: Check formatting
+        run: zig fmt --check src/ tests/ build.zig
+        continue-on-error: true

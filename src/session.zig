@@ -24,6 +24,7 @@ const tools_mod = @import("tools/root.zig");
 const Tool = tools_mod.Tool;
 const SecurityPolicy = @import("security/policy.zig").SecurityPolicy;
 const streaming = @import("streaming.zig");
+const profiling = @import("profiling.zig");
 const log = std.log.scoped(.session);
 const MESSAGE_LOG_MAX_BYTES: usize = 4096;
 
@@ -112,6 +113,9 @@ pub const SessionManager = struct {
 
     /// Find or create a session for the given key. Thread-safe.
     pub fn getOrCreate(self: *SessionManager, session_key: []const u8) !*Session {
+        const zone = profiling.zoneNamed(@src(), "getOrCreateSession");
+        defer zone.end();
+        
         self.mutex.lock(std.Options.debug_io) catch return error.Unknown;
         defer self.mutex.unlock(std.Options.debug_io);
 
@@ -216,8 +220,13 @@ pub const SessionManager = struct {
         conversation_context: ?ConversationContext,
         stream_sink: ?streaming.Sink,
     ) ![]const u8 {
+        const zone = profiling.zoneNamed(@src(), "processMessage");
+        defer zone.end();
+        
         const channel = if (conversation_context) |ctx| (ctx.channel orelse "unknown") else "unknown";
         const session_hash = std.hash.Wyhash.hash(0, session_key);
+        
+        zone.text("channel:{} session:0x{x}", .{ channel, session_hash });
 
         if (self.config.diagnostics.log_message_receipts) {
             log.info("message receipt channel={s} session=0x{x} bytes={d}", .{ channel, session_hash, content.len });
@@ -339,6 +348,9 @@ pub const SessionManager = struct {
 
     /// Evict sessions idle longer than max_idle_secs. Returns number evicted.
     pub fn evictIdle(self: *SessionManager, max_idle_secs: u64, io: std.Io) usize {
+        const zone = profiling.zoneNamed(@src(), "evictIdleSessions");
+        defer zone.end();
+        
         self.mutex.lock(io) catch return 0;
         defer self.mutex.unlock(io);
 
@@ -366,6 +378,10 @@ pub const SessionManager = struct {
                 self.allocator.destroy(session);
                 evicted += 1;
             }
+        }
+        
+        if (evicted > 0) {
+            zone.text("evicted:{}", .{evicted});
         }
 
         return evicted;

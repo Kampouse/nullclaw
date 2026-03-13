@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const profiling = @import("profiling.zig");
 
 const log = std.log.scoped(.http_util);
 
@@ -174,7 +175,18 @@ pub fn curlPostWithProxy(
 
 /// HTTP POST (no proxy, no timeout).
 pub fn curlPost(allocator: Allocator, url: []const u8, body: []const u8, headers: []const []const u8) ![]u8 {
-    return curlPostWithProxy(allocator, url, body, headers, null, null);
+    const zone = profiling.zoneNamed(@src(), "http_post");
+    defer zone.end();
+    
+    const result = curlPostWithProxy(allocator, url, body, headers, null, null);
+    
+    if (result) |body_response| {
+        profiling.plot("http_response_bytes", body_response.len);
+        return body_response;
+    } else |err| {
+        profiling.messageColor("HTTP POST failed: {}", .{err}, 0xFF0000);
+        return err;
+    }
 }
 
 /// HTTP POST with streaming - calls callback with each chunk as it arrives.
@@ -188,6 +200,9 @@ pub fn curlPostStream(
     callback: StreamCallback,
     callback_ctx: *anyopaque,
 ) !void {
+    const zone = profiling.zoneNamed(@src(), "http_post_stream");
+    defer zone.end();
+    
     const io = getThreadedIo();
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
