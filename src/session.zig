@@ -196,6 +196,13 @@ pub const SessionManager = struct {
             std.ascii.eqlIgnoreCase(cmd, "restart");
     }
 
+    fn slashResetsProvider(message: []const u8) bool {
+        const cmd = slashCommandName(message) orelse return false;
+        return std.ascii.eqlIgnoreCase(cmd, "retry") or
+            std.ascii.eqlIgnoreCase(cmd, "clear") or
+            std.ascii.eqlIgnoreCase(cmd, "refresh");
+    }
+
     const StreamAdapterCtx = struct {
         sink: streaming.Sink,
     };
@@ -289,6 +296,9 @@ pub const SessionManager = struct {
                 // Clear stale auto-saved memories
                 store.clearAutoSaved(session_key) catch {};
                 // Reset provider state (clear error tracking, reset key rotation)
+                self.provider.reset();
+            } else if (slashResetsProvider(trimmed)) {
+                // Only reset provider state (keep conversation context)
                 self.provider.reset();
             } else if (!std.mem.startsWith(u8, trimmed, "/")) {
                 // Persist user + assistant messages (skip slash commands)
