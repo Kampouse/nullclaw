@@ -58,8 +58,8 @@ pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) 
     });
     const elapsed = util.nanoTimestamp() - start_time;
 
-    // Plot provider latency
-    profiling.plot("provider_latency_ns", @as(u64, @intCast(elapsed)));
+    // Plot provider latency (Tracy only supports up to 63-bit signed)
+    profiling.plot("provider_latency_ns", @as(i64, @intCast(elapsed)));
 
     if (result.status != .ok) return error.ProviderError;
 
@@ -105,8 +105,8 @@ pub fn completeWithSystem(allocator: std.mem.Allocator, cfg: anytype, system_pro
     });
     const elapsed = util.nanoTimestamp() - start_time;
 
-    // Plot provider latency
-    profiling.plot("provider_latency_ns", @as(u64, @intCast(elapsed)));
+    // Plot provider latency (Tracy only supports up to 63-bit signed)
+    profiling.plot("provider_latency_ns", @as(i64, @intCast(elapsed)));
 
     if (result.status != .ok) return error.ProviderError;
 

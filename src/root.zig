@@ -8,6 +8,7 @@
 // Tracing system
 pub const trace = @import("trace.zig");
 pub const trace_simple = @import("trace_simple.zig");
+pub const profiling = @import("profiling.zig");
 
 // Shared utilities
 pub const json_util = @import("json_util.zig");

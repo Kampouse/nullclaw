@@ -181,7 +181,8 @@ pub fn curlPost(allocator: Allocator, url: []const u8, body: []const u8, headers
     const result = curlPostWithProxy(allocator, url, body, headers, null, null);
     
     if (result) |body_response| {
-        profiling.plot("http_response_bytes", body_response.len);
+        // Tracy only supports up to 63-bit signed integers
+        profiling.plot("http_response_bytes", @as(i64, @intCast(body_response.len)));
         return body_response;
     } else |err| {
         profiling.messageColor("HTTP POST failed: {}", .{err}, 0xFF0000);

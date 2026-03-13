@@ -226,7 +226,7 @@ pub const SessionManager = struct {
         const channel = if (conversation_context) |ctx| (ctx.channel orelse "unknown") else "unknown";
         const session_hash = std.hash.Wyhash.hash(0, session_key);
         
-        zone.text("channel:{} session:0x{x}", .{ channel, session_hash });
+        zone.text("channel:{s} session:0x{x}", .{ channel, session_hash });
 
         if (self.config.diagnostics.log_message_receipts) {
             log.info("message receipt channel={s} session=0x{x} bytes={d}", .{ channel, session_hash, content.len });

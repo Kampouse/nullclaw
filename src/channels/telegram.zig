@@ -1958,8 +1958,8 @@ pub const TelegramChannel = struct {
         // toOwnedSlice MUST run before manual deinit to avoid double-free via errdefer
         const final_messages = try messages.toOwnedSlice(allocator);
 
-        // Plot queue depth for monitoring
-        profiling.plot("telegram_queue_depth", final_messages.len);
+        // Plot queue depth for monitoring (Tracy only supports up to 63-bit signed)
+        profiling.plot("telegram_queue_depth", @as(i64, @intCast(final_messages.len)));
 
         // Free remaining media_group_id tracking strings (all should be null at this point)
         for (media_group_ids.items) |mg| {

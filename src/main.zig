@@ -79,7 +79,9 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
 
-    const allocator = std.heap.smp_allocator;
+    // Wrap system allocator with Tracy for memory profiling
+    var tracy_alloc = yc.profiling.alloc(std.heap.smp_allocator);
+    const allocator = tracy_alloc.allocator();
 
     // CRITICAL: Create proper I/O instance for production use
     // std.Options.debug_io has a failing allocator (see Io/Threaded.zig:1622)

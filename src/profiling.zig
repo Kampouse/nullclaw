@@ -87,12 +87,12 @@ pub inline fn frameMark() void {
 }
 
 /// Mark a frame with a custom name
-pub inline fn frameMarkNamed(name: []const u8) void {
+pub inline fn frameMarkNamed(name: [:0]const u8) void {
     tracy.frameMarkNamed(name);
 }
 
 /// Plot a numeric value on a graph
-pub inline fn plot(name: []const u8, value: anytype) void {
+pub inline fn plot(name: [:0]const u8, value: anytype) void {
     tracy.plot(name, value);
 }
 
