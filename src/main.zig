@@ -6,16 +6,29 @@ const yc = @import("nullclaw");
 // Zig 0.16.0 compatibility layer
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    _ = error_return_trace;
-    _ = ret_addr;
-
     // Use debug_io for panic output in Zig 0.16.0
     var buffer: [1024]u8 = undefined;
     const stderr = std.debug.lockStderr(&buffer);
     defer std.debug.unlockStderr();
 
-    stderr.file_writer.interface.writeAll("panic: ") catch {};
+    stderr.file_writer.interface.writeAll("\n💥 PANIC 💥\n") catch {};
+    stderr.file_writer.interface.writeAll("Message: ") catch {};
     stderr.file_writer.interface.writeAll(msg) catch {};
+    stderr.file_writer.interface.writeAll("\n") catch {};
+
+    // Print return address if available
+    if (ret_addr) |addr| {
+        var addr_buf: [32]u8 = undefined;
+        const addr_str = std.fmt.bufPrint(&addr_buf, "Return address: 0x{x}\n", .{addr}) catch "";
+        stderr.file_writer.interface.writeAll(addr_str) catch {};
+    }
+
+    // Print stack trace if available (Zig 0.16.0 API)
+    if (error_return_trace) |trace| {
+        stderr.file_writer.interface.writeAll("\nStack trace available\n") catch {};
+        _ = trace; // TODO: dumpStackTrace API changed in Zig 0.16.0
+    }
+
     stderr.file_writer.interface.writeAll("\n") catch {};
     std.process.exit(1);
 }
