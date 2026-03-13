@@ -4,6 +4,7 @@ node_modules/
 # Build artifacts
 .zig-cache/
 zig-out/
+zig-pkg/
 
 # IDE
 .vscode/

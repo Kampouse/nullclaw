@@ -406,6 +406,9 @@ pub fn build(b: *std.Build) void {
         break :blk parsed;
     } else defaultEngines();
 
+    // Tracy profiler option
+    const enable_tracy = b.option(bool, "tracy", "Enable Tracy profiling (default: false)") orelse false;
+
     const enable_memory_none = engines.enable_memory_none;
     const enable_memory_markdown = engines.enable_memory_markdown;
     const enable_memory_memory = engines.enable_memory_memory;
@@ -457,6 +460,19 @@ pub fn build(b: *std.Build) void {
         break :blk sqlite3_artifact;
     } else null;
 
+    // Tracy profiler setup
+    const tracy_module = if (enable_tracy) blk: {
+        const zig_tracy_dep = b.dependency("zig_tracy", .{
+            .target = target,
+            .optimize = optimize,
+        });
+
+        // Get the Tracy module from zig-tracy
+        const module = zig_tracy_dep.module("tracy");
+
+        break :blk module;
+    } else null;
+
     var build_options = b.addOptions();
     build_options.addOption([]const u8, "version", app_version);
     build_options.addOption([]const u8, "git_commit", git_commit);
@@ -491,6 +507,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_channel_signal", enable_channel_signal);
     build_options.addOption(bool, "enable_channel_nostr", enable_channel_nostr);
     build_options.addOption(bool, "enable_channel_web", enable_channel_web);
+    build_options.addOption(bool, "enable_tracy", enable_tracy);
     const build_options_module = build_options.createModule();
 
     // ---------- library module (importable by consumers) ----------
@@ -525,6 +542,12 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("tls", tls_mod);
+
+        // Add Tracy profiler module
+        if (tracy_module) |tm| {
+            module.addImport("tracy", tm);
+        }
+
         break :blk module;
     };
 
@@ -552,6 +575,14 @@ pub fn build(b: *std.Build) void {
         }
         if (enable_postgres) {
             exe.root_module.linkSystemLibrary("pq", .{});
+        }
+        // Link Tracy C++ library
+        if (enable_tracy) {
+            if (tracy_module) |tm| {
+                // Tracy module already links the library, but we need to ensure
+                // the module is available to the executable
+                _ = tm; // Mark as used
+            }
         }
     }
     exe.dead_strip_dylibs = true;

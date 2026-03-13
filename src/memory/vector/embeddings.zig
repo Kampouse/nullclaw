@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const build_options = @import("build_options");
+const profiling = @import("../../profiling.zig");
 const appendJsonEscaped = @import("../../util.zig").appendJsonEscaped;
 const GeminiEmbedding = @import("embeddings_gemini.zig").GeminiEmbedding;
 const VoyageEmbedding = @import("embeddings_voyage.zig").VoyageEmbedding;
@@ -153,6 +154,9 @@ pub const OpenAiEmbedding = struct {
     }
 
     fn implEmbed(ptr: *anyopaque, allocator: std.mem.Allocator, text: []const u8) anyerror![]f32 {
+        const zone = profiling.zone(@src());
+        defer zone.end();
+
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
         if (text.len == 0) {

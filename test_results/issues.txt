@@ -39,3 +39,5 @@ PASS: tools/memory
 PASS: tools/web_fetch
 PASS: tools/web_search
 PASS: test_isolation
+FAIL_ERROR: tools
+---

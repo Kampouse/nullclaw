@@ -12,6 +12,7 @@ fn timestamp() i64 {
     return tv.sec;
 }
 const build_options = @import("build_options");
+const profiling = @import("../../profiling.zig");
 const Allocator = std.mem.Allocator;
 const root = @import("../root.zig");
 const Memory = root.Memory;
@@ -352,6 +353,9 @@ pub const RetrievalEngine = struct {
         query: []const u8,
         session_id: ?[]const u8,
     ) ![]RetrievalCandidate {
+        const zone = profiling.zone(@src());
+        defer zone.end();
+
         if (self.sources.items.len == 0) {
             return allocator.alloc(RetrievalCandidate, 0);
         }
@@ -565,6 +569,9 @@ pub const RetrievalEngine = struct {
     /// Apply LLM reranking if enabled and callback is set.
     /// Returns the (possibly reordered) candidates slice.
     fn applyLlmRerank(self: *RetrievalEngine, allocator: Allocator, candidates: []RetrievalCandidate, query: []const u8) []RetrievalCandidate {
+        const zone = profiling.zone(@src());
+        defer zone.end();
+
         if (!self.llm_reranker_cfg.enabled or candidates.len <= 1) return candidates;
         const rerank_fn = self.llm_rerank_fn orelse return candidates;
 

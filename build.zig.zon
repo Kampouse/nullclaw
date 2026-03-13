@@ -10,6 +10,9 @@
         .zquic = .{
             .path = "lib/zquic",
         },
+        .zig_tracy = .{
+            .path = "lib/zig-tracy",
+        },
     },
     .paths = .{
         "build.zig",

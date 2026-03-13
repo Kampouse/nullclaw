@@ -5,6 +5,7 @@
 //! scheduling, delegation, browser, and image tools.
 
 const std = @import("std");
+const profiling = @import("../profiling.zig");
 const memory_mod = @import("../memory/root.zig");
 const Memory = memory_mod.Memory;
 
@@ -197,6 +198,9 @@ pub const Tool = struct {
     };
 
     pub fn execute(self: Tool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zone(@src());
+        defer zone.end();
+
         return self.vtable.execute(self.ptr, allocator, args, io);
     }
 
