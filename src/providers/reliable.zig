@@ -292,6 +292,11 @@ pub const ReliableProvider = struct {
         self.last_error_len = 0;
     }
 
+    /// Get the last stored error message.
+    fn lastErrorSlice(self: *const ReliableProvider) []const u8 {
+        return self.last_error_msg[0..self.last_error_len];
+    }
+
     fn finalFailureError(self: *const ReliableProvider) anyerror {
         const err_slice = self.lastErrorSlice();
         if (isContextExhausted(err_slice)) return error.ContextLengthExceeded;
