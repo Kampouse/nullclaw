@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
+const profiling = @import("../profiling.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -34,6 +35,9 @@ pub const FileWriteTool = struct {
     }
 
     pub fn execute(self: *FileWriteTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zoneNamed(@src(), "tool_file_write");
+        defer zone.end();
+        
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 

@@ -1,5 +1,7 @@
 const std = @import("std");
 const root = @import("root.zig");
+const profiling = @import("../profiling.zig");
+const util = @import("../util.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -31,6 +33,9 @@ pub const MemoryRecallTool = struct {
     }
 
     pub fn execute(self: *MemoryRecallTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zoneNamed(@src(), "tool_memory_recall");
+        defer zone.end();
+        
         _ = io;
         const query = root.getString(args, "query") orelse
             return ToolResult.fail("Missing 'query' parameter");

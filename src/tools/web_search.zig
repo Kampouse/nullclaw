@@ -20,6 +20,8 @@ const root = @import("root.zig");
 const platform = @import("../platform.zig");
 const search_providers = @import("web_search_providers/root.zig");
 const search_common = search_providers.common;
+const profiling = @import("../profiling.zig");
+const util = @import("../util.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -73,6 +75,9 @@ pub const WebSearchTool = struct {
     }
 
     pub fn execute(self: *WebSearchTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zoneNamed(@src(), "tool_web_search");
+        defer zone.end();
+
         _ = io;
         const query = root.getString(args, "query") orelse
             return ToolResult.fail("Missing required 'query' parameter");

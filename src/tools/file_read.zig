@@ -1,5 +1,6 @@
 const std = @import("std");
 const root = @import("root.zig");
+const profiling = @import("../profiling.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -33,6 +34,9 @@ pub const FileReadTool = struct {
     }
 
     pub fn execute(self: *FileReadTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zoneNamed(@src(), "tool_file_read");
+        defer zone.end();
+        
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 
