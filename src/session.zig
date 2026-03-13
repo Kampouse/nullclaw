@@ -288,6 +288,8 @@ pub const SessionManager = struct {
                 store.clearMessages(session_key) catch {};
                 // Clear stale auto-saved memories
                 store.clearAutoSaved(session_key) catch {};
+                // Reset provider state (clear error tracking, reset key rotation)
+                self.provider.reset();
             } else if (!std.mem.startsWith(u8, trimmed, "/")) {
                 // Persist user + assistant messages (skip slash commands)
                 store.saveMessage(session_key, "user", content) catch {};

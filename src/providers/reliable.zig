@@ -285,9 +285,11 @@ pub const ReliableProvider = struct {
         self.last_error_len = copy_len;
     }
 
-    /// Get the last stored error message.
-    fn lastErrorSlice(self: *const ReliableProvider) []const u8 {
-        return self.last_error_msg[0..self.last_error_len];
+    /// Reset provider state (clear error tracking, reset key rotation).
+    /// Call this on /new or /reset to give the provider a fresh start.
+    pub fn reset(self: *ReliableProvider) void {
+        self.key_index = 0;
+        self.last_error_len = 0;
     }
 
     fn finalFailureError(self: *const ReliableProvider) anyerror {
@@ -311,6 +313,7 @@ pub const ReliableProvider = struct {
         .getName = getNameImpl,
         .deinit = deinitImpl,
         .warmup = warmupImpl,
+        .reset = resetImpl,
     };
 
     /// Create a Provider interface from this ReliableProvider.
@@ -541,6 +544,11 @@ pub const ReliableProvider = struct {
         for (self.extras) |entry| {
             entry.provider.warmup();
         }
+    }
+
+    fn resetImpl(ptr: *anyopaque) void {
+        const self: *ReliableProvider = @ptrCast(@alignCast(ptr));
+        self.reset();
     }
 };
 

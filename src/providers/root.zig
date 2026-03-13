@@ -339,6 +339,8 @@ pub const Provider = struct {
             callback: StreamCallback,
             callback_ctx: *anyopaque,
         ) anyerror!StreamChatResult = null,
+        /// Optional: reset provider state (clear errors, reset rotation). Default: no-op.
+        reset: ?*const fn (ptr: *anyopaque) void = null,
     };
 
     pub fn chatWithSystem(
@@ -429,6 +431,11 @@ pub const Provider = struct {
             .usage = response.usage,
             .model = response.model,
         };
+    }
+
+    /// Reset provider state (clear errors, reset key rotation). No-op if not implemented.
+    pub fn reset(self: Provider) void {
+        if (self.vtable.reset) |f| f(self.ptr);
     }
 };
 
