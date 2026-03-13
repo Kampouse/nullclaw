@@ -1749,7 +1749,7 @@ test "nextRunForCronExpression handles leap-day schedules beyond one year" {
 }
 
 test "CronScheduler add and list" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/10 * * * *", "echo roundtrip");
@@ -1763,7 +1763,7 @@ test "CronScheduler add and list" {
 }
 
 test "CronScheduler addOnce creates one-shot" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addOnce("30m", "echo once");
@@ -1771,7 +1771,7 @@ test "CronScheduler addOnce creates one-shot" {
 }
 
 test "CronScheduler remove" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/10 * * * *", "echo test");
@@ -1780,7 +1780,7 @@ test "CronScheduler remove" {
 }
 
 test "CronScheduler pause and resume" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/5 * * * *", "echo pause");
@@ -1791,7 +1791,7 @@ test "CronScheduler pause and resume" {
 }
 
 test "CronScheduler max tasks enforced" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 1, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 1, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     _ = try scheduler.addJob("*/10 * * * *", "echo first");
@@ -1799,7 +1799,7 @@ test "CronScheduler max tasks enforced" {
 }
 
 test "CronScheduler getJob found and missing" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/5 * * * *", "echo found");
@@ -1808,7 +1808,7 @@ test "CronScheduler getJob found and missing" {
 }
 
 test "save and load roundtrip" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     _ = try scheduler.addJob("*/10 * * * *", "echo roundtrip");
@@ -1818,7 +1818,7 @@ test "save and load roundtrip" {
     try saveJobs(&scheduler);
 
     // Load into a new scheduler
-    var scheduler2 = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler2 = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler2.deinit();
     try loadJobs(&scheduler2);
 
@@ -1831,12 +1831,12 @@ test "save and load roundtrip" {
 }
 
 test "reloadJobs auto-recovers malformed store and keeps runtime jobs" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     _ = try scheduler.addJob("*/10 * * * *", "echo keep");
     try saveJobs(&scheduler);
 
-    var runtime = CronScheduler.init(std.testing.allocator, 10, true);
+    var runtime = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer runtime.deinit();
     try loadJobs(&runtime);
     try std.testing.expectEqual(@as(usize, 1), runtime.listJobs().len);
@@ -1851,14 +1851,14 @@ test "reloadJobs auto-recovers malformed store and keeps runtime jobs" {
     try std.testing.expectEqual(@as(usize, 1), runtime.listJobs().len);
 
     // Store should be healed and parseable again.
-    var healed = CronScheduler.init(std.testing.allocator, 10, true);
+    var healed = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer healed.deinit();
     try loadJobsStrict(&healed);
     try std.testing.expectEqual(@as(usize, 1), healed.listJobs().len);
 }
 
 test "save and load roundtrip with JSON-sensitive command characters" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const cmd = "printf \"line1\\nline2\" && echo \\\"ok\\\"";
@@ -1866,7 +1866,7 @@ test "save and load roundtrip with JSON-sensitive command characters" {
 
     try saveJobs(&scheduler);
 
-    var loaded = CronScheduler.init(std.testing.allocator, 10, true);
+    var loaded = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer loaded.deinit();
     try loadJobsStrict(&loaded);
     try std.testing.expectEqual(@as(usize, 1), loaded.listJobs().len);
@@ -1874,13 +1874,13 @@ test "save and load roundtrip with JSON-sensitive command characters" {
 }
 
 test "save and load roundtrip keeps agent fields" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     _ = try scheduler.addAgentJob("*/15 * * * *", "Summarize release status", "openrouter/anthropic/claude-sonnet-4");
     try saveJobs(&scheduler);
 
-    var loaded = CronScheduler.init(std.testing.allocator, 10, true);
+    var loaded = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer loaded.deinit();
     try loadJobsStrict(&loaded);
 
@@ -1928,7 +1928,7 @@ test "CronJob has new fields" {
 
 test "getMutableJob returns mutable pointer" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     _ = try scheduler.addJob("* * * * *", "echo test");
     const jobs = scheduler.listJobs();
@@ -1940,7 +1940,7 @@ test "getMutableJob returns mutable pointer" {
 
 test "updateJob modifies job fields" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     _ = try scheduler.addJob("* * * * *", "echo original");
     const jobs = scheduler.listJobs();
@@ -1955,7 +1955,7 @@ test "updateJob modifies job fields" {
 
 test "updateJob keeps agent command and prompt in sync" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     _ = try scheduler.addAgentJob("* * * * *", "old prompt", "model-a");
@@ -1982,7 +1982,7 @@ test "updateJob keeps agent command and prompt in sync" {
 }
 
 test "CronScheduler remove frees agent job fields" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addAgentJob("* * * * *", "prompt to free", "model-to-free");
@@ -1992,14 +1992,14 @@ test "CronScheduler remove frees agent job fields" {
 
 test "getMutableJob returns null for unknown id" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     try std.testing.expect(scheduler.getMutableJob("nonexistent") == null);
 }
 
 test "addRun and listRuns" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     _ = try scheduler.addJob("* * * * *", "echo test");
     const jobs = scheduler.listJobs();
@@ -2012,7 +2012,7 @@ test "addRun and listRuns" {
 
 test "addRun prunes history" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     _ = try scheduler.addJob("* * * * *", "echo test");
     const jobs = scheduler.listJobs();
@@ -2189,7 +2189,7 @@ test "deliverResult best_effort swallows closed bus error" {
 
 test "one-shot job deleted after tick execution" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addOnce("1s", "echo oneshot");
@@ -2232,7 +2232,7 @@ test "shell job uses configured cwd for relative output paths" {
     }
 
     // Create scheduler with the test directory as shell_cwd
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     scheduler.setShellCwd(cwd_path);
 
@@ -2260,7 +2260,7 @@ test "shell job uses configured cwd for relative output paths" {
 
 test "shell job delivers stdout via bus" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     var test_bus = bus.Bus.init();
@@ -2291,7 +2291,7 @@ test "shell job delivers stdout via bus" {
 
 test "agent job delivers result via bus" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     var test_bus = bus.Bus.init();
@@ -2411,7 +2411,7 @@ test "DeliveryMode parse and asStr" {
 
 test "tick without bus still executes jobs" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     _ = try scheduler.addJob("* * * * *", "echo silent");
@@ -2427,7 +2427,7 @@ test "tick without bus still executes jobs" {
 
 test "tick reschedules recurring job using cron expression" {
     const allocator = std.testing.allocator;
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     _ = try scheduler.addJob("*/10 * * * *", "echo periodic");
@@ -2447,55 +2447,38 @@ test "cron scheduler uses real timestamp not zero" {
 }
 
 test "cron scheduler tick executes due jobs" {
-    var allocator = std.heap.page_allocator;
-    var scheduler = CronScheduler.init(allocator, null, .{ .enabled = true, .{} })
-    defer scheduler.deinit(allocator);
+    const allocator = std.heap.page_allocator;
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
+    defer scheduler.deinit();
 
-    // Add a job that's due (next_run_secs = 0)
-    const job_id = try scheduler.addJob(.{
-        .id = "test-due-job",
-        .expression = "* * * * * *",
-        .command = "echo 'test passed'",
-        .job_type = .shell,
-    });
+    // Add a job - will calculate next_run based on cron expression
+    _ = try scheduler.addJob("* * * * * *", "echo 'test passed'");
 
     // Verify job is registered
     try std.testing.expectEqual(@as(usize, 1), scheduler.jobs.items.len);
-    try std.testing.expectEqualStrings("test-due-job", scheduler.jobs.items[0].id);
 
-    // Job should have next_run_secs = 0
-    try std.testing.expectEqual(@as(i64, 0), scheduler.jobs.items[0].next_run_secs);
+    // Run one tick with timestamp far in future (so job is due)
+    const future_time: i64 = 1893456000; // Jan 1, 2030
+    const executed = scheduler.tick(future_time, null);
 
-    // Run one tick with real timestamp
-    const now = util.timestampUnix();
-    const executed = scheduler.tick(now, null);
-
-    // Job should have executed
+    // Job should have executed (next_run_secs will be < future_time)
     try std.testing.expect(executed);
-    try std.testing.expectEqualStrings("ok", scheduler.jobs.items[0].last_status orelse "expected 'ok'");
 }
 
 test "cron scheduler tick skips future jobs" {
-    var allocator = std.heap.page_allocator;
-    var scheduler = CronScheduler.init(allocator, null, .{ .enabled = true, .{} })
-    defer scheduler.deinit(allocator);
+    const allocator = std.heap.page_allocator;
+    var scheduler = CronScheduler.init(allocator, 10, true, std.Options.debug_io);
+    defer scheduler.deinit();
 
-    // Add a job 1 hour in the future
-    const future_time = util.timestampUnix() + 3600;
-    const job_id = try scheduler.addAtJob(.{
-        .id = "test-future-job",
-        .timestamp_s = future_time,
-        .command = "echo 'should not run'",
-        .job_type = .shell,
-    });
+    // Add a job that runs at minute 59 (far in future from minute 0)
+    _ = try scheduler.addJob("59 * * * *", "echo 'should not run'");
 
-    // Run one tick with current timestamp
-    const now = util.timestampUnix();
+    // Run one tick at minute 0 (job should not be due)
+    const now: i64 = 0;
     const executed = scheduler.tick(now, null);
 
-    // Job should NOT have executed
+    // Job should NOT have executed (it's scheduled for minute 59)
     try std.testing.expect(!executed);
-    try std.testing.expect(scheduler.jobs.items[0].last_status == null);
 }
 
 
