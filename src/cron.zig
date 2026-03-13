@@ -2438,3 +2438,64 @@ test "tick reschedules recurring job using cron expression" {
 }
 
 test "cron module compiles" {}
+
+test "cron scheduler uses real timestamp not zero" {
+    const now = util.timestampUnix();
+    // Verify we're getting a real timestamp (not 0)
+    // March 13, 2026 should be around 1741862400
+    try std.testing.expect(now > 1700000000);
+}
+
+test "cron scheduler tick executes due jobs" {
+    var allocator = std.heap.page_allocator;
+    var scheduler = CronScheduler.init(allocator, null, .{ .enabled = true, .{} })
+    defer scheduler.deinit(allocator);
+
+    // Add a job that's due (next_run_secs = 0)
+    const job_id = try scheduler.addJob(.{
+        .id = "test-due-job",
+        .expression = "* * * * * *",
+        .command = "echo 'test passed'",
+        .job_type = .shell,
+    });
+
+    // Verify job is registered
+    try std.testing.expectEqual(@as(usize, 1), scheduler.jobs.items.len);
+    try std.testing.expectEqualStrings("test-due-job", scheduler.jobs.items[0].id);
+
+    // Job should have next_run_secs = 0
+    try std.testing.expectEqual(@as(i64, 0), scheduler.jobs.items[0].next_run_secs);
+
+    // Run one tick with real timestamp
+    const now = util.timestampUnix();
+    const executed = scheduler.tick(now, null);
+
+    // Job should have executed
+    try std.testing.expect(executed);
+    try std.testing.expectEqualStrings("ok", scheduler.jobs.items[0].last_status orelse "expected 'ok'");
+}
+
+test "cron scheduler tick skips future jobs" {
+    var allocator = std.heap.page_allocator;
+    var scheduler = CronScheduler.init(allocator, null, .{ .enabled = true, .{} })
+    defer scheduler.deinit(allocator);
+
+    // Add a job 1 hour in the future
+    const future_time = util.timestampUnix() + 3600;
+    const job_id = try scheduler.addAtJob(.{
+        .id = "test-future-job",
+        .timestamp_s = future_time,
+        .command = "echo 'should not run'",
+        .job_type = .shell,
+    });
+
+    // Run one tick with current timestamp
+    const now = util.timestampUnix();
+    const executed = scheduler.tick(now, null);
+
+    // Job should NOT have executed
+    try std.testing.expect(!executed);
+    try std.testing.expect(scheduler.jobs.items[0].last_status == null);
+}
+
+
