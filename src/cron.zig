@@ -727,7 +727,7 @@ pub const CronScheduler = struct {
         const poll_ns: u64 = poll_secs * std.time.ns_per_s;
 
         while (true) {
-            const now = 0;
+            const now = util.timestampUnix();
             _ = self.tick(now, out_bus);
             util.sleep(poll_ns);
         }
