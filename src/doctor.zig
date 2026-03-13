@@ -117,6 +117,7 @@ pub fn runDoctor(
     config: *const Config,
     writer: anytype,
     color: bool,
+    io: std.Io,
 ) !void {
     var items: std.ArrayList(DiagItem) = .empty;
     defer items.deinit(allocator);
@@ -129,7 +130,7 @@ pub fn runDoctor(
 
     // nullclaw-specific extras
     checkSandbox(allocator, config, &items);
-    try checkCronStatus(allocator, &items);
+    try checkCronStatus(allocator, &items, io);
     checkChannels(allocator, config, &items);
 
     // Print grouped report
@@ -161,14 +162,14 @@ pub fn runDoctor(
 }
 
 /// Legacy entry point — uses stdout directly.
-pub fn run(allocator: std.mem.Allocator) !void {
+pub fn run(allocator: std.mem.Allocator, io: std.Io) !void {
     const stdout_file = std.Io.File.stdout();
     var stdout_buf: [4096]u8 = undefined;
-    var bw = stdout_file.writer(std.Options.debug_io, &stdout_buf);
+    var bw = stdout_file.writer(io, &stdout_buf);
     const stdout = &bw.interface;
     const color = shouldColorize(stdout_file);
 
-    var cfg = Config.load(allocator, std.Options.debug_io) catch {
+    var cfg = Config.load(allocator, io) catch {
         const prefix = if (color)
             Color.red ++ "[ERR]" ++ Color.reset
         else
@@ -182,7 +183,7 @@ pub fn run(allocator: std.mem.Allocator) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    try runDoctor(arena.allocator(), &cfg, stdout, color);
+    try runDoctor(arena.allocator(), &cfg, stdout, color, io);
     try stdout.flush();
 }
 
@@ -608,9 +609,9 @@ fn checkSandbox(allocator: std.mem.Allocator, cfg: *const Config, items: *std.Ar
 }
 
 /// Check cron scheduler status.
-fn checkCronStatus(allocator: std.mem.Allocator, items: *std.ArrayList(DiagItem)) !void {
+fn checkCronStatus(allocator: std.mem.Allocator, items: *std.ArrayList(DiagItem), io: std.Io) !void {
     const cat = "cron";
-    var scheduler = cron.CronScheduler.init(allocator, 1024, true);
+    var scheduler = cron.CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     cron.loadJobs(&scheduler) catch {
         try items.append(allocator, DiagItem.ok(cat, "cron: no jobs file (first run)"));

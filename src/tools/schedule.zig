@@ -26,12 +26,11 @@ pub const ScheduleTool = struct {
     }
 
     pub fn execute(_: *ScheduleTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
         const action = root.getString(args, "action") orelse
             return ToolResult.fail("Missing 'action' parameter");
 
         if (std.mem.eql(u8, action, "list")) {
-            var scheduler = loadScheduler(allocator) catch {
+            var scheduler = loadScheduler(allocator, io) catch {
                 const msg = try allocator.dupe(u8, "No scheduled jobs.");
                 return ToolResult{ .success = true, .output = msg, .owns_output = true };
             };
@@ -77,7 +76,7 @@ pub const ScheduleTool = struct {
             const id = root.getString(args, "id") orelse
                 return ToolResult.fail("Missing 'id' parameter for get action");
 
-            var scheduler = loadScheduler(allocator) catch {
+            var scheduler = loadScheduler(allocator, io) catch {
                 const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{id});
                 return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
@@ -111,7 +110,7 @@ pub const ScheduleTool = struct {
             const expression = root.getString(args, "expression") orelse
                 return ToolResult.fail("Missing 'expression' parameter for cron job");
 
-            var scheduler = loadScheduler(allocator) catch {
+            var scheduler = loadScheduler(allocator, io) catch {
                 return ToolResult.fail("Failed to load scheduler state");
             };
             defer scheduler.deinit();
@@ -137,7 +136,7 @@ pub const ScheduleTool = struct {
             const delay = root.getString(args, "delay") orelse
                 return ToolResult.fail("Missing 'delay' parameter for one-shot task");
 
-            var scheduler = loadScheduler(allocator) catch {
+            var scheduler = loadScheduler(allocator, io) catch {
                 return ToolResult.fail("Failed to load scheduler state");
             };
             defer scheduler.deinit();
@@ -161,7 +160,7 @@ pub const ScheduleTool = struct {
             const id = root.getString(args, "id") orelse
                 return ToolResult.fail("Missing 'id' parameter for cancel action");
 
-            var scheduler = loadScheduler(allocator) catch {
+            var scheduler = loadScheduler(allocator, io) catch {
                 return ToolResult.fail("Failed to load scheduler state");
             };
             defer scheduler.deinit();
@@ -179,7 +178,7 @@ pub const ScheduleTool = struct {
             const id = root.getString(args, "id") orelse
                 return ToolResult.fail("Missing 'id' parameter");
 
-            var scheduler = loadScheduler(allocator) catch {
+            var scheduler = loadScheduler(allocator, io) catch {
                 return ToolResult.fail("Failed to load scheduler state");
             };
             defer scheduler.deinit();

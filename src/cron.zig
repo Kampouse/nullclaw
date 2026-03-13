@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const io = std.Options.debug_io;
 
 fn getCwd() std.Io.Dir {
     return std.Io.Dir.cwd();
@@ -398,15 +397,17 @@ pub const CronScheduler = struct {
     next_run_id: u64 = 1,
     max_tasks: usize,
     enabled: bool,
+    io: std.Io, // I/O context for file operations
     allocator: std.mem.Allocator,
     shell_cwd: ?[]const u8 = null,
     agent_timeout_secs: u64 = 0,
 
-    pub fn init(allocator: std.mem.Allocator, max_tasks: usize, enabled: bool) CronScheduler {
+    pub fn init(allocator: std.mem.Allocator, max_tasks: usize, enabled: bool, io: std.Io) CronScheduler {
         return .{
             .jobs = .empty,
             .max_tasks = max_tasks,
             .enabled = enabled,
+            .io = io,
             .allocator = allocator,
             .shell_cwd = null,
             .agent_timeout_secs = 0,
@@ -801,7 +802,7 @@ pub const CronScheduler = struct {
                             _ = deliverResult(self.allocator, job.delivery, agent_output, true, b) catch {};
                         }
                     } else {
-                        const exec_result = runAgentJob(self.allocator, self.shell_cwd, agent_output, job.model, self.agent_timeout_secs) catch |err| {
+                        const exec_result = runAgentJob(self.allocator, self.shell_cwd, agent_output, job.model, self.agent_timeout_secs, self.io) catch |err| {
                             log.err("cron agent job '{s}' execution failed: {s}", .{ job.id, @errorName(err) });
                             job.last_run_secs = now;
                             job.last_status = "error";
@@ -816,6 +817,7 @@ pub const CronScheduler = struct {
 
                         job.last_run_secs = now;
                         job.last_status = if (exec_result.success) "ok" else "error";
+                        job.owns_last_status = false;
                         if (job.last_output) |old| self.allocator.free(old);
                         if (out_bus) |b| {
                             _ = deliverResult(self.allocator, job.delivery, exec_result.output, exec_result.success, b) catch {};
@@ -869,7 +871,7 @@ const AgentRunResult = struct {
 const AGENT_MAX_OUTPUT_BYTES: usize = 1_048_576;
 const AGENT_POLL_STEP_NS: u64 = 200 * std.time.ns_per_ms;
 
-fn hasTimeoutExpired(start_ns: i128, timeout_secs: u64) bool {
+fn hasTimeoutExpired(start_ns: i128, timeout_secs: u64, io: std.Io) bool {
     if (timeout_secs == 0) return false;
     const timeout_ns = @as(i128, @intCast(timeout_secs)) * std.time.ns_per_s;
     const now_ns = std.Io.Clock.real.now(io).nanoseconds;
@@ -883,6 +885,7 @@ fn collectChildOutputWithTimeout(
     stderr: *std.ArrayList(u8),
     timeout_secs: u64,
     start_ns: i128,
+    io: std.Io,
 ) !bool {
     var read_buf: [4096]u8 = undefined;
     var stdout_eof = false;
@@ -894,7 +897,7 @@ fn collectChildOutputWithTimeout(
         // Windows: simple polling loop
         while (!stdout_eof or !stderr_eof) {
             // Check for timeout
-            if (!timed_out and hasTimeoutExpired(start_ns, timeout_secs)) {
+            if (!timed_out and hasTimeoutExpired(start_ns, timeout_secs, io)) {
                 try terminateAgentChildHard(child);
                 timed_out = true;
             }
@@ -969,7 +972,7 @@ fn collectChildOutputWithTimeout(
             };
 
             // Check for timeout
-            if (!timed_out and hasTimeoutExpired(start_ns, timeout_secs)) {
+            if (!timed_out and hasTimeoutExpired(start_ns, timeout_secs, io)) {
                 try terminateAgentChildHard(child);
                 timed_out = true;
             }
@@ -1086,6 +1089,7 @@ fn runAgentJob(
     prompt: []const u8,
     model: ?[]const u8,
     timeout_secs: u64,
+    io: std.Io,
 ) !AgentRunResult {
     const process_io_path = util.createProcessIo();
     const exe_path = try std.process.executablePathAlloc(process_io_path, allocator);
@@ -1134,6 +1138,7 @@ fn runAgentJob(
         &stderr,
         timeout_secs,
         start_ns,
+        io,
     );
 
     const term = try child.wait(process_io);
@@ -1150,7 +1155,7 @@ const LoadPolicy = enum {
     strict,
 };
 
-fn loadJobsWithPolicy(scheduler: *CronScheduler, policy: LoadPolicy) !void {
+fn loadJobsWithPolicy(scheduler: *CronScheduler, policy: LoadPolicy, io: std.Io) !void {
     const path = try cronJsonPath(scheduler.allocator);
     defer scheduler.allocator.free(path);
 
@@ -1206,7 +1211,7 @@ fn loadJobsWithPolicy(scheduler: *CronScheduler, policy: LoadPolicy) !void {
 
 /// Load jobs from ~/.nullclaw/cron.json into the scheduler.
 pub fn loadJobs(scheduler: *CronScheduler) !void {
-    loadJobsWithPolicy(scheduler, .best_effort) catch |err| {
+    loadJobsWithPolicy(scheduler, .best_effort, scheduler.io) catch |err| {
         log.warn("Failed to load cron jobs (best_effort): {}", .{err});
     };
 }
@@ -1229,7 +1234,7 @@ pub fn saveJobs(scheduler: *CronScheduler) !void {
 
     try json_buf.appendSlice(scheduler.allocator, "]}");
 
-    try writeFileAtomic(scheduler.allocator, path, json_buf.items);
+    try writeFileAtomic(scheduler.allocator, path, json_buf.items, scheduler.io);
 }
 
 fn serializeCronJob(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), job: *const CronJob) !void {
@@ -1386,7 +1391,7 @@ fn deliverResult(allocator: std.mem.Allocator, delivery: DeliveryConfig, output:
 
 /// Load jobs strictly (returns errors)
 pub fn loadJobsStrict(scheduler: *CronScheduler) !void {
-    try loadJobsWithPolicy(scheduler, .strict);
+    try loadJobsWithPolicy(scheduler, .strict, scheduler.io);
 }
 
 /// Get the default cron.json path: ~/.nullclaw/cron.json
@@ -1400,7 +1405,7 @@ test "loadJobs stub" {}
 
 /// Replace in-memory jobs with the persisted store content.
 pub fn reloadJobs(scheduler: *CronScheduler) !void {
-    var loaded = CronScheduler.init(scheduler.allocator, scheduler.max_tasks, scheduler.enabled);
+    var loaded = CronScheduler.init(scheduler.allocator, scheduler.max_tasks, scheduler.enabled, scheduler.io);
     defer loaded.deinit();
     loadJobsStrict(&loaded) catch |err| {
         if (isRecoverableCronStoreError(err)) {
@@ -1412,9 +1417,11 @@ pub fn reloadJobs(scheduler: *CronScheduler) !void {
         return err;
     };
     std.mem.swap(std.ArrayListUnmanaged(CronJob), &scheduler.jobs, &loaded.jobs);
+    // Prevent loaded from freeing jobs that now belong to scheduler
+    loaded.jobs.clearRetainingCapacity();
 }
 
-fn writeFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
+fn writeFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: []const u8, io: std.Io) !void {
     _ = allocator;
     // For Zig 0.16.0 compatibility, simplify to direct write
     // TODO: Implement atomic write with temp file + rename when API is available
@@ -1436,8 +1443,8 @@ fn isRecoverableCronStoreError(err: anyerror) bool {
 // ── CLI entry points (called from main.zig) ──────────────────────
 
 /// CLI: list all cron jobs.
-pub fn cliListJobs(allocator: std.mem.Allocator) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliListJobs(allocator: std.mem.Allocator, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1472,8 +1479,8 @@ pub fn cliListJobs(allocator: std.mem.Allocator) !void {
 }
 
 /// CLI: add a recurring cron job.
-pub fn cliAddJob(allocator: std.mem.Allocator, expression: []const u8, command: []const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliAddJob(allocator: std.mem.Allocator, expression: []const u8, command: []const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1487,8 +1494,8 @@ pub fn cliAddJob(allocator: std.mem.Allocator, expression: []const u8, command: 
 }
 
 /// CLI: add a recurring agent job.
-pub fn cliAddAgentJob(allocator: std.mem.Allocator, expression: []const u8, prompt: []const u8, model: ?[]const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliAddAgentJob(allocator: std.mem.Allocator, expression: []const u8, prompt: []const u8, model: ?[]const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1502,8 +1509,8 @@ pub fn cliAddAgentJob(allocator: std.mem.Allocator, expression: []const u8, prom
 }
 
 /// CLI: add a one-shot delayed task.
-pub fn cliAddOnce(allocator: std.mem.Allocator, delay: []const u8, command: []const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliAddOnce(allocator: std.mem.Allocator, delay: []const u8, command: []const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1516,8 +1523,8 @@ pub fn cliAddOnce(allocator: std.mem.Allocator, delay: []const u8, command: []co
 }
 
 /// CLI: add a one-shot delayed agent task.
-pub fn cliAddAgentOnce(allocator: std.mem.Allocator, delay: []const u8, prompt: []const u8, model: ?[]const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliAddAgentOnce(allocator: std.mem.Allocator, delay: []const u8, prompt: []const u8, model: ?[]const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1531,8 +1538,8 @@ pub fn cliAddAgentOnce(allocator: std.mem.Allocator, delay: []const u8, prompt: 
 }
 
 /// CLI: remove a cron job by ID.
-pub fn cliRemoveJob(allocator: std.mem.Allocator, id: []const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliRemoveJob(allocator: std.mem.Allocator, id: []const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1545,8 +1552,8 @@ pub fn cliRemoveJob(allocator: std.mem.Allocator, id: []const u8) !void {
 }
 
 /// CLI: pause a cron job by ID.
-pub fn cliPauseJob(allocator: std.mem.Allocator, id: []const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliPauseJob(allocator: std.mem.Allocator, id: []const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1559,8 +1566,8 @@ pub fn cliPauseJob(allocator: std.mem.Allocator, id: []const u8) !void {
 }
 
 /// CLI: resume a paused cron job by ID.
-pub fn cliResumeJob(allocator: std.mem.Allocator, id: []const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliResumeJob(allocator: std.mem.Allocator, id: []const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1572,11 +1579,11 @@ pub fn cliResumeJob(allocator: std.mem.Allocator, id: []const u8) !void {
     }
 }
 
-pub fn cliRunJob(allocator: std.mem.Allocator, id: []const u8) !void {
+pub fn cliRunJob(allocator: std.mem.Allocator, id: []const u8, io: std.Io) !void {
     var cfg_opt: ?Config = Config.load(allocator, io) catch null;
     defer if (cfg_opt) |*cfg| cfg.deinit();
 
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     if (cfg_opt) |cfg| {
         scheduler.setShellCwd(cfg.workspace_dir);
@@ -1607,7 +1614,7 @@ pub fn cliRunJob(allocator: std.mem.Allocator, id: []const u8) !void {
             },
             .agent => {
                 const prompt = job.prompt orelse job.command;
-                const result = runAgentJob(allocator, scheduler.shell_cwd, prompt, job.model, scheduler.agent_timeout_secs) catch |err| {
+                const result = runAgentJob(allocator, scheduler.shell_cwd, prompt, job.model, scheduler.agent_timeout_secs, io) catch |err| {
                     log.err("Agent job '{s}' failed: {s}", .{ id, @errorName(err) });
                     return;
                 };
@@ -1630,8 +1637,9 @@ pub fn cliUpdateJob(
     prompt: ?[]const u8,
     model: ?[]const u8,
     enabled: ?bool,
+    io: std.Io,
 ) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1651,8 +1659,8 @@ pub fn cliUpdateJob(
 }
 
 /// CLI: list run history for a cron job.
-pub fn cliListRuns(allocator: std.mem.Allocator, id: []const u8) !void {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn cliListRuns(allocator: std.mem.Allocator, id: []const u8, io: std.Io) !void {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     defer scheduler.deinit();
     try loadJobs(&scheduler);
 
@@ -1835,9 +1843,9 @@ test "reloadJobs auto-recovers malformed store and keeps runtime jobs" {
 
     const path = try cronJsonPath(std.testing.allocator);
     defer std.testing.allocator.free(path);
-    const bad_file = try std.Io.Dir.cwd().createFile(io, path, .{});
-    defer bad_file.close(io);
-    try bad_file.writeStreamingAll(io, "{bad-json");
+    const bad_file = try std.Io.Dir.cwd().createFile(std.testing.io, path, .{});
+    defer bad_file.close(std.testing.io);
+    try bad_file.writeStreamingAll(std.testing.io, "{bad-json");
 
     try reloadJobs(&runtime);
     try std.testing.expectEqual(@as(usize, 1), runtime.listJobs().len);
@@ -2214,13 +2222,13 @@ test "shell job uses configured cwd for relative output paths" {
 
     // Create the test directory
     const cwd = std.Io.Dir.cwd();
-    _ = cwd.createDir(io, cwd_path, .default_dir) catch |err| {
+    _ = cwd.createDir(std.testing.io, cwd_path, .default_dir) catch |err| {
         std.log.err("failed to create test directory: {}", .{err});
         return error.SkipZigTest;
     };
     defer {
         // Clean up the test directory
-        cwd.deleteTree(io, cwd_path) catch {};
+        cwd.deleteTree(std.testing.io, cwd_path) catch {};
     }
 
     // Create scheduler with the test directory as shell_cwd
@@ -2242,7 +2250,7 @@ test "shell job uses configured cwd for relative output paths" {
     defer allocator.free(proof_path);
 
     // Check if file exists by trying to stat it
-    const stat = std.Io.Dir.cwd().statFile(io, proof_path, .{}) catch {
+    const stat = std.Io.Dir.cwd().statFile(std.testing.io, proof_path, .{}) catch {
         std.log.err("proof file not found at: {s}", .{proof_path});
         return error.TestUnexpectedResult;
     };
@@ -2341,6 +2349,7 @@ test "collectChildOutputWithTimeout disables timeout when set to zero" {
         &stderr,
         0,
         0,
+        test_io,
     );
     const term = try child.wait(test_io);
 
@@ -2379,6 +2388,7 @@ test "collectChildOutputWithTimeout kills process after deadline" {
         &stderr,
         1,
         0,
+        test_io,
     );
 
     // Process should have been killed by timeout

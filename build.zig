@@ -406,8 +406,9 @@ pub fn build(b: *std.Build) void {
         break :blk parsed;
     } else defaultEngines();
 
-    // Tracy profiler option
+    // Tracy profiler options
     const enable_tracy = b.option(bool, "tracy", "Enable Tracy profiling (default: false)") orelse false;
+    const tracy_on_demand = b.option(bool, "tracy_on_demand", "Tracy on-demand mode (connect from GUI instead of broadcast discovery)") orelse false;
 
     const enable_memory_none = engines.enable_memory_none;
     const enable_memory_markdown = engines.enable_memory_markdown;
@@ -465,6 +466,8 @@ pub fn build(b: *std.Build) void {
         const zig_tracy_dep = b.dependency("zig_tracy", .{
             .target = target,
             .optimize = optimize,
+            .tracy_enable = true,
+            .tracy_on_demand = tracy_on_demand,
         });
 
         // Get the Tracy module from zig-tracy
@@ -823,10 +826,10 @@ pub fn build(b: *std.Build) void {
 
         // Add summary to auto-discovery (runs after all tests)
         auto_discovery_step.dependOn(&summary_footer.step);
-        
+
         // ---------- Integration Tests with mock server ----------
         const integration_test_step = b.step("test-integration", "Run integration tests with mock server mock server");
-        
+
         const integration_test_exe = b.addExecutable(.{
             .name = "nullclaw-integration-tests",
             .root_module = b.createModule(.{
@@ -838,17 +841,17 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        
+
         if (sqlite3) |lib| {
             integration_test_exe.root_module.linkLibrary(lib);
         }
-        
+
         const integration_test_run = b.addRunArtifact(integration_test_exe);
         integration_test_step.dependOn(&integration_test_run.step);
-        
+
         // Tool call test
         const tool_call_test_step = b.step("test-tool-calls", "Run tool calling integration tests");
-        
+
         const tool_call_test_exe = b.addExecutable(.{
             .name = "nullclaw-tool-call-test",
             .root_module = b.createModule(.{
@@ -860,17 +863,17 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        
+
         if (sqlite3) |lib| {
             tool_call_test_exe.root_module.linkLibrary(lib);
         }
-        
+
         const tool_call_test_run = b.addRunArtifact(tool_call_test_exe);
         tool_call_test_step.dependOn(&tool_call_test_run.step);
-        
+
         // Comprehensive integration tests
         const comprehensive_test_step = b.step("test-comprehensive", "Run comprehensive integration tests (requires mock server)");
-        
+
         const comprehensive_test_exe = b.addExecutable(.{
             .name = "nullclaw-comprehensive-tests",
             .root_module = b.createModule(.{
@@ -882,23 +885,23 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        
+
         if (sqlite3) |lib| {
             comprehensive_test_exe.root_module.linkLibrary(lib);
         }
-        
+
         const comprehensive_test_run = b.addRunArtifact(comprehensive_test_exe);
         comprehensive_test_step.dependOn(&comprehensive_test_run.step);
-        
+
         // Mock server for testing
         const mock_server_step = b.step("mock-server", "Start mock HTTP server for testing");
-        
+
         const http_util_mod = b.createModule(.{
             .root_source_file = b.path("src/http_util.zig"),
             .target = target,
             .optimize = optimize,
         });
-        
+
         const mock_server_exe = b.addExecutable(.{
             .name = "nullclaw-mock-server",
             .root_module = b.createModule(.{
@@ -910,7 +913,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        
+
         const mock_server_run = b.addRunArtifact(mock_server_exe);
         mock_server_step.dependOn(&mock_server_run.step);
     }
@@ -920,23 +923,23 @@ pub fn build(b: *std.Build) void {
 fn generateBuildName(b: *std.Build, git_commit: []const u8) []const u8 {
     // Fun adjectives and nouns for build names
     const adjectives = [_][]const u8{
-        "crimson",   "quantum",   "neon",      "phoenix",   "thunder",
-        "cobalt",    "ember",     "frost",     "golden",   "hollow",
-        "iron",      "jade",      "kinetic",   "lunar",    "mystic",
-        "nebula",    "obsidian",  "prism",     "quartz",   "radiant",
-        "shadow",    "titan",     "umbra",     "vivid",    "wicked",
-        "azure",     "brisk",     "cosmic",    "drift",    "electric",
+        "crimson", "quantum",  "neon",    "phoenix", "thunder",
+        "cobalt",  "ember",    "frost",   "golden",  "hollow",
+        "iron",    "jade",     "kinetic", "lunar",   "mystic",
+        "nebula",  "obsidian", "prism",   "quartz",  "radiant",
+        "shadow",  "titan",    "umbra",   "vivid",   "wicked",
+        "azure",   "brisk",    "cosmic",  "drift",   "electric",
     };
 
     const nouns = [_][]const u8{
-        "panda",     "phoenix",   "raven",     "tiger",    "vortex",
-        "badger",    "bear",      "cougar",    "dragon",   "eagle",
-        "fox",       "griffin",   "hawk",      "iguana",   "jaguar",
-        "koala",     "leopard",   "mammoth",   "nightingale","owl",
-        "panther",   "quokka",    "raptor",    "shark",    "tiger",
-        "urchin",    "viper",     "wolf",      "yak",      "zebra",
-        "asteroid",  "comet",     "cosmos",    "drift",    "eclipse",
-        "flux",      "galaxy",    "horizon",   "impact",   "jet",
+        "panda",    "phoenix", "raven",   "tiger",       "vortex",
+        "badger",   "bear",    "cougar",  "dragon",      "eagle",
+        "fox",      "griffin", "hawk",    "iguana",      "jaguar",
+        "koala",    "leopard", "mammoth", "nightingale", "owl",
+        "panther",  "quokka",  "raptor",  "shark",       "tiger",
+        "urchin",   "viper",   "wolf",    "yak",         "zebra",
+        "asteroid", "comet",   "cosmos",  "drift",       "eclipse",
+        "flux",     "galaxy",  "horizon", "impact",      "jet",
     };
 
     // Hash the git commit to get a deterministic index

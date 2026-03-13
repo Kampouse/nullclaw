@@ -25,8 +25,7 @@ pub const CronListTool = struct {
     }
 
     pub fn execute(_: *CronListTool, allocator: std.mem.Allocator, _: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             return ToolResult{ .success = true, .output = try allocator.dupe(u8, "No scheduled cron jobs.") };
         };
         defer scheduler.deinit();

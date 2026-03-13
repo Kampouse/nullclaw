@@ -277,13 +277,33 @@ fn upsertSchedulerRuntimeJob(
     runtime_job: *const cron.CronJob,
 ) !void {
     if (latest.getMutableJob(runtime_job.id)) |dst| {
+        // Free old last_status if we owned it
+        if (dst.owns_last_status) {
+            if (dst.last_status) |s| {
+                latest.allocator.free(s);
+            }
+        }
+
         dst.next_run_secs = runtime_job.next_run_secs;
         dst.last_run_secs = runtime_job.last_run_secs;
-        dst.last_status = runtime_job.last_status;
+
+        // Duplicate last_status to avoid double-free
+        dst.last_status = if (runtime_job.last_status) |s|
+            try latest.allocator.dupe(u8, s)
+        else
+            null;
+        dst.owns_last_status = runtime_job.last_status != null;
+
         dst.paused = runtime_job.paused;
         dst.one_shot = runtime_job.one_shot;
         return;
     }
+
+    // Duplicate last_status to avoid double-free
+    const duped_status = if (runtime_job.last_status) |s|
+        try allocator.dupe(u8, s)
+    else
+        null;
 
     try latest.jobs.append(allocator, .{
         .id = try allocator.dupe(u8, runtime_job.id),
@@ -291,7 +311,8 @@ fn upsertSchedulerRuntimeJob(
         .command = try allocator.dupe(u8, runtime_job.command),
         .next_run_secs = runtime_job.next_run_secs,
         .last_run_secs = runtime_job.last_run_secs,
-        .last_status = runtime_job.last_status,
+        .last_status = duped_status,
+        .owns_last_status = runtime_job.last_status != null,
         .paused = runtime_job.paused,
         .one_shot = runtime_job.one_shot,
         .job_type = runtime_job.job_type,
@@ -310,7 +331,7 @@ fn mergeSchedulerTickChangesAndSave(
     runtime: *const CronScheduler,
     before_tick: *const std.StringHashMapUnmanaged(SchedulerJobSnapshot),
 ) !void {
-    var latest = CronScheduler.init(allocator, runtime.max_tasks, runtime.enabled);
+    var latest = CronScheduler.init(allocator, runtime.max_tasks, runtime.enabled, runtime.io);
     defer latest.deinit();
     try cron.loadJobsStrict(&latest);
 
@@ -338,8 +359,8 @@ fn mergeSchedulerTickChangesAndSave(
 
 /// Scheduler thread — executes due cron jobs and periodically reloads cron.json
 /// so tasks created/updated after daemon startup are picked up without restart.
-fn schedulerThread(allocator: std.mem.Allocator, config: *const Config, state: *DaemonState, event_bus: *bus_mod.Bus) void {
-    var scheduler = CronScheduler.init(allocator, config.scheduler.max_tasks, config.scheduler.enabled);
+fn schedulerThread(allocator: std.mem.Allocator, config: *const Config, state: *DaemonState, event_bus: *bus_mod.Bus, io: std.Io) void {
+    var scheduler = CronScheduler.init(allocator, config.scheduler.max_tasks, config.scheduler.enabled, io);
     scheduler.setShellCwd(config.workspace_dir);
     scheduler.setAgentTimeoutSecs(config.scheduler.agent_timeout_secs);
     defer scheduler.deinit();
@@ -945,7 +966,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     var sched_thread: ?std.Thread = null;
     if (config.scheduler.enabled) {
         state.markRunning("scheduler");
-        if (std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, schedulerThread, .{ allocator, config, &state, &event_bus })) |thread| {
+        if (std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, schedulerThread, .{ allocator, config, &state, &event_bus, io })) |thread| {
             sched_thread = thread;
         } else |err| {
             state.markError("scheduler", @errorName(err));

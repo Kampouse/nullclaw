@@ -24,7 +24,6 @@ pub const CronAddTool = struct {
     }
 
     pub fn execute(_: *CronAddTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
         const command = root.getString(args, "command") orelse
             return ToolResult.fail("Missing required 'command' parameter");
 
@@ -46,7 +45,7 @@ pub const CronAddTool = struct {
                 return ToolResult.fail("Invalid delay format");
         }
 
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             return ToolResult.fail("Failed to load scheduler state");
         };
         defer scheduler.deinit();
@@ -90,8 +89,8 @@ pub const CronAddTool = struct {
 
 /// Load the CronScheduler from persisted state (~/.nullclaw/cron.json).
 /// Shared by cron_add, cron_list, cron_remove, and schedule tools.
-pub fn loadScheduler(allocator: std.mem.Allocator) !CronScheduler {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn loadScheduler(allocator: std.mem.Allocator, io: std.Io) !CronScheduler {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     cron.loadJobs(&scheduler) catch {};
     return scheduler;
 }

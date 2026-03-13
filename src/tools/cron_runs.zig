@@ -25,7 +25,6 @@ pub const CronRunsTool = struct {
     }
 
     pub fn execute(_: *CronRunsTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
-        _ = io;
         const job_id = root.getString(args, "job_id") orelse
             return ToolResult.fail("Missing 'job_id' parameter");
 
@@ -34,7 +33,7 @@ pub const CronRunsTool = struct {
             break :blk if (raw > 0) @intCast(raw) else 10;
         };
 
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
@@ -112,7 +111,7 @@ test "cron_runs_not_found" {
 test "cron_runs_no_history" {
     const allocator = std.testing.allocator;
     // Create a scheduler with a job but no runs (no file I/O)
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.testing.io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("* * * * *", "echo test");
     const job_id = job.id;
@@ -134,7 +133,7 @@ test "cron_runs_no_history" {
 test "cron_runs_shows_history" {
     const allocator = std.testing.allocator;
     // Create a scheduler with a job and add runs directly (no file I/O)
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.testing.io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/5 * * * *", "echo hello");
