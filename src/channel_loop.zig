@@ -163,13 +163,14 @@ const TelegramWorkerHandler = struct {
     allocator: std.mem.Allocator,
 
     pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
-        defer msg.deinit(self.allocator);
-
         // Safety check: validate required pointers
         if (msg.account_id.len == 0 or msg.sender.len == 0) {
-            log.warn("Skipping message with empty account_id or sender", .{});
+            log.warn("Skipping message with empty account_id or sender in worker", .{});
+            // Don't call deinit on corrupted message - fields weren't allocated
             return;
         }
+
+        defer msg.deinit(self.allocator);
 
         const reply_to_id: ?i64 = if (msg.is_group or self.tg_ptr.reply_in_private) msg.message_id else null;
 
@@ -738,6 +739,13 @@ pub fn runTelegramLoop(
             const msg_class = classifyMessage(msg.content);
 
             // Clone message data for worker pool
+            // Safety: validate source data first
+            if (msg.sender.len == 0 or tg_ptr.account_id.len == 0) {
+                log.warn("Skipping message with empty sender or account_id", .{});
+                msg.deinit(allocator);
+                continue;
+            }
+            
             const worker_msg = TelegramWorkerMessage{
                 .sender = allocator.dupe(u8, msg.sender) catch {
                     log.warn("Failed to clone sender, skipping message", .{});
