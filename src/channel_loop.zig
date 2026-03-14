@@ -440,6 +440,7 @@ pub const TelegramLoopState = struct {
         return .{
             .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
+            .worker_count = 4,
         };
     }
 
