@@ -288,13 +288,24 @@ fn shouldSkipDuplicateMessage(
     defer loop_state.cache_spinlock.unlock();
 
     // Clean up old entries (older than 30 seconds) to prevent memory buildup
+    // NOTE: Collect keys first, then remove (can't modify map during iteration)
     const cleanup_threshold = now - 30;
+    var keys_to_remove = std.ArrayList([]const u8).initCapacity(allocator, 8) catch return false;
+    defer {
+        // Don't free keys here - they'll be freed during removal
+    }
+    
     var iter = loop_state.message_cache.iterator();
     while (iter.next()) |entry| {
         if (entry.value_ptr.timestamp < cleanup_threshold) {
-            allocator.free(entry.key_ptr.*);
-            _ = loop_state.message_cache.remove(entry.key_ptr.*);
+            keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
         }
+    }
+    
+    // Now safely remove collected keys
+    for (keys_to_remove.items) |key| {
+        allocator.free(key);
+        _ = loop_state.message_cache.remove(key);
     }
 
     // Check if this user sent the same command recently
