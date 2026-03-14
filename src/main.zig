@@ -2143,134 +2143,35 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 
     std.debug.print("  Polling for messages... (Ctrl+C to stop)\n\n", .{});
 
-    var session_mgr = yc.session.SessionManager.init(allocator, io, &config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+    var session_mgr = yc.session.SessionManager.init(allocator, io, &config, provider_i, tools, mem_opt, obs, if (mem_rt) |*rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
     session_mgr.policy = &sec_policy;
     if (mem_rt) |*rt| {
         session_mgr.mem_rt = rt;
     }
     defer session_mgr.deinit();
 
-    var evict_counter: u32 = 0;
-    var persisted_update_id: i64 = tg.last_update_id;
-    var poll_error_count: u32 = 0;
+    // Create loop state for worker pool support
+    var loop_state = yc.channel_loop.TelegramLoopState.init();
+    defer loop_state.deinit(allocator);
 
-    // Bot loop: poll → full agent loop (tool calling) → reply
-    while (true) {
-        const messages = tg.pollUpdates(allocator) catch |err| {
-            poll_error_count += 1;
-            std.debug.print("Poll error: {} (count: {})\n", .{ err, poll_error_count });
-            
-            // Reset HTTP client after 3 consecutive errors
-            if (poll_error_count >= 3) {
-                log.warn("Too many polling errors, resetting Telegram connection pool", .{});
-                tg.resetConnections();
-                poll_error_count = 0;
-            }
-            
-            // Exponential backoff: 100ms → 200ms → 400ms → 800ms → 1000ms max
-            const shift_amount: u5 = @intCast(@min(poll_error_count, 4));
-            const backoff_ms: u64 = @min(100 * (@as(u32, 1) << shift_amount), 1000);
-            yc.util.sleep(backoff_ms * 1_000_000);
-            continue;
-        };
-        
-        poll_error_count = 0; // Reset on successful poll
+    // Create channel runtime
+    var channel_rt = yc.channel_loop.ChannelRuntime{
+        .allocator = allocator,
+        .config = &config,
+        .session_mgr = session_mgr,
+        .provider_bundle = runtime_provider,
+        .tools = tools,
+        .mem_rt = mem_rt,
+        .noop_obs = &noop_obs,
+        .subagent_manager = &subagent_manager,
+        .policy_tracker = &tracker,
+        .security_policy = &sec_policy,
+    };
 
-        for (messages) |msg| {
-            std.debug.print("[{s}] {s}: {s}\n", .{ msg.channel, msg.id, msg.content });
+    // Use parallel processing with worker pool
+    yc.channel_loop.runTelegramLoop(allocator, &config, &channel_rt, &loop_state, &tg);
 
-            // Handle /start command (Telegram-specific greeting, not sent to LLM)
-            const trimmed_content = std.mem.trim(u8, msg.content, " \t\r\n");
-            if (std.mem.eql(u8, trimmed_content, "/start")) {
-                var greeting_buf: [512]u8 = undefined;
-                const name = msg.first_name orelse msg.id;
-                const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
-                tg.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
-                continue;
-            }
-
-            // Determine reply-to: always in groups, configurable in private chats
-            const use_reply_to = msg.is_group or telegram_config.reply_in_private;
-            const reply_to_id: ?i64 = if (use_reply_to) msg.message_id else null;
-
-            // Session key — resolve through route engine, fallback to legacy key.
-            var key_buf: [128]u8 = undefined;
-            var routed_session_key: ?[]const u8 = null;
-            defer if (routed_session_key) |key| allocator.free(key);
-            const session_key = blk: {
-                const route = yc.agent_routing.resolveRouteWithSession(
-                    allocator,
-                    .{
-                        .channel = "telegram",
-                        .account_id = tg.account_id,
-                        .peer = .{
-                            .kind = if (msg.is_group) .group else .direct,
-                            .id = msg.sender,
-                        },
-                    },
-                    config.agent_bindings,
-                    config.agents,
-                    config.session,
-                ) catch break :blk std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ tg.account_id, msg.sender }) catch msg.sender;
-                allocator.free(route.main_session_key);
-                routed_session_key = route.session_key;
-                break :blk route.session_key;
-            };
-
-            // Start periodic typing indicator while the model is processing
-            const typing_target = msg.sender;
-            tg.startTyping(typing_target) catch {};
-            defer tg.stopTyping(typing_target) catch {};
-
-            const reply = session_mgr.processMessage(session_key, msg.content, null) catch |err| {
-                std.debug.print("  Agent error: {}\n", .{err});
-                const err_msg = switch (err) {
-                    error.CurlFailed, error.CurlReadError, error.CurlWaitError, error.CurlWriteError => "Network error. Please try again.",
-                    error.ProviderDoesNotSupportVision => "The current provider does not support image input. Switch to a vision-capable provider or remove [IMAGE:] attachments.",
-                    error.NoResponseContent => "Model returned an empty response. Please retry or /new for a fresh session.",
-                    error.AllProvidersFailed => "All configured providers failed for this request. Check model/provider compatibility and credentials.",
-                    error.OutOfMemory => "Out of memory.",
-                    else => "An error occurred. Try again or /new for a fresh session.",
-                };
-                tg.sendMessageWithReply(msg.sender, err_msg, reply_to_id) catch |send_err| log.err("failed to send error reply: {}", .{send_err});
-                continue;
-            };
-            defer allocator.free(reply);
-
-            std.debug.print("  -> {s}\n", .{reply});
-
-            // Reply on telegram; handles [IMAGE:path] markers + split
-            tg.sendAssistantMessageWithReply(msg.sender, msg.id, msg.is_group, reply, reply_to_id) catch |err| {
-                std.debug.print("  Send error: {}\n", .{err});
-            };
-        }
-
-        if (messages.len > 0) {
-            // Free message memory
-            for (messages) |msg| {
-                msg.deinit(allocator);
-            }
-            allocator.free(messages);
-        }
-
-        if (tg.persistableUpdateOffset()) |persistable_update_id| {
-            yc.channel_loop.persistTelegramUpdateOffsetIfAdvanced(
-                allocator,
-                &config,
-                tg.account_id,
-                tg.bot_token,
-                &persisted_update_id,
-                persistable_update_id,
-            );
-        }
-
-        // Periodically evict sessions idle longer than the configured timeout
-        evict_counter += 1;
-        if (evict_counter >= 100) {
-            evict_counter = 0;
-            _ = session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
-        }
-    }
+    // Note: runTelegramLoop never returns, so code below is unreachable
 }
 
 // ── Auth ─────────────────────────────────────────────────────────
