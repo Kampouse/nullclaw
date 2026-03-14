@@ -166,18 +166,22 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             id: usize,
 
             fn run(worker: *Worker) void {
-                log.debug("Worker {} started", .{worker.id});
-                
+                log.debug("Worker {} started, pool ptr: 0x{x}", .{worker.id, @intFromPtr(worker.pool)});
+
                 while (true) {
+                    log.debug("Worker {} waiting for message...", .{worker.id});
+
                     const msg = worker.pool.queue.dequeue() orelse {
                         // Queue closed and empty
                         log.debug("Worker {} exiting (queue closed)", .{worker.id});
                         return;
                     };
+                    log.debug("Worker {} received message, processing...", .{worker.id});
 
                     worker.pool.handler.process(msg) catch |err| {
                         log.err("Worker {} error: {}", .{ worker.id, err });
                     };
+                    log.debug("Worker {} finished processing message", .{worker.id});
                 }
             }
         };
@@ -190,28 +194,35 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             const workers = try allocator.alloc(Worker, worker_count);
             errdefer allocator.free(workers);
 
-            var self = Self{
+            // Initialize workers with null pool pointers (will be set in start)
+            for (workers, 0..) |*worker, i| {
+                worker.* = .{
+                    .pool = undefined, // Temporary, will be set in start()
+                    .id = i,
+                };
+            }
+
+            return Self{
                 .queue = .{},
                 .workers = workers,
                 .allocator = allocator,
                 .handler = handler,
             };
+        }
 
-            // Initialize worker metadata
-            for (workers, 0..) |*worker, i| {
-                worker.* = .{
-                    .pool = &self,
-                    .id = i,
-                };
+        /// Start worker threads - MUST be called while self is at its final location
+        pub fn start(self: *Self) !void {
+            // Set pool pointers now that self is at its final address
+            for (self.workers) |*worker| {
+                worker.pool = self;
             }
 
-            // Spawn worker threads
-            for (workers) |*worker| {
-                worker.thread = try std.Thread.spawn(.{ .stack_size = 1024 * 1024 }, Worker.run, .{worker});
+            // Spawn worker threads with larger stack size for agent processing
+            for (self.workers) |*worker| {
+                worker.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, Worker.run, .{worker});
             }
 
-            log.info("Worker pool started with {} workers", .{worker_count});
-            return self;
+            log.info("Worker pool started with {} workers", .{self.workers.len});
         }
 
         pub fn deinit(self: *Self) void {

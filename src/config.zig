@@ -2,6 +2,7 @@ const std = @import("std");
 const platform = @import("platform.zig");
 pub const config_types = @import("config_types.zig");
 pub const config_parse = @import("config_parse.zig");
+const log = std.log.scoped(.config);
 /// Write a JSON-escaped string (with enclosing quotes) to any writer.
 /// Mirrors json_util.appendJsonString but works with writer-based output.
 fn writeJsonStr(w: anytype, s: []const u8) !void {
@@ -261,9 +262,47 @@ pub const Config = struct {
             };
         }
 
-        // Use workspace_dir_override if set, otherwise use default
+        // Use workspace_dir_override if set, otherwise check existing workspace or auto-detect
         if (cfg.workspace_dir_override != null) {
             cfg.workspace_dir = cfg.workspace_dir_override.?;
+        } else {
+            // No override in config - check if default workspace is in use
+            // Check if config.json exists in the workspace (indicates active workspace)
+            const workspace_config = try std.fs.path.join(allocator, &.{ default_workspace_dir, "config.json" });
+            const config_exists = std.Io.Dir.cwd().openFile(io, workspace_config, .{}) catch |err| blk: {
+                if (err == error.FileNotFound or err == error.NotFound) break :blk null;
+                break :blk try std.Io.Dir.cwd().openFile(io, workspace_config, .{});
+            };
+            if (config_exists) |f| {
+                f.close(io);
+                // Existing workspace has config file, use it
+                log.info("Using existing workspace: {s}", .{default_workspace_dir});
+                cfg.workspace_dir = default_workspace_dir;
+                allocator.free(workspace_config);
+            } else {
+                allocator.free(workspace_config);
+
+                // Workspace is new/empty, check for git repository to auto-detect
+                if (std.Io.Dir.cwd().openDir(io, ".git", .{})) |git_dir| {
+                    defer git_dir.close(io);
+                    // We're in a git repo! Use current directory as workspace
+                    const detected_workspace = allocator.dupe(u8, ".") catch |err| {
+                        log.warn("Failed to allocate workspace path: {}, using default", .{err});
+                        // Keep default_workspace_dir
+                        return cfg;
+                    };
+                    log.info("Auto-detected git workspace: {s}", .{"(current directory)"});
+                    cfg.workspace_dir = detected_workspace;
+                } else |err| {
+                    // No git repo or error opening .git directory
+                    if (err == error.FileNotFound or err == error.NotFound) {
+                        log.debug("No .git directory found, using default workspace", .{});
+                    } else {
+                        log.warn("Error checking for .git directory: {}", .{err});
+                    }
+                    // Use default_workspace_dir (already set)
+                }
+            }
         }
 
         // Backfill runtime-derived fields not present in JSON

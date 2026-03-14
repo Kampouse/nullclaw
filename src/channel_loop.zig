@@ -146,11 +146,25 @@ const TelegramWorkerMessage = struct {
     message_class: MessageClass, // Added: classification
 
     pub fn deinit(self: *const TelegramWorkerMessage, allocator: std.mem.Allocator) void {
-        if (self.sender.len > 0) allocator.free(self.sender);
-        if (self.sender_first_name) |name| if (name.len > 0) allocator.free(name);
-        if (self.sender_id.len > 0) allocator.free(self.sender_id);
-        if (self.content.len > 0) allocator.free(self.content);
-        if (self.account_id.len > 0) allocator.free(self.account_id);
+        // Defensive cleanup: only free valid allocated memory
+        // Use sentinel checks to detect corruption before freeing
+        if (self.sender.len > 0 and self.sender.len < 1024 * 1024) {
+            allocator.free(self.sender);
+        }
+        if (self.sender_first_name) |name| {
+            if (name.len > 0 and name.len < 1024) {
+                allocator.free(name);
+            }
+        }
+        if (self.sender_id.len > 0 and self.sender_id.len < 1024) {
+            allocator.free(self.sender_id);
+        }
+        if (self.content.len > 0 and self.content.len < 100 * 1024 * 1024) {
+            allocator.free(self.content);
+        }
+        if (self.account_id.len > 0 and self.account_id.len < 1024) {
+            allocator.free(self.account_id);
+        }
     }
 };
 
@@ -163,14 +177,14 @@ const TelegramWorkerHandler = struct {
     allocator: std.mem.Allocator,
 
     pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
+        // Ensure message is always cleaned up, even if validation fails
+        defer msg.deinit(self.allocator);
+
         // Safety check: validate required pointers
         if (msg.account_id.len == 0 or msg.sender.len == 0) {
             log.warn("Skipping message with empty account_id or sender in worker", .{});
-            // Don't call deinit on corrupted message - fields weren't allocated
             return;
         }
-
-        defer msg.deinit(self.allocator);
 
         const reply_to_id: ?i64 = if (msg.is_group or self.tg_ptr.reply_in_private) msg.message_id else null;
 
@@ -248,6 +262,74 @@ fn normalizeTelegramAccountId(allocator: std.mem.Allocator, account_id: []const 
         normalized[i] = if (std.ascii.isAlphanumeric(c) or c == '.' or c == '_' or c == '-') c else '_';
     }
     return normalized;
+}
+
+/// Check if a message is a duplicate (same user, same content within window)
+/// Also enforces command-specific cooldowns (e.g., /reset every 10 seconds)
+/// Returns true if message should be skipped, false if it should be processed
+fn shouldSkipDuplicateMessage(
+    loop_state: *TelegramLoopState,
+    allocator: std.mem.Allocator,
+    user_id: []const u8,
+    content: []const u8,
+) bool {
+    const now = util.timestampUnix();
+    const trimmed = std.mem.trim(u8, content, " \t\r\n");
+
+    // Command-specific cooldowns
+    const cooldown_secs: i64 = if (std.mem.eql(u8, trimmed, "/reset") or std.mem.eql(u8, trimmed, "/new"))
+        10 // /reset and /new have 10 second cooldown
+    else
+        2; // Other commands have 2 second dedup window
+
+    const content_hash = std.hash.Wyhash.hash(0, trimmed);
+
+    loop_state.cache_spinlock.lock();
+    defer loop_state.cache_spinlock.unlock();
+
+    // Clean up old entries (older than 30 seconds) to prevent memory buildup
+    const cleanup_threshold = now - 30;
+    var iter = loop_state.message_cache.iterator();
+    while (iter.next()) |entry| {
+        if (entry.value_ptr.timestamp < cleanup_threshold) {
+            allocator.free(entry.key_ptr.*);
+            _ = loop_state.message_cache.remove(entry.key_ptr.*);
+        }
+    }
+
+    // Check if this user sent the same command recently
+    const gop = loop_state.message_cache.getOrPut(allocator, user_id) catch return false;
+    if (!gop.found_existing) {
+        // First message from this user, store it
+        gop.key_ptr.* = allocator.dupe(u8, user_id) catch return false;
+        gop.value_ptr.* = .{ .content_hash = content_hash, .timestamp = now };
+        return false; // Don't skip
+    }
+
+    // User has sent messages before, check if this is a duplicate or on cooldown
+    const entry = gop.value_ptr.*;
+    const time_diff = now - entry.timestamp;
+
+    // Check if same command (exact match)
+    if (entry.content_hash == content_hash) {
+        if (time_diff < cooldown_secs) {
+            log.debug("Skipping duplicate '{s}' from user={s} (cooldown: {d}/{d}s)", .{ trimmed, user_id, time_diff, cooldown_secs });
+            return true; // Skip duplicate
+        }
+    }
+
+    // For /reset specifically, also block different commands within cooldown window
+    // to prevent /reset -> /new spam
+    if (std.mem.eql(u8, trimmed, "/reset") or std.mem.eql(u8, trimmed, "/new")) {
+        if (time_diff < cooldown_secs) {
+            log.debug("Skipping '{s}' from user={s} (on cooldown from previous session reset: {d}/{d}s)", .{ trimmed, user_id, time_diff, cooldown_secs });
+            return true; // Skip due to cooldown
+        }
+    }
+
+    // Not a duplicate, update cache
+    gop.value_ptr.* = .{ .content_hash = content_hash, .timestamp = now };
+    return false; // Don't skip
 }
 
 fn telegramUpdateOffsetPath(allocator: std.mem.Allocator, config: *const Config, account_id: []const u8) ![]u8 {
@@ -423,6 +505,12 @@ fn matrixRoomPeerId(reply_target: ?[]const u8) []const u8 {
 // TelegramLoopState — shared state between supervisor and polling thread
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Per-user message cache entry for deduplication
+const MessageCacheEntry = struct {
+    content_hash: u64,
+    timestamp: i64,
+};
+
 pub const TelegramLoopState = struct {
     /// Updated after each pollUpdates() — epoch seconds.
     last_activity: Atomic(i64),
@@ -436,6 +524,10 @@ pub const TelegramLoopState = struct {
     session_locks: ?*worker_pool_mod.SessionLockManager = null,
     /// Config for worker count (default: 4)
     worker_count: usize = 4,
+    /// Per-user message cache for deduplication (prevents command spam)
+    message_cache: std.StringHashMapUnmanaged(MessageCacheEntry) = .empty,
+    /// Spinlock for message cache (lightweight, no I/O context needed)
+    cache_spinlock: Spinlock = Spinlock.init(),
 
     pub fn init() TelegramLoopState {
         return .{
@@ -454,6 +546,16 @@ pub const TelegramLoopState = struct {
     }
 
     pub fn deinit(self: *TelegramLoopState, allocator: std.mem.Allocator) void {
+        self.cache_spinlock.lock();
+        defer self.cache_spinlock.unlock();
+
+        // Clean up message cache
+        var iter = self.message_cache.iterator();
+        while (iter.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+        }
+        self.message_cache.deinit(allocator);
+
         if (self.worker_pool) |pool| {
             pool.deinit();
             allocator.destroy(pool);
@@ -705,6 +807,16 @@ pub fn runTelegramLoop(
             return;
         };
 
+        // Start worker threads (must be done after pool is at its final location)
+        pool_ptr.start() catch |err| {
+            log.warn("Failed to start worker pool: {} - using sequential processing", .{err});
+            pool_ptr.deinit();
+            allocator.destroy(pool_ptr);
+            allocator.destroy(locks_ptr);
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+
         loop_state.worker_pool = pool_ptr;
         loop_state.session_locks = locks_ptr;
         log.info("Worker pool enabled with {} workers", .{loop_state.worker_count});
@@ -731,6 +843,13 @@ pub fn runTelegramLoop(
                 const name = msg.first_name orelse msg.id;
                 const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
                 tg_ptr.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // Check for duplicate messages (prevent command spam)
+            if (shouldSkipDuplicateMessage(loop_state, allocator, msg.sender, msg.content)) {
+                log.debug("Skipping duplicate /reset command from user={s}", .{msg.sender});
                 msg.deinit(allocator);
                 continue;
             }
@@ -772,6 +891,14 @@ pub fn runTelegramLoop(
                 },
                 .message_class = msg_class,
             };
+
+            // Final validation: ensure cloned fields are valid
+            if (worker_msg.sender.len == 0 or worker_msg.account_id.len == 0) {
+                log.warn("Skipping message with empty cloned fields (sender={d}, account_id={d})", .{ worker_msg.sender.len, worker_msg.account_id.len });
+                worker_msg.deinit(allocator);
+                msg.deinit(allocator);
+                continue;
+            }
 
             // Log classification (debug)
             if (msg_class == .independent) {
@@ -849,6 +976,12 @@ fn runTelegramLoopSequential(
                 const name = msg.first_name orelse msg.id;
                 const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
                 tg_ptr.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
+                continue;
+            }
+
+            // Check for duplicate messages (prevent command spam)
+            if (shouldSkipDuplicateMessage(loop_state, allocator, msg.sender, msg.content)) {
+                log.debug("Skipping duplicate /reset command from user={s}", .{msg.sender});
                 continue;
             }
 

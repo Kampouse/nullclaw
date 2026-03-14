@@ -468,6 +468,20 @@ pub const SelfUpdateTool = struct {
     }
 
     fn compileAgent(_: *const SelfUpdateTool, allocator: std.mem.Allocator, repo_dir: []const u8) ToolResult {
+        // Check and log the workspace being used
+        const platform = @import("../platform.zig");
+        const current_workspace = platform.getEnvOrNull(allocator, "NULLCLAW_WORKSPACE");
+        defer if (current_workspace) |w| allocator.free(w);
+
+        slog.logStructured("DEBUG", "self_update", "build_workspace", .{
+            .workspace = if (current_workspace) |w| w else "(default ~/.nullclaw/workspace)",
+            .repo_dir = repo_dir,
+        });
+
+        // Note: The build process will inherit the parent process environment,
+        // including NULLCLAW_WORKSPACE if it was set when the agent was started.
+        // This ensures workspace consistency across self-updates.
+
         // Use ReleaseSmall optimization for minimal binary size (< 1 MB target)
         const build_result = process_util.run(allocator, &.{ "zig", "build", "-Doptimize=ReleaseSmall" }, .{ .cwd = repo_dir }) catch |err| {
             const err_msg = std.fmt.allocPrint(allocator, "Failed to start build process: {}", .{err}) catch return ToolResult.fail("Failed to start build process");
