@@ -443,22 +443,23 @@ pub const SelfUpdateTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = false };
         }
 
-        // Fetch latest
+        // Fetch latest from origin (your fork)
         const fetch_output = executeGit(allocator, &.{ "fetch", "origin" }, repo_dir) catch |err| {
-            const err_msg = std.fmt.allocPrint(allocator, "Failed to fetch updates: {}", .{err}) catch return ToolResult.fail("Failed to fetch updates");
+            const err_msg = std.fmt.allocPrint(allocator, "Failed to fetch from origin: {}", .{err}) catch return ToolResult.fail("Failed to fetch from origin");
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         };
         defer allocator.free(fetch_output);
 
-        // Pull updates
+        // Pull updates from origin (your fork)
         const pull_output = executeGit(allocator, &.{ "pull", "origin", branch }, repo_dir) catch |err| {
-            const err_msg = std.fmt.allocPrint(allocator, "Failed to pull updates: {}", .{err}) catch return ToolResult.fail("Failed to pull updates");
+            const err_msg = std.fmt.allocPrint(allocator, "Failed to pull from origin/{s}: {}", .{branch, err}) catch return ToolResult.fail("Failed to pull updates");
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         };
         defer allocator.free(pull_output);
 
         const output = std.fmt.allocPrint(allocator,
-            \\✅ Successfully pulled latest changes
+            \\✅ Successfully pulled latest changes from your fork
+            \\   Remote: origin
             \\   Branch: {s}
             \\
             \\💡 Run 'self_update' with operation='compile' to rebuild the agent
