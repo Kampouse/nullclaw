@@ -176,10 +176,17 @@ const TelegramWorkerHandler = struct {
     session_locks: *worker_pool_mod.SessionLockManager,
     allocator: std.mem.Allocator,
 
-    pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
+    pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) void {
         // Ensure message is always cleaned up, even if validation fails
         defer msg.deinit(self.allocator);
 
+        // Wrap everything in error handler to ensure we never propagate errors up
+        self.processInternal(msg) catch |err| {
+            log.err("Worker process error: {} - this should not happen", .{err});
+        };
+    }
+
+    fn processInternal(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
         // Safety check: validate required pointers
         if (msg.account_id.len == 0 or msg.sender.len == 0) {
             log.warn("Skipping message with empty account_id or sender in worker", .{});

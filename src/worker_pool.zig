@@ -137,20 +137,44 @@ pub const SessionLockManager = struct {
         self.locks.deinit(self.allocator);
     }
 
+    /// Fallback lock used when OOM occurs (graceful degradation)
+    const FallbackLock = struct {
+        lock: Spinlock = Spinlock.init(),
+    };
+    var fallback_lock: FallbackLock = .{};
+
     /// Acquire lock for a session (creates if not exists)
     /// Returns the lock, caller must call release()
+    /// On OOM, returns a shared fallback lock (graceful degradation)
     pub fn acquire(self: *Self, session_key: []const u8) *Spinlock {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const gop = self.locks.getOrPut(self.allocator, session_key) catch @panic("SessionLockManager OOM");
+        const gop = self.locks.getOrPut(self.allocator, session_key) catch {
+            // OOM: use fallback lock (all sessions serialize on this)
+            log.warn("SessionLockManager OOM, using fallback lock", .{});
+            fallback_lock.lock.lock();
+            return &fallback_lock.lock;
+        };
         if (!gop.found_existing) {
-            const lock_ptr = self.allocator.create(Spinlock) catch @panic("SessionLockManager OOM");
+            const lock_ptr = self.allocator.create(Spinlock) catch {
+                // OOM: use fallback lock
+                log.warn("SessionLockManager OOM creating lock, using fallback", .{});
+                fallback_lock.lock.lock();
+                return &fallback_lock.lock;
+            };
             lock_ptr.* = Spinlock.init();
             gop.value_ptr.* = lock_ptr;
 
             // Store owned key
-            const key_owned = self.allocator.dupe(u8, session_key) catch @panic("SessionLockManager OOM");
+            const key_owned = self.allocator.dupe(u8, session_key) catch {
+                // OOM: still return the lock we created, just with a borrowed key
+                // This is safe because we never free individual keys, only on deinit
+                gop.key_ptr.* = session_key; // Borrow the key (won't be freed)
+                const lock = gop.value_ptr.*;
+                lock.lock();
+                return lock;
+            };
             gop.key_ptr.* = key_owned;
         }
 
@@ -198,9 +222,8 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
                     };
                     log.debug("Worker {} received message, processing...", .{worker.id});
 
-                    worker.pool.handler.process(msg) catch |err| {
-                        log.err("Worker {} error: {}", .{ worker.id, err });
-                    };
+                    // Process message - handler handles ALL errors internally (returns void)
+                    worker.pool.handler.process(msg);
                     log.debug("Worker {} finished processing message", .{worker.id});
                 }
             }
