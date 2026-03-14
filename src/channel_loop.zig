@@ -146,11 +146,11 @@ const TelegramWorkerMessage = struct {
     message_class: MessageClass, // Added: classification
 
     pub fn deinit(self: *const TelegramWorkerMessage, allocator: std.mem.Allocator) void {
-        allocator.free(self.sender);
-        if (self.sender_first_name) |name| allocator.free(name);
-        allocator.free(self.sender_id);
-        allocator.free(self.content);
-        allocator.free(self.account_id);
+        if (self.sender.len > 0) allocator.free(self.sender);
+        if (self.sender_first_name) |name| if (name.len > 0) allocator.free(name);
+        if (self.sender_id.len > 0) allocator.free(self.sender_id);
+        if (self.content.len > 0) allocator.free(self.content);
+        if (self.account_id.len > 0) allocator.free(self.account_id);
     }
 };
 
@@ -164,6 +164,12 @@ const TelegramWorkerHandler = struct {
 
     pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
         defer msg.deinit(self.allocator);
+
+        // Safety check: validate required pointers
+        if (msg.account_id.len == 0 or msg.sender.len == 0) {
+            log.warn("Skipping message with empty account_id or sender", .{});
+            return;
+        }
 
         const reply_to_id: ?i64 = if (msg.is_group or self.tg_ptr.reply_in_private) msg.message_id else null;
 
