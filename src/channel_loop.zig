@@ -291,9 +291,7 @@ fn shouldSkipDuplicateMessage(
     // NOTE: Collect keys first, then remove (can't modify map during iteration)
     const cleanup_threshold = now - 30;
     var keys_to_remove = std.ArrayList([]const u8).initCapacity(allocator, 8) catch return false;
-    defer {
-        // Don't free keys here - they'll be freed during removal
-    }
+    defer keys_to_remove.deinit(allocator);  // Free ArrayList backing storage
     
     var iter = loop_state.message_cache.iterator();
     while (iter.next()) |entry| {
@@ -302,7 +300,7 @@ fn shouldSkipDuplicateMessage(
         }
     }
     
-    // Now safely remove collected keys
+    // Now safely remove collected keys (and free the key strings)
     for (keys_to_remove.items) |key| {
         allocator.free(key);
         _ = loop_state.message_cache.remove(key);

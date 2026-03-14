@@ -83,6 +83,26 @@ pub fn MessageQueue(comptime T: type) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
+            // Free any remaining messages (they own memory)
+            // Note: This assumes T has a deinit method. For generic types,
+            // we just free the array backing storage.
+            self.items.deinit(allocator);
+        }
+
+        /// Deinit with message cleanup - drains queue and calls deinit on each message
+        pub fn deinitWithMessageCleanup(
+            self: *Self, 
+            allocator: std.mem.Allocator, 
+            comptime deinitFn: fn (*const T, std.mem.Allocator) void
+        ) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // Drain and cleanup remaining messages
+            while (self.items.items.len > 0) {
+                const msg = self.items.orderedRemove(0);
+                deinitFn(&msg, allocator);
+            }
             self.items.deinit(allocator);
         }
     };
