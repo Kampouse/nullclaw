@@ -32,9 +32,9 @@ pub const SelfUpdateTool = struct {
     allowed_paths: []const []const u8 = &.{},
 
     pub const tool_name = "self_update";
-    pub const tool_description = "Check for updates, pull latest changes, self-compile the agent, perform health checks on the new binary, and optionally restart automatically.";
+    pub const tool_description = "Pull latest changes from your fork, self-compile the agent, and optionally restart. If already up to date, continues with compilation.";
     pub const tool_params =
-        \\{"type":"object","properties":{"operation":{"type":"string","enum":["check","pull","compile","full_update","status","restart","full_update_with_restart","health_check"],"description":"Operation to perform: check (compare versions), pull (fetch latest), compile (rebuild agent), full_update (pull and compile), status (show current info), restart (restart the agent process), full_update_with_restart (pull, compile, health check, and restart), health_check (verify new binary is healthy and safe to use before restart)"},"branch":{"type":"string","description":"Branch to update from (default: current branch)"},"force":{"type":"boolean","description":"Force update even if already latest"}},"required":["operation"]}
+        \\{"type":"object","properties":{"operation":{"type":"string","enum":["check","pull","compile","full_update","status","restart","full_update_with_restart","health_check"],"description":"Operation to perform: check (compare versions), pull (fetch latest from your fork), compile (rebuild current code), full_update (pull from fork and compile, continues if already up to date), status (show current info), restart (restart the agent process), full_update_with_restart (pull, compile, health check, and restart), health_check (verify new binary is healthy and safe to use before restart)"},"branch":{"type":"string","description":"Branch to update from (default: current branch)"},"force":{"type":"boolean","description":"Force update even if already latest"}},"required":["operation"]}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -451,18 +451,42 @@ pub const SelfUpdateTool = struct {
         defer allocator.free(fetch_output);
 
         // Pull updates from origin (your fork)
-        const pull_output = executeGit(allocator, &.{ "pull", "origin", branch }, repo_dir) catch |err| {
+        // If already up to date, that's fine - continue with compile
+        const pull_result = process_util.run(allocator, &.{ "git", "pull", "origin", branch }, .{ .cwd = repo_dir }) catch |err| {
             const err_msg = std.fmt.allocPrint(allocator, "Failed to pull from origin/{s}: {}", .{branch, err}) catch return ToolResult.fail("Failed to pull updates");
             return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
         };
-        defer allocator.free(pull_output);
+        defer pull_result.deinit(allocator);
+
+        // Check if "Already up to date" - this is success, not failure
+        const pull_stdout = std.mem.trim(u8, pull_result.stdout, &std.ascii.whitespace);
+        const pull_stderr = std.mem.trim(u8, pull_result.stderr, &std.ascii.whitespace);
+        const already_up_to_date = std.mem.indexOf(u8, pull_stdout, "Already up to date") != null or
+                                  std.mem.indexOf(u8, pull_stdout, "Already up-to-date") != null or
+                                  std.mem.indexOf(u8, pull_stderr, "Already up to date") != null or
+                                  std.mem.indexOf(u8, pull_stderr, "Already up-to-date") != null;
+
+        if (already_up_to_date) {
+            const output = std.fmt.allocPrint(allocator,
+                \\✅ Already up to date with origin/{s}
+                \\   No new changes to pull
+                \\
+                \\💡 Continuing with compilation...
+            , .{branch}) catch return ToolResult.fail("Failed to allocate output");
+            return ToolResult{ .success = true, .output = output, .owns_output = true };
+        }
+
+        if (!pull_result.success) {
+            const err_msg = std.fmt.allocPrint(allocator, "Failed to pull from origin/{s}: {s}", .{branch, pull_stderr}) catch return ToolResult.fail("Failed to pull updates");
+            return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
+        }
 
         const output = std.fmt.allocPrint(allocator,
             \\✅ Successfully pulled latest changes from your fork
             \\   Remote: origin
             \\   Branch: {s}
             \\
-            \\💡 Run 'self_update' with operation='compile' to rebuild the agent
+            \\💡 Continuing with compilation...
         , .{branch}) catch return ToolResult.fail("Failed to allocate output");
 
         return ToolResult{ .success = true, .output = output, .owns_output = true };
