@@ -665,10 +665,41 @@ pub fn runTelegramLoop(
 
     // Initialize worker pool if not already done
     if (loop_state.worker_pool == null) {
-        log.info("Worker pool disabled - using sequential processing", .{});
-        // Force sequential processing for debugging
-        runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
-        return;
+        // Create session lock manager
+        const locks_ptr = allocator.create(worker_pool_mod.SessionLockManager) catch |err| {
+            log.warn("Failed to create session lock manager: {} - using sequential processing", .{err});
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+        locks_ptr.* = worker_pool_mod.SessionLockManager.init(allocator);
+
+        // Create worker pool with handler
+        const pool_ptr = allocator.create(TelegramWorkerPool) catch |err| {
+            log.warn("Failed to create worker pool: {} - using sequential processing", .{err});
+            allocator.destroy(locks_ptr);
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+
+        const handler = TelegramWorkerHandler{
+            .tg_ptr = tg_ptr,
+            .runtime = runtime,
+            .config = config,
+            .session_locks = locks_ptr,
+            .allocator = allocator,
+        };
+
+        pool_ptr.* = TelegramWorkerPool.init(allocator, handler, loop_state.worker_count) catch |err| {
+            log.warn("Failed to initialize worker pool: {} - using sequential processing", .{err});
+            allocator.destroy(pool_ptr);
+            allocator.destroy(locks_ptr);
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+
+        loop_state.worker_pool = pool_ptr;
+        loop_state.session_locks = locks_ptr;
+        log.info("Worker pool enabled with {} workers", .{loop_state.worker_count});
     }
 
     // Update activity timestamp at start
