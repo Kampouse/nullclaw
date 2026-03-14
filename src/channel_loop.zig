@@ -173,7 +173,7 @@ const TelegramWorkerHandler = struct {
     tg_ptr: *telegram.TelegramChannel,
     runtime: *ChannelRuntime,
     config: *const Config,
-    session_locks: *worker_pool_mod.SessionLockManager,
+    session_locks: ?*worker_pool_mod.SessionLockManager,
     allocator: std.mem.Allocator,
 
     pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) void {
@@ -211,15 +211,15 @@ const TelegramWorkerHandler = struct {
             break :blk route.session_key;
         };
 
-        // Hybrid strategy: only lock for conversational messages
-        // Independent queries can run in parallel (no session lock)
-        const needs_lock = msg.message_class == .conversational;
-
+        // Session serialization: only lock if config says to (default: false for full parallelism)
+        // Message deduplication already prevents spam, so ordering is optional
         var session_lock: ?*Spinlock = null;
-        if (needs_lock) {
-            session_lock = self.session_locks.acquire(session_key);
+        if (self.config.session.serialize_sessions) {
+            if (self.session_locks) |locks| {
+                session_lock = locks.acquire(session_key);
+            }
         }
-        defer if (session_lock) |lock| self.session_locks.release(lock);
+        defer if (session_lock) |lock| self.session_locks.?.release(lock);
 
         // Start typing indicator
         self.tg_ptr.startTyping(msg.sender) catch {};
@@ -791,18 +791,21 @@ pub fn runTelegramLoop(
 
     // Initialize worker pool if not already done
     if (loop_state.worker_pool == null) {
-        // Create session lock manager
-        const locks_ptr = allocator.create(worker_pool_mod.SessionLockManager) catch |err| {
-            log.warn("Failed to create session lock manager: {} - using sequential processing", .{err});
-            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
-            return;
-        };
-        locks_ptr.* = worker_pool_mod.SessionLockManager.init(allocator);
+        // Create session lock manager only if serialization is enabled
+        var locks_ptr: ?*worker_pool_mod.SessionLockManager = null;
+        if (config.session.serialize_sessions) {
+            locks_ptr = allocator.create(worker_pool_mod.SessionLockManager) catch |err| {
+                log.warn("Failed to create session lock manager: {} - using sequential processing", .{err});
+                runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+                return;
+            };
+            locks_ptr.?.* = worker_pool_mod.SessionLockManager.init(allocator);
+        }
 
         // Create worker pool with handler
         const pool_ptr = allocator.create(TelegramWorkerPool) catch |err| {
             log.warn("Failed to create worker pool: {} - using sequential processing", .{err});
-            allocator.destroy(locks_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
             runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
             return;
         };
@@ -818,7 +821,7 @@ pub fn runTelegramLoop(
         pool_ptr.* = TelegramWorkerPool.init(allocator, handler, loop_state.worker_count) catch |err| {
             log.warn("Failed to initialize worker pool: {} - using sequential processing", .{err});
             allocator.destroy(pool_ptr);
-            allocator.destroy(locks_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
             runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
             return;
         };
@@ -828,14 +831,18 @@ pub fn runTelegramLoop(
             log.warn("Failed to start worker pool: {} - using sequential processing", .{err});
             pool_ptr.deinit();
             allocator.destroy(pool_ptr);
-            allocator.destroy(locks_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
             runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
             return;
         };
 
         loop_state.worker_pool = pool_ptr;
         loop_state.session_locks = locks_ptr;
-        log.info("Worker pool enabled with {} workers", .{loop_state.worker_count});
+        if (config.session.serialize_sessions) {
+            log.info("Worker pool enabled with {} workers (session serialization ON)", .{loop_state.worker_count});
+        } else {
+            log.info("Worker pool enabled with {} workers (full parallelism)", .{loop_state.worker_count});
+        }
     }
 
     // Update activity timestamp at start
