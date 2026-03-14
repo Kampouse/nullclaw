@@ -50,11 +50,9 @@ pub fn MessageQueue(comptime T: type) type {
                 }
                 self.mutex.unlock();
 
-                // Spin wait with hint to reduce CPU usage
-                var i: usize = 0;
-                while (i < 1000) : (i += 1) {
-                    std.atomic.spinLoopHint();
-                }
+                // Sleep for 100ms to reduce CPU usage while waiting for messages
+                const util = @import("util.zig");
+                util.sleep(100 * std.time.ns_per_ms);
             }
 
             // Queue closed, return any remaining items
