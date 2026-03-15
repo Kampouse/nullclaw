@@ -298,15 +298,15 @@ fn shouldSkipDuplicateMessage(
     // NOTE: Collect keys first, then remove (can't modify map during iteration)
     const cleanup_threshold = now - 30;
     var keys_to_remove = std.ArrayList([]const u8).initCapacity(allocator, 8) catch return false;
-    defer keys_to_remove.deinit(allocator);  // Free ArrayList backing storage
-    
+    defer keys_to_remove.deinit(allocator); // Free ArrayList backing storage
+
     var iter = loop_state.message_cache.iterator();
     while (iter.next()) |entry| {
         if (entry.value_ptr.timestamp < cleanup_threshold) {
             keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
         }
     }
-    
+
     // Now safely remove collected keys (and free the key strings)
     for (keys_to_remove.items) |key| {
         allocator.free(key);
@@ -887,7 +887,7 @@ pub fn runTelegramLoop(
                 msg.deinit(allocator);
                 continue;
             }
-            
+
             const worker_msg = TelegramWorkerMessage{
                 .sender = allocator.dupe(u8, msg.sender) catch {
                     log.warn("Failed to clone sender, skipping message", .{});
@@ -1091,6 +1091,12 @@ pub const SignalLoopState = struct {
             .stop_requested = Atomic(bool).init(false),
         };
     }
+
+    pub fn deinit(self: *SignalLoopState, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // No heap-allocated fields to free
+    }
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1223,6 +1229,12 @@ pub const MatrixLoopState = struct {
             .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
+    }
+
+    pub fn deinit(self: *MatrixLoopState, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // No heap-allocated fields to free
     }
 };
 
