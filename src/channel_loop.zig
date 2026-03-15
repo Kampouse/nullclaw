@@ -849,11 +849,13 @@ pub fn runTelegramLoop(
     loop_state.last_activity.store(util.timestampUnix(), .release);
 
     while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
+        log.debug("Telegram polling loop: calling pollUpdates", .{});
         const messages = tg_ptr.pollUpdates(allocator) catch |err| {
             log.warn("Telegram poll error: {}", .{err});
             loop_state.last_activity.store(util.timestampUnix(), .release);
             continue;
         };
+        log.debug("Telegram polling loop: pollUpdates returned {d} messages", .{messages.len});
 
         // Update activity after each poll (even if no messages)
         loop_state.last_activity.store(util.timestampUnix(), .release);
@@ -929,8 +931,10 @@ pub fn runTelegramLoop(
             }
 
             // Enqueue for worker pool processing
+            log.debug("Telegram polling loop: enqueuing message from sender={s}", .{worker_msg.sender});
             if (loop_state.worker_pool) |pool| {
                 pool.submit(worker_msg) catch |err| {
+                    log.err("Telegram polling loop: failed to enqueue message: {}", .{err});
                     log.err("Failed to enqueue message: {}", .{err});
                     worker_msg.deinit(allocator);
                 };
@@ -943,6 +947,7 @@ pub fn runTelegramLoop(
         if (messages.len > 0) {
             allocator.free(messages);
         }
+        log.debug("Telegram polling loop: iteration complete, waiting for next poll", .{});
 
         if (tg_ptr.persistableUpdateOffset()) |persistable_update_id| {
             persistTelegramUpdateOffsetIfAdvanced(

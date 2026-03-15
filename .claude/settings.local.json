@@ -61,7 +61,8 @@
       "Bash(./hello_world)",
       "Read(//Users/jean/.nullclaw/**)",
       "Read(//Users/jean/**)",
-      "Bash(./zig-out/bin/nullclaw)"
+      "Bash(./zig-out/bin/nullclaw)",
+      "Bash(zig build -Dtracy=false)"
     ]
   }
 }

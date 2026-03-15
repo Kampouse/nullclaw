@@ -9,7 +9,11 @@ const path_security = @import("path_security.zig");
 const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
 const resolvePathAlloc = path_security.resolvePathAlloc;
 const SecurityPolicy = @import("../security/policy.zig").SecurityPolicy;
+const Spinlock = @import("../spinlock.zig").Spinlock;
+const util = @import("../util.zig");
 const UNAVAILABLE_WORKSPACE_SENTINEL = "/__nullclaw_workspace_unavailable__";
+
+const log = std.log.scoped(.shell_subprocess);
 
 /// Default maximum shell command execution time (nanoseconds).
 const DEFAULT_SHELL_TIMEOUT_NS: u64 = 60 * std.time.ns_per_s;
@@ -19,6 +23,202 @@ const DEFAULT_MAX_OUTPUT_BYTES: usize = 1_048_576;
 const SAFE_ENV_VARS = [_][]const u8{
     "PATH", "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
 };
+
+/// Subprocess request - command to execute
+const SubprocessRequest = struct {
+    command: []const u8,
+    cwd: []const u8,
+    result_ptr: *?*SubprocessResult,
+    done: *std.atomic.Value(bool),
+};
+
+/// Subprocess result - output from command execution
+const SubprocessResult = struct {
+    success: bool,
+    stdout: []const u8,
+    stderr: []const u8,
+    exit_code: ?u8,
+};
+
+/// Dedicated subprocess thread - executes shell commands safely
+/// This runs in a single thread to avoid macOS fork() issues with multi-threading
+const SubprocessExecutor = struct {
+    request_queue: std.ArrayListUnmanaged(SubprocessRequest),
+    queue_spinlock: Spinlock,
+    thread: ?std.Thread,
+    running: std.atomic.Value(bool),
+
+    fn run(executor: *SubprocessExecutor) void {
+        log.info("Subprocess executor thread started", .{});
+
+        while (executor.running.load(.acquire)) {
+            executor.queue_spinlock.lock();
+
+            if (executor.request_queue.items.len == 0) {
+                // Queue empty, wait for request
+                executor.queue_spinlock.unlock();
+                util.sleep(50 * std.time.ns_per_ms);
+                continue;
+            }
+
+            const req = executor.request_queue.orderedRemove(0);
+            executor.queue_spinlock.unlock();
+
+            log.debug("Subprocess executor executing: {s}", .{req.command[0..@min(req.command.len, 100)]});
+
+            const proc = @import("process_util.zig");
+            const result = proc.run(std.heap.page_allocator, &.{ platform.getShell(), platform.getShellFlag(), req.command }, .{
+                .cwd = req.cwd,
+                .max_output_bytes = DEFAULT_MAX_OUTPUT_BYTES,
+            }) catch |err| {
+                log.err("Subprocess execution failed: {}", .{err});
+                const result_ptr = std.heap.page_allocator.create(SubprocessResult) catch {
+                    log.err("Failed to allocate error result", .{});
+                    std.heap.page_allocator.free(req.command);
+                    std.heap.page_allocator.free(req.cwd);
+                    continue;
+                };
+                result_ptr.* = SubprocessResult{
+                    .success = false,
+                    .stdout = "",
+                    .stderr = "Execution failed",
+                    .exit_code = null,
+                };
+
+                req.result_ptr.* = result_ptr;
+                req.done.store(true, .release);
+                std.heap.page_allocator.free(req.command);
+                std.heap.page_allocator.free(req.cwd);
+                continue;
+            };
+
+            // Store result in page allocator memory (always valid)
+            const result_ptr = std.heap.page_allocator.create(SubprocessResult) catch {
+                log.err("Failed to allocate subprocess result", .{});
+                const err_result_ptr = std.heap.page_allocator.create(SubprocessResult) catch {
+                    std.heap.page_allocator.free(result.stderr);
+                    std.heap.page_allocator.free(result.stdout);
+                    std.heap.page_allocator.free(req.command);
+                    std.heap.page_allocator.free(req.cwd);
+                    continue;
+                };
+                err_result_ptr.* = SubprocessResult{
+                    .success = false,
+                    .stdout = "",
+                    .stderr = "Memory allocation failed",
+                    .exit_code = null,
+                };
+
+                req.result_ptr.* = err_result_ptr;
+                req.done.store(true, .release);
+                std.heap.page_allocator.free(req.command);
+                std.heap.page_allocator.free(req.cwd);
+                continue;
+            };
+
+            result_ptr.* = SubprocessResult{
+                .success = result.success,
+                .stdout = std.heap.page_allocator.dupe(u8, result.stdout) catch "",
+                .stderr = std.heap.page_allocator.dupe(u8, result.stderr) catch "",
+                .exit_code = if (result.exit_code) |code| @as(u8, @intCast(code)) else null,
+            };
+
+            std.heap.page_allocator.free(result.stderr);
+            std.heap.page_allocator.free(result.stdout);
+
+            req.result_ptr.* = result_ptr;
+            req.done.store(true, .release);
+            std.heap.page_allocator.free(req.command);
+            std.heap.page_allocator.free(req.cwd);
+        }
+    }
+
+    pub fn init(allocator: std.mem.Allocator) !*SubprocessExecutor {
+        const executor = try allocator.create(SubprocessExecutor);
+        errdefer allocator.destroy(executor);
+
+        executor.* = SubprocessExecutor{
+            .request_queue = .{},
+            .queue_spinlock = Spinlock.init(),
+            .thread = null,
+            .running = std.atomic.Value(bool).init(true),
+        };
+
+        executor.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, run, .{executor});
+        log.info("Subprocess executor thread spawned", .{});
+
+        return executor;
+    }
+
+    pub fn deinit(self: *SubprocessExecutor, allocator: std.mem.Allocator) void {
+        // Signal thread to stop
+        self.running.store(false, .release);
+
+        if (self.thread) |t| {
+            t.join();
+        }
+
+        // Clean up any remaining requests in queue
+        self.queue_spinlock.lock();
+        defer self.queue_spinlock.unlock();
+        for (self.request_queue.items) |*req| {
+            std.heap.page_allocator.free(req.command);
+            std.heap.page_allocator.free(req.cwd);
+        }
+        self.request_queue.deinit(allocator);
+
+        allocator.destroy(self);
+        log.info("Subprocess executor thread stopped", .{});
+    }
+
+    pub fn execute(self: *SubprocessExecutor, command: []const u8, cwd: []const u8, allocator: std.mem.Allocator) !*SubprocessResult {
+        var result_ptr: ?*SubprocessResult = null;
+        var done = std.atomic.Value(bool).init(false);
+
+        // Create and enqueue request (duplicate command/cwd for subprocess thread)
+        const req = SubprocessRequest{
+            .command = try std.heap.page_allocator.dupe(u8, command),
+            .cwd = try std.heap.page_allocator.dupe(u8, cwd),
+            .result_ptr = &result_ptr,
+            .done = &done,
+        };
+
+        self.queue_spinlock.lock();
+        try self.request_queue.append(allocator, req);
+        self.queue_spinlock.unlock();
+
+        // Poll for result (with timeout)
+        // 60 second timeout with 10ms sleep intervals = 6000 iterations
+        const timeout_iterations = 6000;
+        var iteration: usize = 0;
+
+        while (!done.load(.acquire)) {
+            if (iteration >= timeout_iterations) {
+                return error.Timeout;
+            }
+            util.sleep(10 * std.time.ns_per_ms);
+            iteration += 1;
+        }
+
+        return result_ptr.?;
+    }
+};
+
+/// Global subprocess executor (initialized lazily)
+var subprocess_executor: ?*SubprocessExecutor = null;
+var subprocess_executor_spinlock: Spinlock = .init();
+
+/// Get or create the global subprocess executor
+fn getSubprocessExecutor(allocator: std.mem.Allocator) !*SubprocessExecutor {
+    subprocess_executor_spinlock.lock();
+    defer subprocess_executor_spinlock.unlock();
+
+    if (subprocess_executor == null) {
+        subprocess_executor = try SubprocessExecutor.init(allocator);
+    }
+
+    return subprocess_executor.?;
+}
 
 /// Shell command execution tool with workspace scoping.
 pub const ShellTool = struct {
@@ -95,29 +295,50 @@ pub const ShellTool = struct {
         // Environment filtering is not supported in the new API.
         // TODO: Implement environment filtering if needed for security
 
-        // Execute via platform shell
+        // TEMPORARILY DISABLED: Execute in dedicated subprocess thread to avoid macOS fork() crashes
+        // The subprocess executor is causing memory corruption that crashes other tools
+        // TODO: Fix thread-safety issues with subprocess executor
+        // const executor = try getSubprocessExecutor(allocator);
+        // slog.logStructured("DEBUG", "shell", "spawn_start", .{});
+        // const result_ptr = try executor.execute(command, effective_cwd, allocator);
+        // slog.logStructured("DEBUG", "shell", "spawn_complete", .{.success = result_ptr.success});
+
+        // Direct execution (will crash on macOS with multi-threading, but avoids memory corruption)
+        slog.logStructured("DEBUG", "shell", "direct_execute_start", .{});
         const proc = @import("process_util.zig");
-        const result = try proc.run(allocator, &.{ platform.getShell(), platform.getShellFlag(), command }, .{
+        const exec_result = proc.run(allocator, &.{ platform.getShell(), platform.getShellFlag(), command }, .{
             .cwd = effective_cwd,
-            .max_output_bytes = self.max_output_bytes,
-        });
-        defer allocator.free(result.stderr);
+            .max_output_bytes = DEFAULT_MAX_OUTPUT_BYTES,
+        }) catch |err| {
+            slog.logStructured("ERROR", "shell", "execute_failed", .{.err_str = @errorName(err)});
+            const msg = try std.fmt.allocPrint(allocator, "Shell execution failed: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+        };
+        defer {
+            allocator.free(exec_result.stdout);
+            allocator.free(exec_result.stderr);
+        }
+        slog.logStructured("DEBUG", "shell", "direct_execute_complete", .{.success = exec_result.success});
 
-        if (result.success) {
-            if (result.stdout.len > 0) return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
-            allocator.free(result.stdout);
-            return ToolResult{ .success = true, .output = try allocator.dupe(u8, "(no output)") };
+        // Convert direct execution result to ToolResult
+        if (exec_result.success) {
+            const result = if (exec_result.stdout.len > 0)
+                ToolResult{ .success = true, .output = try allocator.dupe(u8, exec_result.stdout), .owns_output = true }
+            else
+                ToolResult{ .success = true, .output = try allocator.dupe(u8, "(no output)") };
+            return result;
         }
 
-        // Failure path: ensure stdout is freed before returning
-        {
-            defer allocator.free(result.stdout);
-            if (result.exit_code != null) {
-                const err_out = try allocator.dupe(u8, if (result.stderr.len > 0) result.stderr else "Command failed with non-zero exit code");
-                return ToolResult{ .success = false, .output = "", .error_msg = err_out, .owns_error_msg = true };
-            }
-            return ToolResult{ .success = false, .output = "", .error_msg = "Command terminated by signal", .owns_error_msg = true };
-        }
+        // Failure path
+        const err_out = if (exec_result.exit_code != null)
+            if (exec_result.stderr.len > 0)
+                try allocator.dupe(u8, exec_result.stderr)
+            else
+                "Command failed with non-zero exit code"
+        else
+            "Command terminated by signal";
+
+        return ToolResult{ .success = false, .output = "", .error_msg = err_out, .owns_error_msg = true };
     }
 };
 

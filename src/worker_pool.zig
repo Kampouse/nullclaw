@@ -90,11 +90,7 @@ pub fn MessageQueue(comptime T: type) type {
         }
 
         /// Deinit with message cleanup - drains queue and calls deinit on each message
-        pub fn deinitWithMessageCleanup(
-            self: *Self, 
-            allocator: std.mem.Allocator, 
-            comptime deinitFn: fn (*const T, std.mem.Allocator) void
-        ) void {
+        pub fn deinitWithMessageCleanup(self: *Self, allocator: std.mem.Allocator, comptime deinitFn: fn (*const T, std.mem.Allocator) void) void {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -210,7 +206,7 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             id: usize,
 
             fn run(worker: *Worker) void {
-                log.debug("Worker {} started, pool ptr: 0x{x}", .{worker.id, @intFromPtr(worker.pool)});
+                log.debug("Worker {} started, pool ptr: 0x{x}", .{ worker.id, @intFromPtr(worker.pool) });
 
                 while (true) {
                     log.debug("Worker {} waiting for message...", .{worker.id});
@@ -347,7 +343,7 @@ test "WorkerPool - parallel processing" {
 
     var processed: usize = 0;
     var mutex: Spinlock = Spinlock.init();
-    
+
     const handler = TestHandler{
         .processed = &processed,
         .mutex = &mutex,

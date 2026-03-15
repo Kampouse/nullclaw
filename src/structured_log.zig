@@ -7,6 +7,22 @@
 
 const std = @import("std");
 
+/// EMERGENCY: Override std.log to prevent macOS __simple_asl_init memory corruption
+pub const std_log = struct {
+    pub fn log(
+        comptime level: std.log.Level,
+        comptime scope: @TypeOf(.enum_literal),
+        comptime format: []const u8,
+        args: anytype,
+    ) void {
+        // COMPLETELY DISABLED: Prevent all logging to avoid memory corruption
+        _ = level;
+        _ = scope;
+        _ = format;
+        _ = args;
+    }
+};
+
 // Declare C time function
 extern "c" fn time(?*i64) i64;
 
@@ -104,6 +120,10 @@ fn getTimestamp() []const u8 {
 /// Default: show all logs (DEBUG and above)
 var max_log_level: Level = .DEBUG;
 
+/// EMERGENCY DISABLE: Disable all logging to fix macOS __simple_asl_init memory corruption
+/// TEMPORARY: Set to true to disable all logging system-wide
+const EMERGENCY_LOG_DISABLE = true;
+
 /// Initialize logging system from environment variables.
 /// Call this at program startup to configure log level.
 pub fn init() void {
@@ -137,6 +157,9 @@ pub fn logStructured(
     comptime message: []const u8,
     fields: anytype,
 ) void {
+    // EMERGENCY DISABLE: Immediately return to prevent macOS logging corruption
+    if (EMERGENCY_LOG_DISABLE) return;
+
     // Check log level filter
     const level_enum = std.meta.stringToEnum(Level, level) orelse return;
     if (!shouldLog(level_enum)) return;

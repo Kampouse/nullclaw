@@ -105,9 +105,18 @@ pub const ChannelManager = struct {
 
     fn destroyPollingState(self: *ChannelManager, state: PollingState) void {
         switch (state) {
-            .telegram => |ls| self.allocator.destroy(ls),
-            .signal => |ls| self.allocator.destroy(ls),
-            .matrix => |ls| self.allocator.destroy(ls),
+            .telegram => |ls| {
+                ls.deinit(self.allocator);
+                self.allocator.destroy(ls);
+            },
+            .signal => |ls| {
+                ls.deinit(self.allocator);
+                self.allocator.destroy(ls);
+            },
+            .matrix => |ls| {
+                ls.deinit(self.allocator);
+                self.allocator.destroy(ls);
+            },
         }
     }
 
