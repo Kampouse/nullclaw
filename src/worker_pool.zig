@@ -13,6 +13,7 @@
 const std = @import("std");
 const Atomic = @import("portable_atomic.zig").Atomic;
 const Spinlock = @import("spinlock.zig").Spinlock;
+const util = @import("util.zig");
 
 const log = std.log.scoped(.worker_pool);
 
@@ -36,9 +37,10 @@ pub fn MessageQueue(comptime T: type) type {
             if (self.closed.load(.acquire)) return error.QueueClosed;
 
             try self.items.append(allocator, item);
+            log.debug("Queue: enqueued item, queue_len={}", .{self.items.items.len});
         }
 
-        /// Dequeue an item (polling with spin wait)
+        /// Dequeue an item (polling with yield)
         /// Returns null if queue is closed and empty
         pub fn dequeue(self: *Self) ?T {
             while (!self.closed.load(.acquire)) {
@@ -46,15 +48,14 @@ pub fn MessageQueue(comptime T: type) type {
                 if (self.items.items.len > 0) {
                     const item = self.items.orderedRemove(0);
                     self.mutex.unlock();
+                    log.debug("Queue: dequeued item, remaining_len={}", .{self.items.items.len});
                     return item;
                 }
                 self.mutex.unlock();
 
-                // Spin wait with hint to reduce CPU usage
-                var i: usize = 0;
-                while (i < 1000) : (i += 1) {
-                    std.atomic.spinLoopHint();
-                }
+                // Yield CPU to avoid contention when queue is empty
+                // Uses util.sleep (C nanosleep) for thread-safe sleeping without I/O context
+                // util.sleep(10_000); // 10 microseconds
             }
 
             // Queue closed, return any remaining items
@@ -62,8 +63,10 @@ pub fn MessageQueue(comptime T: type) type {
             defer self.mutex.unlock();
 
             if (self.items.items.len > 0) {
+                log.debug("Queue: dequeued item from closed queue, remaining_len={}", .{self.items.items.len - 1});
                 return self.items.orderedRemove(0);
             }
+            log.debug("Queue: queue closed and empty, returning null", .{});
             return null;
         }
 
@@ -295,7 +298,9 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
 
         /// Submit a message for processing (non-blocking)
         pub fn submit(self: *Self, msg: Message) !void {
+            log.debug("WorkerPool: submitting message to queue", .{});
             try self.queue.enqueue(self.allocator, msg);
+            log.debug("WorkerPool: message submitted successfully", .{});
         }
 
         /// Get pending message count (approximate)

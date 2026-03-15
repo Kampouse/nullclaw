@@ -120,9 +120,8 @@ fn getTimestamp() []const u8 {
 /// Default: show all logs (DEBUG and above)
 var max_log_level: Level = .DEBUG;
 
-/// EMERGENCY DISABLE: Disable all logging to fix macOS __simple_asl_init memory corruption
-/// TEMPORARY: Set to true to disable all logging system-wide
-const EMERGENCY_LOG_DISABLE = true;
+/// Enable logging system-wide
+const EMERGENCY_LOG_DISABLE = false;
 
 /// Initialize logging system from environment variables.
 /// Call this at program startup to configure log level.
@@ -400,7 +399,7 @@ pub fn err(comptime scope: []const u8, comptime message: []const u8, fields: any
 const testing = std.testing;
 
 test "logStructured outputs valid JSON" {
-    debug("test_module", "test_message", .{.test_field = "test_value"});
+    debug("test_module", "test_message", .{ .test_field = "test_value" });
 }
 
 test "logStructured with no fields" {
@@ -420,10 +419,10 @@ test "log level filtering - INFO level shows INFO and above" {
     max_log_level = .INFO;
 
     // DEBUG should not appear (filtered out)
-    debug("test", "debug_msg", .{.field = "should_not_appear"});
+    debug("test", "debug_msg", .{ .field = "should_not_appear" });
 
     // INFO should appear
-    info("test", "info_msg", .{.field = "should_appear"});
+    info("test", "info_msg", .{ .field = "should_appear" });
 
     // WARN should appear
     warn("test", "warn_msg", .{});
@@ -445,7 +444,7 @@ test "log level filtering - ERROR level shows only ERROR" {
     warn("test", "warn_msg", .{});
 
     // ERROR should appear
-    err("test", "error_msg", .{.field = "only_error"});
+    err("test", "error_msg", .{ .field = "only_error" });
 
     // Reset to DEBUG for other tests
     max_log_level = .DEBUG;
