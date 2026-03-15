@@ -784,10 +784,12 @@ pub const Agent = struct {
                     .role = .assistant,
                     .content = history_copy,
                 });
+                slog.debug("agent", "turn_cache_hit", .{});
                 return cached_response;
             }
         }
 
+        slog.debug("agent", "turn_no_cache_proceeding", .{});
         // Record agent event
         const start_event = ObserverEvent{ .llm_request = .{
             .provider = self.provider.getName(),
@@ -803,6 +805,7 @@ pub const Agent = struct {
         var iteration: u32 = 0;
         var forced_follow_through_count: u32 = 0;
         while (iteration < self.max_tool_iterations) : (iteration += 1) {
+            slog.debug("agent", "turn_loop_start", .{ .iteration = iteration + 1, .max_iterations = self.max_tool_iterations });
             _ = iter_arena.reset(.retain_capacity);
             const arena = iter_arena.allocator();
 
@@ -816,6 +819,7 @@ pub const Agent = struct {
             // Call provider: streaming (no retries, no native tools) or blocking with retry
             var response: ChatResponse = undefined;
             var response_attempt: u32 = 1;
+            slog.debug("agent", "turn_calling_provider", .{ .iteration = iteration + 1, .streaming = is_streaming, .native_tools = native_tools_enabled });
             if (is_streaming) {
                 slog.logStructured("DEBUG", "agent", "llm_call_start", .{});
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, true);
@@ -835,7 +839,7 @@ pub const Agent = struct {
                     self.stream_callback.?,
                     self.stream_ctx.?,
                 ) catch |err| {
-                    slog.logStructured("ERROR", "agent", "llm_error", .{.err_msg = err});
+                    slog.logStructured("ERROR", "agent", "llm_error", .{ .err_msg = err });
                     const fail_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
@@ -855,6 +859,7 @@ pub const Agent = struct {
                     .model = stream_result.model,
                 };
                 slog.debug("agent", "turn_streaming_response_constructed", .{});
+                slog.debug("agent", "turn_llm_call_complete", .{ .iteration = iteration + 1, .content_len = if (response.content) |c| c.len else 0 });
             } else {
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, false);
                 response = self.provider.chat(
@@ -997,13 +1002,13 @@ pub const Agent = struct {
                 if (free_assistant_history and assistant_history_content.len > 0) self.allocator.free(assistant_history_content);
             }
 
-            slog.debug("agent", "turn_parsing_tool_calls", .{.use_native = use_native});
+            slog.debug("agent", "turn_parsing_tool_calls", .{ .use_native = use_native });
 
             if (use_native) {
                 // Provider returned structured tool_calls — convert them
                 parsed_calls = try dispatcher.parseStructuredToolCalls(self.allocator, response.tool_calls);
                 free_parsed_calls = true;
-                slog.debug("agent", "turn_parsed_structured_tool_calls", .{.count = parsed_calls.len});
+                slog.debug("agent", "turn_parsed_structured_tool_calls", .{ .count = parsed_calls.len });
 
                 if (parsed_calls.len == 0) {
                     // Structured calls were empty (e.g. all had empty names) — try XML fallback
@@ -1034,10 +1039,10 @@ pub const Agent = struct {
                 free_parsed_text = true;
                 // For XML path, store the raw response text as history
                 assistant_history_content = response_text;
-                slog.debug("agent", "turn_parsed_xml_tool_calls", .{.count = parsed_calls.len});
+                slog.debug("agent", "turn_parsed_xml_tool_calls", .{ .count = parsed_calls.len });
             }
 
-            slog.debug("agent", "turn_total_parsed_calls", .{.count = parsed_calls.len});
+            slog.debug("agent", "turn_total_parsed_calls", .{ .count = parsed_calls.len });
 
             // Determine display text
             // IMPORTANT: When there are tool calls, NEVER show raw response_text to user
@@ -1185,10 +1190,10 @@ pub const Agent = struct {
                 log.info("tool-call batch session=0x{x} count={d}", .{ session_hash, parsed_calls.len });
             }
 
-            slog.debug("agent", "turn_entering_tool_execution_loop", .{.parsed_calls_count = parsed_calls.len});
+            slog.debug("agent", "turn_entering_tool_execution_loop", .{ .parsed_calls_count = parsed_calls.len });
 
             for (parsed_calls, 0..) |call, idx| {
-                slog.logStructured("DEBUG", "agent", "tool_iteration", .{.index = idx, .tool = call.name});
+                slog.logStructured("DEBUG", "agent", "tool_iteration", .{ .index = idx, .tool = call.name });
 
                 if (self.log_tool_calls) {
                     log.info(
@@ -1214,10 +1219,10 @@ pub const Agent = struct {
                         .tool_call_id = call.tool_call_id,
                     };
                 } else blk: {
-                    slog.debug("agent", "turn_calling_execute_tool", .{.tool = call.name});
+                    slog.debug("agent", "turn_calling_execute_tool", .{ .tool = call.name });
                     break :blk self.executeTool(arena, call);
                 };
-                slog.debug("agent", "turn_execute_tool_returned", .{.tool = call.name});
+                slog.debug("agent", "turn_execute_tool_returned", .{ .tool = call.name });
                 const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
 
                 if (self.log_tool_calls) {
@@ -1239,12 +1244,12 @@ pub const Agent = struct {
             }
 
             // Format tool results, scrub credentials, add reflection prompt, and add to history
-            std.debug.print("[DEBUG] Formatting tool results for {d} tools\n", .{results_buf.items.len});
+            slog.debug("agent", "turn_formatting_tool_results", .{ .count = results_buf.items.len });
             const formatted_results = try dispatcher.formatToolResults(arena, results_buf.items);
-            std.debug.print("[DEBUG] Tool results formatted, length={d}\n", .{formatted_results.len});
+            slog.debug("agent", "turn_tool_results_formatted", .{ .len = formatted_results.len });
 
             const scrubbed_results = try providers.scrubToolOutput(arena, formatted_results);
-            std.debug.print("[DEBUG] Tool results scrubbed, length={d}\n", .{scrubbed_results.len});
+            slog.debug("agent", "turn_tool_results_scrubbed", .{ .len = scrubbed_results.len });
 
             const with_reflection = try std.fmt.allocPrint(
                 arena,
@@ -1253,19 +1258,22 @@ pub const Agent = struct {
                     "If a tool failed due to a transient issue (timeout/network/rate-limit), proactively retry up to 2 times with adjusted parameters before giving up.",
                 .{scrubbed_results},
             );
-            std.debug.print("[DEBUG] Reflection prompt created, appending to history\n", .{});
+            slog.debug("agent", "turn_reflection_prompt_created", .{});
 
             try self.history.append(self.allocator, .{
                 .role = .user,
                 .content = try self.allocator.dupe(u8, with_reflection),
             });
-            std.debug.print("[DEBUG] History append complete, trimming history\n", .{});
+            slog.debug("agent", "turn_history_appended_trimming", .{});
 
             self.trimHistory();
 
             // Free provider response fields now that all borrows are consumed.
             self.freeResponseFields(&response);
+            slog.debug("agent", "turn_tools_processed_continuing_loop", .{});
         }
+
+        slog.debug("agent", "turn_loop_exhausted", .{ .max_iterations = self.max_tool_iterations });
 
         // ── Graceful degradation: tool iterations exhausted ──────────
         // Instead of returning an error, ask the LLM to summarize what it
@@ -1283,14 +1291,18 @@ pub const Agent = struct {
         });
 
         // Build messages for the summary call
+        slog.debug("agent", "turn_building_summary_messages", .{});
         const summary_messages = self.buildMessageSlice() catch {
+            slog.debug("agent", "turn_summary_messages_failed", .{});
             const fallback = try std.fmt.allocPrint(self.allocator, "[Tool iteration limit: {d}/{d}] Could not produce a summary. Try /new and repeat your request.", .{ self.max_tool_iterations, self.max_tool_iterations });
             const complete_event = ObserverEvent{ .turn_complete = {} };
             self.observer.recordEvent(&complete_event);
+            slog.debug("agent", "turn_returning_fallback", .{});
             return fallback;
         };
         defer self.allocator.free(summary_messages);
 
+        slog.debug("agent", "turn_calling_summary_llm", .{});
         self.logLlmRequest(self.max_tool_iterations + 1, 1, summary_messages, false, false);
         var summary_response = self.provider.chat(
             self.allocator,
@@ -1418,7 +1430,7 @@ pub const Agent = struct {
     }
 
     fn executeTool(self: *Agent, tool_allocator: std.mem.Allocator, call: ParsedToolCall) ToolExecutionResult {
-        slog.logStructured("DEBUG", "agent", "tool_execute_start", .{.tool = call.name});
+        slog.logStructured("DEBUG", "agent", "tool_execute_start", .{ .tool = call.name });
 
         // Policy gate: check autonomy and rate limit
         if (self.policy) |pol| {
@@ -1442,7 +1454,7 @@ pub const Agent = struct {
         }
 
         const trimmed_call_name = std.mem.trim(u8, call.name, " \t\r\n");
-        slog.debug("agent", "execute_tool_trimmed_name", .{.trimmed_name = trimmed_call_name});
+        slog.debug("agent", "execute_tool_trimmed_name", .{ .trimmed_name = trimmed_call_name });
 
         for (self.tools) |t| {
             if (std.ascii.eqlIgnoreCase(t.name(), trimmed_call_name)) {
@@ -1490,9 +1502,9 @@ pub const Agent = struct {
                     }
                 }
 
-                slog.debug("agent", "execute_tool_calling_tool_execute", .{});
+                slog.debug("agent", "execute_tool_calling_tool_execute", .{ .tool = call.name });
                 const result = t.execute(tool_allocator, args, self.io) catch |err| {
-                    slog.debug("agent", "execute_tool_failed", .{.error_msg = @errorName(err)});
+                    slog.debug("agent", "execute_tool_failed", .{ .tool = call.name, .error_msg = @errorName(err) });
                     return .{
                         .name = call.name,
                         .output = @errorName(err),
@@ -1500,32 +1512,23 @@ pub const Agent = struct {
                         .tool_call_id = call.tool_call_id,
                     };
                 };
-                slog.debug("agent", "execute_tool_success", .{});
-                const output_src = if (result.success) result.output else (result.error_msg orelse result.output);
-                const success = result.success;
+                slog.debug("agent", "execute_tool_success", .{ .tool = call.name, .output_len = result.output.len });
+                // Arena allocator is used - no need to dupe or deinit.
+                // Arena memory is valid until the arena is destroyed at end of turn(),
+                // and arena doesn't support individual free() calls.
+                const output = if (result.success) result.output else (result.error_msg orelse result.output);
 
-                // Duplicate output before deinit to avoid use-after-free
-                const output = tool_allocator.dupe(u8, output_src) catch {
-                    result.deinit(tool_allocator);
-                    return .{
-                        .name = call.name,
-                        .output = "Memory allocation failed",
-                        .success = false,
-                        .tool_call_id = call.tool_call_id,
-                    };
-                };
-                result.deinit(tool_allocator);
-
+                slog.debug("agent", "execute_tool_returning_result", .{ .tool = call.name, .success = result.success });
                 return .{
                     .name = call.name,
                     .output = output,
-                    .success = success,
+                    .success = result.success,
                     .tool_call_id = call.tool_call_id,
                 };
             }
         }
 
-        slog.debug("agent", "execute_tool_not_found", .{});
+        slog.debug("agent", "execute_tool_not_found", .{ .tool = call.name });
         return .{
             .name = call.name,
             .output = "Unknown tool",

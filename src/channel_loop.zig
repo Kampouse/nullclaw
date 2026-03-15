@@ -177,14 +177,26 @@ const TelegramWorkerHandler = struct {
     allocator: std.mem.Allocator,
 
     pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
+        log.debug("Handler processing message from sender: {s}", .{msg.sender});
+
+        // Save sender id for logging after deinit (avoid use-after-free)
+        var sender_buf: [64]u8 = undefined;
+        const sender_id = std.fmt.bufPrint(&sender_buf, "{s}", .{msg.sender}) catch "unknown";
+
         // Ensure message is always cleaned up, even if validation fails
-        defer msg.deinit(self.allocator);
+        defer {
+            log.debug("Handler cleaning up message from sender: {s}", .{sender_id});
+            msg.deinit(self.allocator);
+            log.debug("Handler message cleanup complete for sender: {s}", .{sender_id});
+        }
 
         // Safety check: validate required pointers
         if (msg.account_id.len == 0 or msg.sender.len == 0) {
             log.warn("Skipping message with empty account_id or sender in worker", .{});
             return;
         }
+
+        log.debug("Handler validated message, proceeding with processing for sender: {s}", .{msg.sender});
 
         const reply_to_id: ?i64 = if (msg.is_group or self.tg_ptr.reply_in_private) msg.message_id else null;
 
@@ -204,8 +216,9 @@ const TelegramWorkerHandler = struct {
             break :blk route.session_key;
         };
 
-        // Hybrid strategy: only lock for conversational messages
-        // Independent queries can run in parallel (no session lock)
+        // Hybrid strategy:
+        // - Conversational messages: serialized (maintain chat context)
+        // - Independent messages (shell commands, etc.): parallel processing
         const needs_lock = msg.message_class == .conversational;
 
         var session_lock: ?*Spinlock = null;
@@ -238,6 +251,9 @@ const TelegramWorkerHandler = struct {
         self.tg_ptr.sendAssistantMessageWithReply(msg.sender, msg.sender_id, msg.is_group, reply, reply_to_id) catch |err| {
             log.warn("Send error: {}", .{err});
         };
+
+        log.debug("Handler completed processing message from sender: {s}", .{msg.sender});
+        log.debug("Handler about to release session lock for sender: {s}", .{msg.sender});
     }
 };
 
@@ -523,7 +539,7 @@ pub const TelegramLoopState = struct {
     /// Session locks for per-session serialization
     session_locks: ?*worker_pool_mod.SessionLockManager = null,
     /// Config for worker count (default: 4)
-    worker_count: usize = 4,
+    worker_count: usize = 16, // Increased from 4 to handle more concurrent requests
     /// Per-user message cache for deduplication (prevents command spam)
     message_cache: std.StringHashMapUnmanaged(MessageCacheEntry) = .empty,
     /// Spinlock for message cache (lightweight, no I/O context needed)
@@ -836,13 +852,51 @@ pub fn runTelegramLoop(
         loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
-            // Handle /start command immediately (don't queue)
+            // Handle native commands immediately (don't queue)
             const trimmed = std.mem.trim(u8, msg.content, " \t\r\n");
+
+            // /start command
             if (std.mem.eql(u8, trimmed, "/start")) {
                 var greeting_buf: [512]u8 = undefined;
                 const name = msg.first_name orelse msg.id;
                 const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
                 tg_ptr.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // /help command (immediate response, don't queue)
+            if (std.mem.eql(u8, trimmed, "/help")) {
+                const help_text =
+                    \\Available Commands:
+                    \\  /start - Introduction to NullClaw
+                    \\  /help  - Show this help message
+                    \\  /new   - Start a fresh session
+                    \\  /reset - Reset current session
+                    \\
+                    \\Just send messages to chat! I can help with:
+                    \\  • Code questions (Zig, Rust, etc.)
+                    \\  • Shell commands (use /exec or agent tools)
+                    \\  • File operations
+                    \\  • And much more!
+                ;
+                tg_ptr.sendMessageWithReply(msg.sender, help_text, msg.message_id) catch |err| log.err("failed to send /help reply: {}", .{err});
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // /new command (start fresh session)
+            // Note: We don't have a direct "delete session" method, so we just inform the user
+            // to send a message which will create a new session automatically
+            if (std.mem.eql(u8, trimmed, "/new")) {
+                tg_ptr.sendMessage(msg.sender, "Starting a fresh session... Send any message to begin!") catch |err| log.err("failed to send /new reply: {}", .{err});
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // /reset command (reset current session - same as /new for now)
+            if (std.mem.eql(u8, trimmed, "/reset")) {
+                tg_ptr.sendMessage(msg.sender, "Session reset! Send any message to start fresh.") catch |err| log.err("failed to send /reset reply: {}", .{err});
                 msg.deinit(allocator);
                 continue;
             }
@@ -864,7 +918,7 @@ pub fn runTelegramLoop(
                 msg.deinit(allocator);
                 continue;
             }
-            
+
             const worker_msg = TelegramWorkerMessage{
                 .sender = allocator.dupe(u8, msg.sender) catch {
                     log.warn("Failed to clone sender, skipping message", .{});
@@ -908,7 +962,13 @@ pub fn runTelegramLoop(
             // Enqueue for worker pool processing
             if (loop_state.worker_pool) |pool| {
                 pool.submit(worker_msg) catch |err| {
-                    log.err("Failed to enqueue message: {}", .{err});
+                    if (err == error.QueueFull) {
+                        log.warn("Worker pool queue full, message rejected", .{});
+                        // Send error reply to user (ignore errors since we're already in error path)
+                        tg_ptr.sendMessage(worker_msg.sender, "Service temporarily unavailable (too many requests). Please try again.") catch {};
+                    } else {
+                        log.err("Failed to enqueue message: {}", .{err});
+                    }
                     worker_msg.deinit(allocator);
                 };
             }
@@ -1068,6 +1128,12 @@ pub const SignalLoopState = struct {
             .stop_requested = Atomic(bool).init(false),
         };
     }
+
+    pub fn deinit(self: *SignalLoopState, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // No resources to clean up
+    }
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1200,6 +1266,12 @@ pub const MatrixLoopState = struct {
             .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
+    }
+
+    pub fn deinit(self: *MatrixLoopState, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // No resources to clean up
     }
 };
 

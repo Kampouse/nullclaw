@@ -27,6 +27,7 @@ pub fn MessageQueue(comptime T: type) type {
         items: std.ArrayListUnmanaged(T) = .empty,
         mutex: Spinlock = Spinlock.init(),
         closed: Atomic(bool) = Atomic(bool).init(false),
+        max_queue_size: usize = 1000, // Prevent memory exhaustion
 
         /// Enqueue an item (non-blocking)
         pub fn enqueue(self: *Self, allocator: std.mem.Allocator, item: T) !void {
@@ -34,6 +35,12 @@ pub fn MessageQueue(comptime T: type) type {
             defer self.mutex.unlock();
 
             if (self.closed.load(.acquire)) return error.QueueClosed;
+
+            // Check queue limit to prevent memory exhaustion
+            if (self.items.items.len >= self.max_queue_size) {
+                // DISABLED: log.warn("Queue full ({} items), rejecting message", .{self.items.items.len});
+                return error.QueueFull;
+            }
 
             try self.items.append(allocator, item);
         }
@@ -46,6 +53,7 @@ pub fn MessageQueue(comptime T: type) type {
                 if (self.items.items.len > 0) {
                     const item = self.items.orderedRemove(0);
                     self.mutex.unlock();
+                    // DISABLED: log.debug("Dequeued item, remaining: {}", .{self.items.items.len});
                     return item;
                 }
                 self.mutex.unlock();
@@ -59,6 +67,7 @@ pub fn MessageQueue(comptime T: type) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
+            // DISABLED: log.debug("Queue closed, checking for remaining items: {}", .{self.items.items.len});
             if (self.items.items.len > 0) {
                 return self.items.orderedRemove(0);
             }
@@ -164,22 +173,32 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             id: usize,
 
             fn run(worker: *Worker) void {
-                log.debug("Worker {} started, pool ptr: 0x{x}", .{worker.id, @intFromPtr(worker.pool)});
+                // DISABLED: Worker pool logging to avoid macOS __simple_asl_init memory corruption
+                // log.debug("Worker {} started, pool ptr: 0x{x}", .{worker.id, @intFromPtr(worker.pool)});
+                var messages_processed: usize = 0;
 
                 while (true) {
-                    log.debug("Worker {} waiting for message...", .{worker.id});
+                    // log.debug("Worker {} waiting for message...", .{worker.id});
 
                     const msg = worker.pool.queue.dequeue() orelse {
                         // Queue closed and empty
-                        log.debug("Worker {} exiting (queue closed)", .{worker.id});
+                        // log.info("Worker {} exiting (processed {} messages)", .{worker.id, messages_processed});
                         return;
                     };
-                    log.debug("Worker {} received message, processing...", .{worker.id});
+                    // log.debug("Worker {} received message, processing...", .{worker.id});
 
+                    // Process message without error logging to avoid corruption
                     worker.pool.handler.process(msg) catch |err| {
-                        log.err("Worker {} error: {}", .{ worker.id, err });
+                        // DISABLED: log.err("Worker {} error processing message: {}", .{worker.id, err});
+                        _ = err; // Suppress unused variable warning
+                        // Continue processing other messages even if this one failed
                     };
-                    log.debug("Worker {} finished processing message", .{worker.id});
+
+                    messages_processed += 1;
+                    // log.debug("Worker {} finished processing message (total: {})", .{worker.id, messages_processed});
+
+                    // Add explicit yield to prevent tight loops
+                    std.atomic.spinLoopHint();
                 }
             }
         };
@@ -216,11 +235,12 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             }
 
             // Spawn worker threads with larger stack size for agent processing
+            // Increased from 2MB to 8MB to handle large LLM responses and tool calls
             for (self.workers) |*worker| {
-                worker.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, Worker.run, .{worker});
+                worker.thread = try std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, Worker.run, .{worker});
             }
 
-            log.info("Worker pool started with {} workers", .{self.workers.len});
+            // DISABLED: log.info("Worker pool started with {} workers", .{self.workers.len});
         }
 
         pub fn deinit(self: *Self) void {
@@ -236,17 +256,26 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
 
             self.queue.deinit(self.allocator);
             self.allocator.free(self.workers);
-            log.info("Worker pool stopped", .{});
+            // DISABLED: log.info("Worker pool stopped", .{});
         }
 
         /// Submit a message for processing (non-blocking)
         pub fn submit(self: *Self, msg: Message) !void {
             try self.queue.enqueue(self.allocator, msg);
+            // DISABLED: const queue_len = self.queue.len();
+            // DISABLED: if (queue_len > 10) {
+            // DISABLED:     log.warn("Worker pool backlog: {} messages waiting", .{queue_len});
+            // DISABLED: }
         }
 
         /// Get pending message count (approximate)
         pub fn pending(self: *Self) usize {
             return self.queue.len();
+        }
+
+        /// Get worker count
+        pub fn workerCount(self: *Self) usize {
+            return self.workers.len;
         }
     };
 }
@@ -302,7 +331,7 @@ test "WorkerPool - parallel processing" {
 
     var processed: usize = 0;
     var mutex: Spinlock = Spinlock.init();
-    
+
     const handler = TestHandler{
         .processed = &processed,
         .mutex = &mutex,
