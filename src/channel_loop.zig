@@ -178,7 +178,8 @@ const TelegramWorkerHandler = struct {
 
     pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) void {
         // Ensure message is always cleaned up, even if validation fails
-        defer msg.deinit(self.allocator);
+        // Use page_allocator since message was cloned with it (shared allocator is not thread-safe)
+        defer msg.deinit(std.heap.page_allocator);
 
         // Wrap everything in error handler to ensure we never propagate errors up
         self.processInternal(msg) catch |err| {
@@ -861,18 +862,24 @@ pub fn runTelegramLoop(
         loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
+            log.debug("Telegram polling loop: processing message from sender={s} content_len={d}", .{ msg.sender, msg.content.len });
+
             // Handle /start command immediately (don't queue)
+            log.debug("Telegram polling loop: trimming message content", .{});
             const trimmed = std.mem.trim(u8, msg.content, " \t\r\n");
             if (std.mem.eql(u8, trimmed, "/start")) {
+                log.debug("Telegram polling loop: handling /start command", .{});
                 var greeting_buf: [512]u8 = undefined;
                 const name = msg.first_name orelse msg.id;
                 const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
                 tg_ptr.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
                 msg.deinit(allocator);
+                log.debug("Telegram polling loop: /start command handled, continuing", .{});
                 continue;
             }
 
             // Check for duplicate messages (prevent command spam)
+            log.debug("Telegram polling loop: checking for duplicate message", .{});
             if (shouldSkipDuplicateMessage(loop_state, allocator, msg.sender, msg.content)) {
                 log.debug("Skipping duplicate /reset command from user={s}", .{msg.sender});
                 msg.deinit(allocator);
@@ -880,7 +887,9 @@ pub fn runTelegramLoop(
             }
 
             // Classify message for hybrid processing
+            log.debug("Telegram polling loop: classifying message", .{});
             const msg_class = classifyMessage(msg.content);
+            log.debug("Telegram polling loop: message classified as {s}", .{if (msg_class == .independent) "independent" else "conversational"});
 
             // Clone message data for worker pool
             // Safety: validate source data first
@@ -890,44 +899,83 @@ pub fn runTelegramLoop(
                 continue;
             }
 
+            // Use page_allocator for thread-safe cloning (shared allocator is not thread-safe)
+            // This prevents crashes when multiple threads access the shared allocator simultaneously
+            log.debug("Telegram polling loop: cloning sender field (len={d})", .{msg.sender.len});
+            const sender_dupe = std.heap.page_allocator.dupe(u8, msg.sender) catch {
+                log.warn("Failed to clone sender, skipping message", .{});
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: cloning sender_first_name field (is_null={}, len={})", .{ msg.first_name == null, if (msg.first_name) |n| n.len else 0 });
+            const sender_first_name_dupe = blk: {
+                log.debug("Telegram polling loop: entering sender_first_name clone block", .{});
+                if (msg.first_name) |name| {
+                    log.debug("Telegram polling loop: sender_first_name present, len={}, ptr=0x{x}", .{ name.len, @intFromPtr(name.ptr) });
+                    if (name.len > 0 and name.len < 1024) {
+                        // Print first few chars to verify memory is valid
+                        const preview_len = @min(name.len, 20);
+                        log.debug("Telegram polling loop: sender_first_name preview: '{s}'", .{name[0..preview_len]});
+                        log.debug("Telegram polling loop: calling page_allocator.dupe for sender_first_name", .{});
+                        const duped = std.heap.page_allocator.dupe(u8, name) catch {
+                            log.warn("Telegram polling loop: OOM duplicating sender_first_name", .{});
+                            break :blk null;
+                        };
+                        log.debug("Telegram polling loop: sender_first_name cloned successfully", .{});
+                        break :blk duped;
+                    }
+                    log.debug("Telegram polling loop: sender_first_name length out of range, skipping", .{});
+                }
+                break :blk null;
+            };
+            log.debug("Telegram polling loop: sender_first_name_dupe = {}", .{if (sender_first_name_dupe) |d| d.len else 0});
+            log.debug("Telegram polling loop: cloning sender_id field (len={d})", .{msg.id.len});
+            const sender_id_dupe = std.heap.page_allocator.dupe(u8, msg.id) catch {
+                log.warn("Failed to clone sender_id, skipping message", .{});
+                std.heap.page_allocator.free(sender_dupe);
+                if (sender_first_name_dupe) |n| std.heap.page_allocator.free(n);
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: cloning content field (len={d})", .{msg.content.len});
+            const content_dupe = std.heap.page_allocator.dupe(u8, msg.content) catch {
+                log.warn("Failed to clone content, skipping message", .{});
+                std.heap.page_allocator.free(sender_dupe);
+                if (sender_first_name_dupe) |n| std.heap.page_allocator.free(n);
+                std.heap.page_allocator.free(sender_id_dupe);
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: cloning account_id field (len={d})", .{tg_ptr.account_id.len});
+            const account_id_dupe = std.heap.page_allocator.dupe(u8, tg_ptr.account_id) catch {
+                log.warn("Failed to clone account_id, skipping message", .{});
+                std.heap.page_allocator.free(sender_dupe);
+                if (sender_first_name_dupe) |n| std.heap.page_allocator.free(n);
+                std.heap.page_allocator.free(sender_id_dupe);
+                std.heap.page_allocator.free(content_dupe);
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: all fields cloned successfully, creating worker_msg", .{});
             const worker_msg = TelegramWorkerMessage{
-                .sender = allocator.dupe(u8, msg.sender) catch {
-                    log.warn("Failed to clone sender, skipping message", .{});
-                    msg.deinit(allocator);
-                    continue;
-                },
-                .sender_first_name = if (msg.first_name) |name| allocator.dupe(u8, name) catch null else null,
-                .sender_id = allocator.dupe(u8, msg.id) catch {
-                    log.warn("Failed to clone sender_id, skipping message", .{});
-                    msg.deinit(allocator);
-                    continue;
-                },
-                .content = allocator.dupe(u8, msg.content) catch {
-                    log.warn("Failed to clone content, skipping message", .{});
-                    msg.deinit(allocator);
-                    continue;
-                },
+                .sender = sender_dupe,
+                .sender_first_name = sender_first_name_dupe,
+                .sender_id = sender_id_dupe,
+                .content = content_dupe,
                 .is_group = msg.is_group,
                 .message_id = msg.message_id,
-                .account_id = allocator.dupe(u8, tg_ptr.account_id) catch {
-                    log.warn("Failed to clone account_id, skipping message", .{});
-                    msg.deinit(allocator);
-                    continue;
-                },
+                .account_id = account_id_dupe,
                 .message_class = msg_class,
             };
+            log.debug("Telegram polling loop: message fields cloned successfully", .{});
 
             // Final validation: ensure cloned fields are valid
             if (worker_msg.sender.len == 0 or worker_msg.account_id.len == 0) {
                 log.warn("Skipping message with empty cloned fields (sender={d}, account_id={d})", .{ worker_msg.sender.len, worker_msg.account_id.len });
-                worker_msg.deinit(allocator);
+                // Use page_allocator for cleanup since we used it for cloning
+                worker_msg.deinit(std.heap.page_allocator);
                 msg.deinit(allocator);
                 continue;
-            }
-
-            // Log classification (debug)
-            if (msg_class == .independent) {
-                log.debug("Message classified as independent: {s}", .{msg.content[0..@min(msg.content.len, 50)]});
             }
 
             // Enqueue for worker pool processing
@@ -936,12 +984,15 @@ pub fn runTelegramLoop(
                 pool.submit(worker_msg) catch |err| {
                     log.err("Telegram polling loop: failed to enqueue message: {}", .{err});
                     log.err("Failed to enqueue message: {}", .{err});
-                    worker_msg.deinit(allocator);
+                    // Use page_allocator for cleanup since we used it for cloning
+                    worker_msg.deinit(std.heap.page_allocator);
                 };
             }
 
             // Free original message (worker owns the clones)
+            log.debug("Telegram polling loop: freeing original message", .{});
             msg.deinit(allocator);
+            log.debug("Telegram polling loop: original message freed", .{});
         }
 
         if (messages.len > 0) {

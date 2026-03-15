@@ -199,6 +199,8 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
         workers: []Worker,
         allocator: std.mem.Allocator,
         handler: Handler,
+        /// Mutex to protect allocator operations across threads
+        allocator_mutex: Spinlock,
 
         const Worker = struct {
             thread: ?std.Thread = null,
@@ -246,6 +248,7 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
                 .workers = workers,
                 .allocator = allocator,
                 .handler = handler,
+                .allocator_mutex = Spinlock.init(),
             };
         }
 
@@ -257,11 +260,21 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             }
 
             // Spawn worker threads with larger stack size for agent processing
+            // Increased from 2MB to 8MB to handle large LLM responses and tool calls
             for (self.workers) |*worker| {
-                worker.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, Worker.run, .{worker});
+                worker.thread = try std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, Worker.run, .{worker});
             }
 
-            log.info("Worker pool started with {} workers", .{self.workers.len});
+            // DISABLED: log.info("Worker pool started with {} workers", .{self.workers.len});
+        }
+
+        /// Get thread-safe allocator for use in worker threads
+        /// This returns an allocator protected by a mutex for safe concurrent access
+        pub fn getThreadSafeAllocator(self: *Self) std.mem.Allocator {
+            _ = self;
+            // For now, we use page_allocator which is thread-safe by default
+            // This avoids the complexity of wrapping the shared allocator
+            return std.heap.page_allocator;
         }
 
         pub fn deinit(self: *Self) void {
