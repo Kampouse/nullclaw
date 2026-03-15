@@ -1275,6 +1275,9 @@ pub const SessionConfig = struct {
     idle_minutes: u32 = 60,
     identity_links: []const IdentityLink = &.{},
     typing_interval_secs: u32 = 5,
+    /// Serialize messages per-session (default: false for full parallelism)
+    /// Set to true if you need strict ordering for stateful conversations
+    serialize_sessions: bool = false,
 };
 
 test "WebConfig defaults" {

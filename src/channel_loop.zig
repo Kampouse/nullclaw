@@ -173,30 +173,25 @@ const TelegramWorkerHandler = struct {
     tg_ptr: *telegram.TelegramChannel,
     runtime: *ChannelRuntime,
     config: *const Config,
-    session_locks: *worker_pool_mod.SessionLockManager,
+    session_locks: ?*worker_pool_mod.SessionLockManager,
     allocator: std.mem.Allocator,
 
-    pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
-        log.debug("Handler processing message from sender: {s}", .{msg.sender});
-
-        // Save sender id for logging after deinit (avoid use-after-free)
-        var sender_buf: [64]u8 = undefined;
-        const sender_id = std.fmt.bufPrint(&sender_buf, "{s}", .{msg.sender}) catch "unknown";
-
+    pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) void {
         // Ensure message is always cleaned up, even if validation fails
-        defer {
-            log.debug("Handler cleaning up message from sender: {s}", .{sender_id});
-            msg.deinit(self.allocator);
-            log.debug("Handler message cleanup complete for sender: {s}", .{sender_id});
-        }
+        defer msg.deinit(self.allocator);
 
+        // Wrap everything in error handler to ensure we never propagate errors up
+        self.processInternal(msg) catch |err| {
+            log.err("Worker process error: {} - this should not happen", .{err});
+        };
+    }
+
+    fn processInternal(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
         // Safety check: validate required pointers
         if (msg.account_id.len == 0 or msg.sender.len == 0) {
             log.warn("Skipping message with empty account_id or sender in worker", .{});
             return;
         }
-
-        log.debug("Handler validated message, proceeding with processing for sender: {s}", .{msg.sender});
 
         const reply_to_id: ?i64 = if (msg.is_group or self.tg_ptr.reply_in_private) msg.message_id else null;
 
@@ -216,16 +211,15 @@ const TelegramWorkerHandler = struct {
             break :blk route.session_key;
         };
 
-        // Hybrid strategy:
-        // - Conversational messages: serialized (maintain chat context)
-        // - Independent messages (shell commands, etc.): parallel processing
-        const needs_lock = msg.message_class == .conversational;
-
+        // Session serialization: only lock if config says to (default: false for full parallelism)
+        // Message deduplication already prevents spam, so ordering is optional
         var session_lock: ?*Spinlock = null;
-        if (needs_lock) {
-            session_lock = self.session_locks.acquire(session_key);
+        if (self.config.session.serialize_sessions) {
+            if (self.session_locks) |locks| {
+                session_lock = locks.acquire(session_key);
+            }
         }
-        defer if (session_lock) |lock| self.session_locks.release(lock);
+        defer if (session_lock) |lock| self.session_locks.?.release(lock);
 
         // Start typing indicator
         self.tg_ptr.startTyping(msg.sender) catch {};
@@ -251,9 +245,6 @@ const TelegramWorkerHandler = struct {
         self.tg_ptr.sendAssistantMessageWithReply(msg.sender, msg.sender_id, msg.is_group, reply, reply_to_id) catch |err| {
             log.warn("Send error: {}", .{err});
         };
-
-        log.debug("Handler completed processing message from sender: {s}", .{msg.sender});
-        log.debug("Handler about to release session lock for sender: {s}", .{msg.sender});
     }
 };
 
@@ -304,13 +295,22 @@ fn shouldSkipDuplicateMessage(
     defer loop_state.cache_spinlock.unlock();
 
     // Clean up old entries (older than 30 seconds) to prevent memory buildup
+    // NOTE: Collect keys first, then remove (can't modify map during iteration)
     const cleanup_threshold = now - 30;
+    var keys_to_remove = std.ArrayList([]const u8).initCapacity(allocator, 8) catch return false;
+    defer keys_to_remove.deinit(allocator);  // Free ArrayList backing storage
+    
     var iter = loop_state.message_cache.iterator();
     while (iter.next()) |entry| {
         if (entry.value_ptr.timestamp < cleanup_threshold) {
-            allocator.free(entry.key_ptr.*);
-            _ = loop_state.message_cache.remove(entry.key_ptr.*);
+            keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
         }
+    }
+    
+    // Now safely remove collected keys (and free the key strings)
+    for (keys_to_remove.items) |key| {
+        allocator.free(key);
+        _ = loop_state.message_cache.remove(key);
     }
 
     // Check if this user sent the same command recently
@@ -539,7 +539,7 @@ pub const TelegramLoopState = struct {
     /// Session locks for per-session serialization
     session_locks: ?*worker_pool_mod.SessionLockManager = null,
     /// Config for worker count (default: 4)
-    worker_count: usize = 16, // Increased from 4 to handle more concurrent requests
+    worker_count: usize = 4,
     /// Per-user message cache for deduplication (prevents command spam)
     message_cache: std.StringHashMapUnmanaged(MessageCacheEntry) = .empty,
     /// Spinlock for message cache (lightweight, no I/O context needed)
@@ -791,18 +791,21 @@ pub fn runTelegramLoop(
 
     // Initialize worker pool if not already done
     if (loop_state.worker_pool == null) {
-        // Create session lock manager
-        const locks_ptr = allocator.create(worker_pool_mod.SessionLockManager) catch |err| {
-            log.warn("Failed to create session lock manager: {} - using sequential processing", .{err});
-            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
-            return;
-        };
-        locks_ptr.* = worker_pool_mod.SessionLockManager.init(allocator);
+        // Create session lock manager only if serialization is enabled
+        var locks_ptr: ?*worker_pool_mod.SessionLockManager = null;
+        if (config.session.serialize_sessions) {
+            locks_ptr = allocator.create(worker_pool_mod.SessionLockManager) catch |err| {
+                log.warn("Failed to create session lock manager: {} - using sequential processing", .{err});
+                runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+                return;
+            };
+            locks_ptr.?.* = worker_pool_mod.SessionLockManager.init(allocator);
+        }
 
         // Create worker pool with handler
         const pool_ptr = allocator.create(TelegramWorkerPool) catch |err| {
             log.warn("Failed to create worker pool: {} - using sequential processing", .{err});
-            allocator.destroy(locks_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
             runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
             return;
         };
@@ -818,7 +821,7 @@ pub fn runTelegramLoop(
         pool_ptr.* = TelegramWorkerPool.init(allocator, handler, loop_state.worker_count) catch |err| {
             log.warn("Failed to initialize worker pool: {} - using sequential processing", .{err});
             allocator.destroy(pool_ptr);
-            allocator.destroy(locks_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
             runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
             return;
         };
@@ -828,14 +831,18 @@ pub fn runTelegramLoop(
             log.warn("Failed to start worker pool: {} - using sequential processing", .{err});
             pool_ptr.deinit();
             allocator.destroy(pool_ptr);
-            allocator.destroy(locks_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
             runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
             return;
         };
 
         loop_state.worker_pool = pool_ptr;
         loop_state.session_locks = locks_ptr;
-        log.info("Worker pool enabled with {} workers", .{loop_state.worker_count});
+        if (config.session.serialize_sessions) {
+            log.info("Worker pool enabled with {} workers (session serialization ON)", .{loop_state.worker_count});
+        } else {
+            log.info("Worker pool enabled with {} workers (full parallelism)", .{loop_state.worker_count});
+        }
     }
 
     // Update activity timestamp at start
@@ -852,51 +859,13 @@ pub fn runTelegramLoop(
         loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
-            // Handle native commands immediately (don't queue)
+            // Handle /start command immediately (don't queue)
             const trimmed = std.mem.trim(u8, msg.content, " \t\r\n");
-
-            // /start command
             if (std.mem.eql(u8, trimmed, "/start")) {
                 var greeting_buf: [512]u8 = undefined;
                 const name = msg.first_name orelse msg.id;
                 const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
                 tg_ptr.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
-                msg.deinit(allocator);
-                continue;
-            }
-
-            // /help command (immediate response, don't queue)
-            if (std.mem.eql(u8, trimmed, "/help")) {
-                const help_text =
-                    \\Available Commands:
-                    \\  /start - Introduction to NullClaw
-                    \\  /help  - Show this help message
-                    \\  /new   - Start a fresh session
-                    \\  /reset - Reset current session
-                    \\
-                    \\Just send messages to chat! I can help with:
-                    \\  • Code questions (Zig, Rust, etc.)
-                    \\  • Shell commands (use /exec or agent tools)
-                    \\  • File operations
-                    \\  • And much more!
-                ;
-                tg_ptr.sendMessageWithReply(msg.sender, help_text, msg.message_id) catch |err| log.err("failed to send /help reply: {}", .{err});
-                msg.deinit(allocator);
-                continue;
-            }
-
-            // /new command (start fresh session)
-            // Note: We don't have a direct "delete session" method, so we just inform the user
-            // to send a message which will create a new session automatically
-            if (std.mem.eql(u8, trimmed, "/new")) {
-                tg_ptr.sendMessage(msg.sender, "Starting a fresh session... Send any message to begin!") catch |err| log.err("failed to send /new reply: {}", .{err});
-                msg.deinit(allocator);
-                continue;
-            }
-
-            // /reset command (reset current session - same as /new for now)
-            if (std.mem.eql(u8, trimmed, "/reset")) {
-                tg_ptr.sendMessage(msg.sender, "Session reset! Send any message to start fresh.") catch |err| log.err("failed to send /reset reply: {}", .{err});
                 msg.deinit(allocator);
                 continue;
             }
@@ -918,7 +887,7 @@ pub fn runTelegramLoop(
                 msg.deinit(allocator);
                 continue;
             }
-
+            
             const worker_msg = TelegramWorkerMessage{
                 .sender = allocator.dupe(u8, msg.sender) catch {
                     log.warn("Failed to clone sender, skipping message", .{});
@@ -962,13 +931,7 @@ pub fn runTelegramLoop(
             // Enqueue for worker pool processing
             if (loop_state.worker_pool) |pool| {
                 pool.submit(worker_msg) catch |err| {
-                    if (err == error.QueueFull) {
-                        log.warn("Worker pool queue full, message rejected", .{});
-                        // Send error reply to user (ignore errors since we're already in error path)
-                        tg_ptr.sendMessage(worker_msg.sender, "Service temporarily unavailable (too many requests). Please try again.") catch {};
-                    } else {
-                        log.err("Failed to enqueue message: {}", .{err});
-                    }
+                    log.err("Failed to enqueue message: {}", .{err});
                     worker_msg.deinit(allocator);
                 };
             }
@@ -1128,12 +1091,6 @@ pub const SignalLoopState = struct {
             .stop_requested = Atomic(bool).init(false),
         };
     }
-
-    pub fn deinit(self: *SignalLoopState, allocator: std.mem.Allocator) void {
-        _ = self;
-        _ = allocator;
-        // No resources to clean up
-    }
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1266,12 +1223,6 @@ pub const MatrixLoopState = struct {
             .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
-    }
-
-    pub fn deinit(self: *MatrixLoopState, allocator: std.mem.Allocator) void {
-        _ = self;
-        _ = allocator;
-        // No resources to clean up
     }
 };
 

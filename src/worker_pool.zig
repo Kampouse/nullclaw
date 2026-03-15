@@ -27,7 +27,6 @@ pub fn MessageQueue(comptime T: type) type {
         items: std.ArrayListUnmanaged(T) = .empty,
         mutex: Spinlock = Spinlock.init(),
         closed: Atomic(bool) = Atomic(bool).init(false),
-        max_queue_size: usize = 1000, // Prevent memory exhaustion
 
         /// Enqueue an item (non-blocking)
         pub fn enqueue(self: *Self, allocator: std.mem.Allocator, item: T) !void {
@@ -35,12 +34,6 @@ pub fn MessageQueue(comptime T: type) type {
             defer self.mutex.unlock();
 
             if (self.closed.load(.acquire)) return error.QueueClosed;
-
-            // Check queue limit to prevent memory exhaustion
-            if (self.items.items.len >= self.max_queue_size) {
-                // DISABLED: log.warn("Queue full ({} items), rejecting message", .{self.items.items.len});
-                return error.QueueFull;
-            }
 
             try self.items.append(allocator, item);
         }
@@ -53,21 +46,21 @@ pub fn MessageQueue(comptime T: type) type {
                 if (self.items.items.len > 0) {
                     const item = self.items.orderedRemove(0);
                     self.mutex.unlock();
-                    // DISABLED: log.debug("Dequeued item, remaining: {}", .{self.items.items.len});
                     return item;
                 }
                 self.mutex.unlock();
 
-                // Sleep for 100ms to reduce CPU usage while waiting for messages
-                const util = @import("util.zig");
-                util.sleep(100 * std.time.ns_per_ms);
+                // Spin wait with hint to reduce CPU usage
+                var i: usize = 0;
+                while (i < 1000) : (i += 1) {
+                    std.atomic.spinLoopHint();
+                }
             }
 
             // Queue closed, return any remaining items
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            // DISABLED: log.debug("Queue closed, checking for remaining items: {}", .{self.items.items.len});
             if (self.items.items.len > 0) {
                 return self.items.orderedRemove(0);
             }
@@ -90,6 +83,26 @@ pub fn MessageQueue(comptime T: type) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
+            // Free any remaining messages (they own memory)
+            // Note: This assumes T has a deinit method. For generic types,
+            // we just free the array backing storage.
+            self.items.deinit(allocator);
+        }
+
+        /// Deinit with message cleanup - drains queue and calls deinit on each message
+        pub fn deinitWithMessageCleanup(
+            self: *Self, 
+            allocator: std.mem.Allocator, 
+            comptime deinitFn: fn (*const T, std.mem.Allocator) void
+        ) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // Drain and cleanup remaining messages
+            while (self.items.items.len > 0) {
+                const msg = self.items.orderedRemove(0);
+                deinitFn(&msg, allocator);
+            }
             self.items.deinit(allocator);
         }
     };
@@ -124,20 +137,44 @@ pub const SessionLockManager = struct {
         self.locks.deinit(self.allocator);
     }
 
+    /// Fallback lock used when OOM occurs (graceful degradation)
+    const FallbackLock = struct {
+        lock: Spinlock = Spinlock.init(),
+    };
+    var fallback_lock: FallbackLock = .{};
+
     /// Acquire lock for a session (creates if not exists)
     /// Returns the lock, caller must call release()
+    /// On OOM, returns a shared fallback lock (graceful degradation)
     pub fn acquire(self: *Self, session_key: []const u8) *Spinlock {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const gop = self.locks.getOrPut(self.allocator, session_key) catch @panic("SessionLockManager OOM");
+        const gop = self.locks.getOrPut(self.allocator, session_key) catch {
+            // OOM: use fallback lock (all sessions serialize on this)
+            log.warn("SessionLockManager OOM, using fallback lock", .{});
+            fallback_lock.lock.lock();
+            return &fallback_lock.lock;
+        };
         if (!gop.found_existing) {
-            const lock_ptr = self.allocator.create(Spinlock) catch @panic("SessionLockManager OOM");
+            const lock_ptr = self.allocator.create(Spinlock) catch {
+                // OOM: use fallback lock
+                log.warn("SessionLockManager OOM creating lock, using fallback", .{});
+                fallback_lock.lock.lock();
+                return &fallback_lock.lock;
+            };
             lock_ptr.* = Spinlock.init();
             gop.value_ptr.* = lock_ptr;
 
             // Store owned key
-            const key_owned = self.allocator.dupe(u8, session_key) catch @panic("SessionLockManager OOM");
+            const key_owned = self.allocator.dupe(u8, session_key) catch {
+                // OOM: still return the lock we created, just with a borrowed key
+                // This is safe because we never free individual keys, only on deinit
+                gop.key_ptr.* = session_key; // Borrow the key (won't be freed)
+                const lock = gop.value_ptr.*;
+                lock.lock();
+                return lock;
+            };
             gop.key_ptr.* = key_owned;
         }
 
@@ -173,32 +210,21 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             id: usize,
 
             fn run(worker: *Worker) void {
-                // DISABLED: Worker pool logging to avoid macOS __simple_asl_init memory corruption
-                // log.debug("Worker {} started, pool ptr: 0x{x}", .{worker.id, @intFromPtr(worker.pool)});
-                var messages_processed: usize = 0;
+                log.debug("Worker {} started, pool ptr: 0x{x}", .{worker.id, @intFromPtr(worker.pool)});
 
                 while (true) {
-                    // log.debug("Worker {} waiting for message...", .{worker.id});
+                    log.debug("Worker {} waiting for message...", .{worker.id});
 
                     const msg = worker.pool.queue.dequeue() orelse {
                         // Queue closed and empty
-                        // log.info("Worker {} exiting (processed {} messages)", .{worker.id, messages_processed});
+                        log.debug("Worker {} exiting (queue closed)", .{worker.id});
                         return;
                     };
-                    // log.debug("Worker {} received message, processing...", .{worker.id});
+                    log.debug("Worker {} received message, processing...", .{worker.id});
 
-                    // Process message without error logging to avoid corruption
-                    worker.pool.handler.process(msg) catch |err| {
-                        // DISABLED: log.err("Worker {} error processing message: {}", .{worker.id, err});
-                        _ = err; // Suppress unused variable warning
-                        // Continue processing other messages even if this one failed
-                    };
-
-                    messages_processed += 1;
-                    // log.debug("Worker {} finished processing message (total: {})", .{worker.id, messages_processed});
-
-                    // Add explicit yield to prevent tight loops
-                    std.atomic.spinLoopHint();
+                    // Process message - handler handles ALL errors internally (returns void)
+                    worker.pool.handler.process(msg);
+                    log.debug("Worker {} finished processing message", .{worker.id});
                 }
             }
         };
@@ -235,12 +261,11 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
             }
 
             // Spawn worker threads with larger stack size for agent processing
-            // Increased from 2MB to 8MB to handle large LLM responses and tool calls
             for (self.workers) |*worker| {
-                worker.thread = try std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, Worker.run, .{worker});
+                worker.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, Worker.run, .{worker});
             }
 
-            // DISABLED: log.info("Worker pool started with {} workers", .{self.workers.len});
+            log.info("Worker pool started with {} workers", .{self.workers.len});
         }
 
         pub fn deinit(self: *Self) void {
@@ -256,26 +281,17 @@ pub fn WorkerPool(comptime Message: type, comptime Handler: type) type {
 
             self.queue.deinit(self.allocator);
             self.allocator.free(self.workers);
-            // DISABLED: log.info("Worker pool stopped", .{});
+            log.info("Worker pool stopped", .{});
         }
 
         /// Submit a message for processing (non-blocking)
         pub fn submit(self: *Self, msg: Message) !void {
             try self.queue.enqueue(self.allocator, msg);
-            // DISABLED: const queue_len = self.queue.len();
-            // DISABLED: if (queue_len > 10) {
-            // DISABLED:     log.warn("Worker pool backlog: {} messages waiting", .{queue_len});
-            // DISABLED: }
         }
 
         /// Get pending message count (approximate)
         pub fn pending(self: *Self) usize {
             return self.queue.len();
-        }
-
-        /// Get worker count
-        pub fn workerCount(self: *Self) usize {
-            return self.workers.len;
         }
     };
 }
@@ -331,7 +347,7 @@ test "WorkerPool - parallel processing" {
 
     var processed: usize = 0;
     var mutex: Spinlock = Spinlock.init();
-
+    
     const handler = TestHandler{
         .processed = &processed,
         .mutex = &mutex,
