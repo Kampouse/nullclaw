@@ -2169,7 +2169,21 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
     };
 
     // Use parallel processing with worker pool
-    yc.channel_loop.runTelegramLoop(allocator, &config, &channel_rt, &loop_state, &tg);
+    // Check if webhook mode is enabled
+    if (telegram_config.webhook_mode) {
+        // Start webhook server instead of polling
+        std.debug.print("  Mode: webhook (port {})\n", .{telegram_config.webhook_port});
+        try tg.startWebhookServer(telegram_config.webhook_port);
+        
+        // Keep main thread alive (Zig 0.16: use std.Io.sleep)
+        while (true) {
+            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
+        }
+    } else {
+        // Traditional polling mode
+        std.debug.print("  Mode: polling\n", .{});
+        yc.channel_loop.runTelegramLoop(allocator, &config, &channel_rt, &loop_state, &tg);
+    }
 
     // Note: runTelegramLoop never returns, so code below is unreachable
 }

@@ -1,23 +1,4 @@
-# Dependencies
-node_modules/
-
-# Build artifacts
-.zig-cache/
-zig-out/
-zig-pkg/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
-
-# Environment
-.env
-.env.local
+# Ignore config files with secrets
+nullclaw-config.yaml
+*.pid
+telegram

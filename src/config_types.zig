@@ -249,6 +249,10 @@ pub const TelegramConfig = struct {
     /// Optional SOCKS5/HTTP proxy URL for all Telegram API requests (e.g. "socks5://host:port").
     proxy: ?[]const u8 = null,
     interactive: TelegramInteractiveConfig = .{},
+    
+    /// Webhook mode configuration (NEW)
+    webhook_mode: bool = false,
+    webhook_port: u16 = 8443,
 };
 
 pub const DiscordConfig = struct {
