@@ -2,6 +2,7 @@ const util = @import("../util.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
+const net_socket = @import("../net_socket.zig");
 const voice = @import("../voice.zig");
 const platform = @import("../platform.zig");
 const config_types = @import("../config_types.zig");
@@ -17,15 +18,15 @@ const ConnectionPool = struct {
     current_idx: usize = 0,
     error_counts: [3]u32 = [_]u32{ 0, 0, 0 },
     allocator: std.mem.Allocator,
-    
+
     const MAX_ERRORS_BEFORE_ROTATION: u32 = 3;
-    
+
     fn init(allocator: std.mem.Allocator) ConnectionPool {
         return .{
             .allocator = allocator,
         };
     }
-    
+
     fn deinit(self: *ConnectionPool) void {
         for (&self.clients) |*client| {
             if (client.*) |*c| {
@@ -34,32 +35,29 @@ const ConnectionPool = struct {
             }
         }
     }
-    
+
     fn getHealthy(self: *ConnectionPool) ?*std.http.Client {
         // Try all connections in round-robin
         for (0..3) |_| {
             const idx = self.current_idx % 3;
-            
+
             // Initialize if needed
             if (self.clients[idx] == null) {
                 const http_io = root.http_util.getThreadedIo();
-                self.clients[idx] = .{ 
-                    .allocator = self.allocator, 
-                    .io = http_io 
-                };
+                self.clients[idx] = .{ .allocator = self.allocator, .io = http_io };
                 self.error_counts[idx] = 0;
             }
-            
+
             // Check if this connection is healthy
             if (self.error_counts[idx] < MAX_ERRORS_BEFORE_ROTATION) {
                 self.current_idx = (idx + 1) % 3;
                 return &self.clients[idx].?;
             }
-            
+
             // Too many errors, try next
             self.current_idx = (idx + 1) % 3;
         }
-        
+
         // All connections have errors, reset and try first
         for (&self.error_counts) |*count| {
             count.* = 0;
@@ -69,7 +67,7 @@ const ConnectionPool = struct {
         }
         return null;
     }
-    
+
     fn reportError(self: *ConnectionPool, client_ptr: *std.http.Client) void {
         for (0..3) |i| {
             if (self.clients[i]) |*c| {
@@ -80,7 +78,7 @@ const ConnectionPool = struct {
             }
         }
     }
-    
+
     fn reportSuccess(self: *ConnectionPool, client_ptr: *std.http.Client) void {
         for (0..3) |i| {
             if (self.clients[i]) |*c| {
@@ -91,7 +89,7 @@ const ConnectionPool = struct {
             }
         }
     }
-    
+
     fn reset(self: *ConnectionPool) void {
         for (0..3) |i| {
             if (self.clients[i]) |*c| {
@@ -397,7 +395,7 @@ fn nextPendingMediaDeadline(group_ids: []const ?[]const u8, received_at: []const
 }
 
 fn sweepTempMediaFilesInDir(dir_path: []const u8, now_secs: i64, ttl_secs: i64) void {
-    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{.iterate = true }) catch return;
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return;
     defer dir.close(io);
 
     var iter = dir.iterate();
@@ -572,6 +570,10 @@ pub const TelegramChannel = struct {
     // Webhook server state
     webhook_thread: ?std.Thread = null,
     webhook_running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    // Webhook message handler callback (set by main when running in webhook mode)
+    webhook_handler: ?*const fn (ctx: *anyopaque, allocator: std.mem.Allocator, sender: []const u8, content: []const u8, reply_target: ?[]const u8, message_id: ?i64, is_group: bool) ?[]const u8 = null,
+    webhook_handler_ctx: ?*anyopaque = null,
 
     pub const MAX_MESSAGE_LEN: usize = 4096;
     const TYPING_INTERVAL_NS: u64 = 4 * std.time.ns_per_s;
@@ -840,6 +842,35 @@ pub const TelegramChannel = struct {
             return;
         };
         self.allocator.free(resp);
+    }
+
+    /// Register webhook URL with Telegram API.
+    /// Returns true on success, false on failure.
+    pub fn setWebhook(self: *TelegramChannel, webhook_url: []const u8) bool {
+        log.info("[WEBHOOK] Setting webhook URL: {s}", .{webhook_url});
+
+        // Build JSON body with webhook URL
+        var body_buf: [1024]u8 = undefined;
+        const body = std.fmt.bufPrint(&body_buf, "{{\"url\":\"{s}\",\"allowed_updates\":[\"message\",\"callback_query\"]}}", .{webhook_url}) catch {
+            log.warn("[WEBHOOK] Failed to build webhook body", .{});
+            return false;
+        };
+
+        const resp = self.apiPost("setWebhook", body) catch |err| {
+            log.warn("[WEBHOOK] setWebhook API call failed: {}", .{err});
+            return false;
+        };
+        defer self.allocator.free(resp);
+
+        // Check response for success
+        const success = std.mem.indexOf(u8, resp, "\"ok\":true") != null;
+        if (success) {
+            log.info("[WEBHOOK] Webhook registered successfully with Telegram", .{});
+        } else {
+            log.warn("[WEBHOOK] Webhook registration failed: {s}", .{resp});
+        }
+
+        return success;
     }
 
     /// Skip all pending updates accumulated while bot was offline.
@@ -1579,7 +1610,14 @@ pub const TelegramChannel = struct {
     }
 
     /// Send a message with optional reply-to, continuation markers, and delay between chunks.
+    /// If skip_typing is true, skips typing indicator (useful for webhook responses).
     pub fn sendMessageWithReply(self: *TelegramChannel, chat_id: []const u8, text: []const u8, reply_to: ?i64) !void {
+        return self.sendMessageWithReplySkipTyping(chat_id, text, reply_to, false);
+    }
+
+    /// Send a message with optional reply-to, continuation markers.
+    /// If skip_typing is true, skips typing indicator and chunk delays (faster for webhook responses).
+    pub fn sendMessageWithReplySkipTyping(self: *TelegramChannel, chat_id: []const u8, text: []const u8, reply_to: ?i64, skip_typing: bool) !void {
         // Validate: reject empty or whitespace-only text to avoid Telegram API errors
         const trimmed = std.mem.trim(u8, text, &std.ascii.whitespace);
         if (trimmed.len == 0) {
@@ -1587,8 +1625,10 @@ pub const TelegramChannel = struct {
             return error.EmptyMessage;
         }
 
-        // Send typing indicator (best-effort)
-        self.sendTypingIndicator(chat_id);
+        // Send typing indicator (best-effort) - skip for webhook mode to reduce latency
+        if (!skip_typing) {
+            self.sendTypingIndicator(chat_id);
+        }
 
         // Parse attachment markers
         const parsed = try parseAttachmentMarkers(self.allocator, text);
@@ -1627,7 +1667,8 @@ pub const TelegramChannel = struct {
                 current_reply_to = null;
 
                 // 100ms delay between chunks to avoid rate-limit / ordering issues
-                if (i < chunks.items.len - 1) {
+                // Skip for webhook mode to reduce latency
+                if (!skip_typing and i < chunks.items.len - 1) {
                     util.sleep(100 * std.time.ns_per_ms);
                 }
             }
@@ -2432,7 +2473,7 @@ pub const TelegramChannel = struct {
 
         self.webhook_running.store(true, .monotonic);
         self.webhook_thread = try std.Thread.spawn(.{}, webhookServerLoop, .{ self, port });
-        log.info("Telegram webhook server started on port {}", .{port});
+        log.info("Telegram webhook server thread spawned for port {}", .{port});
     }
 
     /// Stop webhook server
@@ -2446,69 +2487,138 @@ pub const TelegramChannel = struct {
     }
 
     fn webhookServerLoop(self: *TelegramChannel, port: u16) void {
-        const address = std.Io.net.IpAddress.resolve(io, "0.0.0.0", port) catch {
-            log.err("Failed to resolve webhook server address", .{});
+        // Create listening socket using direct BSD calls (avoids Zig 0.16 I/O race condition)
+        const server_fd = net_socket.listenSocket("0.0.0.0", port) catch |err| {
+            log.err("Failed to create webhook server socket on port {}: {} (may already be in use)", .{ port, err });
+            self.webhook_running.store(false, .monotonic);
             return;
         };
-
-        var server = address.listen(io, .{
-            .reuse_address = true,
-        }) catch {
-            log.err("Failed to start webhook server on port {}", .{port});
-            return;
-        };
-        defer server.deinit(io);
+        defer net_socket.closeSocket(server_fd);
 
         log.info("Telegram webhook server listening on port {}", .{port});
 
         while (self.webhook_running.load(.monotonic)) {
-            const conn = server.accept(io) catch {
+            const client_fd = net_socket.acceptConnection(server_fd) catch {
                 continue;
             };
 
             // Handle connection
-            self.handleWebhookConnection(conn) catch |err| {
+            self.handleWebhookConnection(client_fd) catch |err| {
                 log.warn("Webhook connection error: {}", .{err});
             };
+            net_socket.closeSocket(client_fd);
         }
     }
 
-    fn handleWebhookConnection(self: *TelegramChannel, stream: std.Io.net.Stream) !void {
-        defer stream.close(io);
-
+    fn handleWebhookConnection(self: *TelegramChannel, client_fd: c_int) !void {
         const allocator = self.allocator;
+        log.debug("[WEBHOOK] === Connection started ===", .{});
 
-        // Read HTTP request (simple parsing)
-        var buf: [8192]u8 = undefined;
-        var reader = stream.reader(io, &buf);
-        const bytes_read = reader.interface.readSliceShort(buf[0..]) catch |err| {
-            log.warn("Failed to read webhook request: {}", .{err});
+        // Read HTTP request using BSD socket (avoids Zig 0.16 I/O race condition)
+        // Need to handle case where headers and body arrive in separate packets
+        var req_buf: [16384]u8 = undefined;
+        var total_read: usize = 0;
+
+        // Read all data available in the first packet
+        const first_read = net_socket.readSocket(client_fd, req_buf[total_read..]) catch |err| {
+            log.warn("[WEBHOOK] Failed to read request: {}", .{err});
+            return;
+        };
+        total_read += first_read;
+
+        if (total_read == 0) {
+            log.warn("[WEBHOOK] Empty request", .{});
+            return;
+        }
+
+        const raw = req_buf[0..total_read];
+        log.debug("[WEBHOOK] Received {} bytes in first read", .{total_read});
+
+        // Find header terminator
+        const header_end = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse {
+            log.warn("[WEBHOOK] No header terminator found", .{});
             return;
         };
 
-        if (bytes_read == 0) return;
+        log.debug("[WEBHOOK] Header end at position {}", .{header_end});
 
-        const request = buf[0..bytes_read];
+        // Parse Content-Length header to determine if we need to read more data
+        const headers = raw[0..header_end];
+        var content_length: usize = 0;
 
-        // Simple HTTP parsing - find body after \r\n\r\n
-        const body_start = if (std.mem.indexOf(u8, request, "\r\n\r\n")) |idx|
-            idx + 4
-        else
-            return;
+        // Find Content-Length header (case-insensitive)
+        var idx: usize = 0;
+        while (idx < headers.len) {
+            if (std.ascii.startsWithIgnoreCase(headers[idx..], "Content-Length:")) {
+                idx += 15; // Skip "Content-Length:"
+                // Skip whitespace
+                while (idx < headers.len and (headers[idx] == ' ' or headers[idx] == '\t')) {
+                    idx += 1;
+                }
+                // Parse number
+                const len_start = idx;
+                while (idx < headers.len and std.ascii.isDigit(headers[idx])) {
+                    idx += 1;
+                }
+                if (idx > len_start) {
+                    content_length = std.fmt.parseInt(usize, headers[len_start..idx], 10) catch 0;
+                    break;
+                }
+            }
+            // Skip to next line
+            while (idx < headers.len and headers[idx] != '\n') {
+                idx += 1;
+            }
+            if (idx < headers.len) idx += 1; // Skip \n
+        }
 
-        const body = request[body_start..];
+        log.debug("[WEBHOOK] Content-Length: {}", .{content_length});
+
+        // Calculate how much of the body we already have
+        const body_start_in_buffer = header_end + 4;
+        const body_in_buffer = if (total_read > body_start_in_buffer) total_read - body_start_in_buffer else 0;
+
+        log.debug("[WEBHOOK] Body in first read: {} bytes", .{body_in_buffer});
+
+        // If we need more body data, read it
+        if (body_in_buffer < content_length) {
+            const remaining = content_length - body_in_buffer;
+            log.debug("[WEBHOOK] Need {} more bytes of body", .{remaining});
+
+            // Read remaining body data
+            while (total_read < req_buf.len and total_read < body_start_in_buffer + content_length) {
+                const additional = net_socket.readSocket(client_fd, req_buf[total_read..]) catch |err| {
+                    log.warn("[WEBHOOK] Failed to read body: {}", .{err});
+                    return;
+                };
+                if (additional == 0) {
+                    log.warn("[WEBHOOK] Connection closed before body complete", .{});
+                    return;
+                }
+                total_read += additional;
+                log.debug("[WEBHOOK] Read {} additional bytes, total now {}", .{ additional, total_read });
+            }
+        }
+
+        const body = req_buf[body_start_in_buffer..total_read];
+        log.debug("[WEBHOOK] Final body length: {}", .{body.len});
+        if (body.len > 0 and body.len < 500) {
+            log.debug("[WEBHOOK] Body content: {s}", .{body});
+        }
 
         if (body.len == 0) {
-            self.sendWebhookResponse(stream, 400, "Empty body") catch {};
+            self.sendWebhookResponse(client_fd, 400, "Empty body") catch {};
             return;
         }
 
         // Parse JSON
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
-            self.sendWebhookResponse(stream, 400, "Invalid JSON") catch {};
+            self.sendWebhookResponse(client_fd, 400, "Invalid JSON") catch {};
             return;
         };
         defer parsed.deinit();
+
+        log.debug("[WEBHOOK] JSON parsed successfully", .{});
 
         // Process update (reuse existing logic)
         var messages: std.ArrayListUnmanaged(root.ChannelMessage) = .empty;
@@ -2529,12 +2639,50 @@ pub const TelegramChannel = struct {
         }
 
         self.processUpdate(allocator, parsed.value, &messages, &media_group_ids);
+        log.debug("[WEBHOOK] processUpdate returned {} messages", .{messages.items.len});
 
         // Send 200 OK
-        self.sendWebhookResponse(stream, 200, "{}") catch {};
+        self.sendWebhookResponse(client_fd, 200, "{}") catch {};
+        log.debug("[WEBHOOK] Sent 200 OK", .{});
+
+        // Step 5: Process messages through webhook handler if set
+        if (self.webhook_handler) |handler| {
+            log.debug("[WEBHOOK] Webhook handler found, processing {} messages", .{messages.items.len});
+            for (messages.items) |msg| {
+                log.debug("[WEBHOOK] Processing message from sender={s}", .{msg.sender});
+
+                const reply = handler(
+                    self.webhook_handler_ctx.?,
+                    allocator,
+                    msg.sender,
+                    msg.content,
+                    msg.reply_target,
+                    msg.message_id,
+                    msg.is_group,
+                );
+
+                if (reply) |response| {
+                    defer allocator.free(response);
+                    log.debug("[WEBHOOK] Response length: {}", .{response.len});
+
+                    // Send the response back to Telegram (skip typing indicator for faster webhook response)
+                    const reply_to_id: ?i64 = if (msg.is_group or self.reply_in_private) msg.message_id else null;
+                    self.sendMessageWithReplySkipTyping(msg.sender, response, reply_to_id, true) catch |send_err| {
+                        log.warn("[WEBHOOK] Failed to send reply: {}", .{send_err});
+                    };
+                    log.debug("[WEBHOOK] Reply sent successfully", .{});
+                } else {
+                    log.debug("[WEBHOOK] Handler returned null (no response)", .{});
+                }
+            }
+        } else {
+            log.warn("[WEBHOOK] No webhook handler set - messages not processed!", .{});
+        }
+
+        log.debug("[WEBHOOK] === Connection complete ===", .{});
     }
 
-    fn sendWebhookResponse(self: *TelegramChannel, stream: std.Io.net.Stream, status: u16, body: []const u8) !void {
+    fn sendWebhookResponse(self: *TelegramChannel, client_fd: c_int, status: u16, body: []const u8) !void {
         _ = self;
         const status_text = switch (status) {
             200 => "OK",
@@ -2551,9 +2699,7 @@ pub const TelegramChannel = struct {
             body,
         }) catch return;
 
-        var write_buf: [1024]u8 = undefined;
-        var writer = stream.writer(io, &write_buf);
-        _ = writer.interface.writeAll(response) catch {};
+        _ = net_socket.writeSocket(client_fd, response) catch {};
     }
 
     fn vtableHealthCheck(ptr: *anyopaque) bool {
@@ -2605,7 +2751,7 @@ pub fn markdownToTelegramHtml(allocator: std.mem.Allocator, md: []const u8) ![]u
         }
         break :blk false;
     };
-    
+
     if (!has_markdown) {
         // No markdown - just escape HTML entities
         var buf: std.ArrayListUnmanaged(u8) = .empty;
@@ -2613,7 +2759,7 @@ pub fn markdownToTelegramHtml(allocator: std.mem.Allocator, md: []const u8) ![]u
         try appendHtmlEscaped(&buf, allocator, md);
         return buf.toOwnedSlice(allocator);
     }
-    
+
     // Slow path: full markdown parsing
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);

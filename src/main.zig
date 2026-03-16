@@ -1938,7 +1938,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         }
 
         const content = pid_buf[0..@as(usize, @intCast(bytes_read))];
-        const pid_str = std.mem.trim(u8, content, &.{'\n', '\r'});
+        const pid_str = std.mem.trim(u8, content, &.{ '\n', '\r' });
         const pid = std.fmt.parseInt(u32, pid_str, 10) catch 0;
         break :blk pid;
     };
@@ -2171,10 +2171,74 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
     // Use parallel processing with worker pool
     // Check if webhook mode is enabled
     if (telegram_config.webhook_mode) {
+        // Check that webhook_url is configured
+        const webhook_url = telegram_config.webhook_url orelse {
+            std.debug.print("ERROR: webhook_mode is enabled but webhook_url is not configured.\n", .{});
+            std.debug.print("Add 'webhook_url' to your Telegram config, e.g.:\n", .{});
+            std.debug.print("  \"webhook_url\": \"https://your-bot.example.com:8443/\"\n", .{});
+            std.process.exit(1);
+        };
+
         // Start webhook server instead of polling
         std.debug.print("  Mode: webhook (port {})\n", .{telegram_config.webhook_port});
+        std.debug.print("  Webhook URL: {s}\n", .{webhook_url});
+
+        // Register webhook with Telegram
+        std.debug.print("  Registering webhook with Telegram...\n", .{});
+        if (!tg.setWebhook(webhook_url)) {
+            std.debug.print("ERROR: Failed to register webhook with Telegram.\n", .{});
+            std.debug.print("Make sure your webhook_url is publicly accessible and uses HTTPS.\n", .{});
+            std.process.exit(1);
+        }
+
+        // Create webhook handler context
+        const WebhookHandlerContext = struct {
+            session_mgr: *yc.session.SessionManager,
+            account_id: []const u8,
+        };
+        var webhook_ctx = WebhookHandlerContext{
+            .session_mgr = &session_mgr,
+            .account_id = tg.account_id,
+        };
+
+        // Set up webhook message handler callback
+        tg.webhook_handler = struct {
+            fn handler(ctx: *anyopaque, alloc: std.mem.Allocator, sender: []const u8, content: []const u8, reply_target: ?[]const u8, message_id: ?i64, is_group: bool) ?[]const u8 {
+                _ = alloc;
+                _ = reply_target;
+                _ = message_id;
+                const hctx: *WebhookHandlerContext = @ptrCast(@alignCast(ctx));
+
+                std.log.info("[WEBHOOK_HANDLER] Received message from sender={s} content_len={d} is_group={any}", .{ sender, content.len, is_group });
+
+                // Build session key
+                var key_buf: [256]u8 = undefined;
+                const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ hctx.account_id, sender }) catch sender;
+                std.log.info("[WEBHOOK_HANDLER] Session key: {s}", .{session_key});
+
+                // Log message content (truncated for privacy/debugging)
+                const content_preview = if (content.len > 100) content[0..100] else content;
+                std.log.info("[WEBHOOK_HANDLER] Content preview: '{s}'", .{content_preview});
+
+                // Process message through session manager
+                std.log.info("[WEBHOOK_HANDLER] Calling session_mgr.processMessage...", .{});
+                const reply = hctx.session_mgr.processMessage(session_key, content, null) catch |err| {
+                    std.log.err("[WEBHOOK_HANDLER] Message processing error: {}", .{err});
+                    return null;
+                };
+
+                // Log response (truncated)
+                const reply_preview = if (reply.len > 100) reply[0..100] else reply;
+                std.log.info("[WEBHOOK_HANDLER] Response generated (len={d}): '{s}...'", .{ reply.len, reply_preview });
+
+                // Return reply (caller will free it)
+                return reply;
+            }
+        }.handler;
+        tg.webhook_handler_ctx = &webhook_ctx;
+
         try tg.startWebhookServer(telegram_config.webhook_port);
-        
+
         // Keep main thread alive (Zig 0.16: use std.Io.sleep)
         while (true) {
             std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
@@ -2182,6 +2246,9 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
     } else {
         // Traditional polling mode
         std.debug.print("  Mode: polling\n", .{});
+
+        // Delete webhook if switching from webhook to polling mode
+        tg.deleteWebhookKeepPending();
         yc.channel_loop.runTelegramLoop(allocator, &config, &channel_rt, &loop_state, &tg);
     }
 
