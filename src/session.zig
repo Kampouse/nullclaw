@@ -115,7 +115,7 @@ pub const SessionManager = struct {
     pub fn getOrCreate(self: *SessionManager, session_key: []const u8) !*Session {
         const zone = profiling.zoneNamed(@src(), "getOrCreateSession");
         defer zone.end();
-        
+
         self.mutex.lock(std.Options.debug_io) catch return error.Unknown;
         defer self.mutex.unlock(std.Options.debug_io);
 
@@ -229,10 +229,10 @@ pub const SessionManager = struct {
     ) ![]const u8 {
         const zone = profiling.zoneNamed(@src(), "processMessage");
         defer zone.end();
-        
+
         const channel = if (conversation_context) |ctx| (ctx.channel orelse "unknown") else "unknown";
         const session_hash = std.hash.Wyhash.hash(0, session_key);
-        
+
         zone.text("channel:{s} session:0x{x}", .{ channel, session_hash });
 
         if (self.config.diagnostics.log_message_receipts) {
@@ -297,6 +297,8 @@ pub const SessionManager = struct {
                 store.clearAutoSaved(session_key) catch {};
                 // Reset provider state (clear error tracking, reset key rotation)
                 self.provider.reset();
+                // Clear in-memory conversation history (fix memory leak)
+                session.agent.clearHistory();
             } else if (slashResetsProvider(trimmed)) {
                 // Only reset provider state (keep conversation context)
                 self.provider.reset();
@@ -362,7 +364,7 @@ pub const SessionManager = struct {
     pub fn evictIdle(self: *SessionManager, max_idle_secs: u64, io: std.Io) usize {
         const zone = profiling.zoneNamed(@src(), "evictIdleSessions");
         defer zone.end();
-        
+
         self.mutex.lock(io) catch return 0;
         defer self.mutex.unlock(io);
 
@@ -391,7 +393,7 @@ pub const SessionManager = struct {
                 evicted += 1;
             }
         }
-        
+
         if (evicted > 0) {
             zone.text("evicted:{}", .{evicted});
         }
@@ -1288,7 +1290,7 @@ test "getOrCreate with very long session key" {
     var long_key: [1024]u8 = undefined;
     @memset(&long_key, 'x');
     long_key[0..9].* = "long_key_".*;
-    
+
     const session = try sm.getOrCreate(&long_key);
     try testing.expectEqual(@as(usize, 1024), session.session_key.len);
 }
@@ -1326,10 +1328,10 @@ test "session deinit frees session_key memory" {
     // Create session with long key
     var long_key: [4096]u8 = undefined;
     @memset(&long_key, 'k');
-    
+
     _ = try sm.getOrCreate(&long_key);
     try testing.expectEqual(@as(usize, 1), sm.sessionCount());
-    
+
     // Evict should free the session_key
     const evicted = sm.evictIdle(0, std.Options.debug_io); // Evict all
     try testing.expectEqual(@as(usize, 1), evicted);
@@ -1346,7 +1348,7 @@ test "processMessage with very long content" {
     var huge_msg: [102400]u8 = undefined;
     @memset(&huge_msg, 'x');
     huge_msg[0..5].* = "hello".*;
-    
+
     const response = try sm.processMessage("big", &huge_msg, null);
     defer testing.allocator.free(response);
     try testing.expectEqualStrings("ok", response);
@@ -1384,7 +1386,7 @@ test "sessionCount after evictIdle" {
     _ = try sm.getOrCreate("count:b");
     _ = try sm.getOrCreate("count:c");
     try testing.expectEqual(@as(usize, 3), sm.sessionCount());
-    
+
     _ = sm.evictIdle(0, std.Options.debug_io);
     try testing.expectEqual(@as(usize, 0), sm.sessionCount());
 }
@@ -1396,7 +1398,7 @@ test "session created_at timestamp is reasonable" {
     defer sm.deinit();
 
     const session = try sm.getOrCreate("timestamp");
-    
+
     // Timestamp should be positive (after year 2000)
     try testing.expect(session.created_at > 946684800);
 }
@@ -1409,9 +1411,9 @@ test "session last_active updates on processMessage" {
 
     const session = try sm.getOrCreate("active");
     const initial_active = session.last_active;
-    
+
     _ = try sm.processMessage("active", "test", null);
-    
+
     // last_active should be >= initial (might be same if fast)
     try testing.expect(session.last_active >= initial_active);
 }
@@ -1426,15 +1428,15 @@ test "concurrent processMessage same session is serialized" {
         sm: *SessionManager,
         errors: std.atomic.Value(usize),
     };
-    
+
     var ctx = SharedCtx{
         .sm = &sm,
         .errors = std.atomic.Value(usize).init(0),
     };
-    
+
     const num_threads = 5;
     var threads: [num_threads]std.Thread = undefined;
-    
+
     for (&threads) |*thread| {
         thread.* = std.Thread.spawn(.{}, struct {
             fn run(c: *SharedCtx) void {
@@ -1446,14 +1448,14 @@ test "concurrent processMessage same session is serialized" {
             }
         }.run, .{&ctx}) catch continue;
     }
-    
+
     for (&threads) |*thread| {
         thread.join();
     }
-    
+
     // All should succeed (mutex serializes access)
     try testing.expectEqual(@as(usize, 0), ctx.errors.load(.monotonic));
-    
+
     // Session should have 5 turns
     const session = try sm.getOrCreate("same");
     try testing.expectEqual(@as(u64, 5), session.turn_count);
@@ -1463,7 +1465,7 @@ test "deinit clears all sessions" {
     var mock = MockProvider{ .response = "ok" };
     const cfg = testConfig();
     var sm = testSessionManager(testing.allocator, &mock, &cfg);
-    
+
     // Create many sessions
     var i: usize = 0;
     while (i < 100) : (i += 1) {
@@ -1471,9 +1473,9 @@ test "deinit clears all sessions" {
         const key = std.fmt.bufPrint(&key_buf, "deinit:{}", .{i}) catch unreachable;
         _ = try sm.getOrCreate(key);
     }
-    
+
     try testing.expectEqual(@as(usize, 100), sm.sessionCount());
-    
+
     // deinit should free all without leaks
     sm.deinit();
 }
