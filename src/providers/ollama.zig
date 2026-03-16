@@ -396,7 +396,13 @@ pub const OllamaProvider = struct {
         .supports_vision = supportsVisionImpl,
         .getName = getNameImpl,
         .deinit = deinitImpl,
+        .resetConnections = resetConnectionsImpl,
     };
+
+    fn resetConnectionsImpl(ptr: *anyopaque) void {
+        const self: *OllamaProvider = @ptrCast(@alignCast(ptr));
+        self.resetConnections();
+    }
 
     fn chatWithSystemImpl(
         ptr: *anyopaque,
@@ -461,6 +467,13 @@ pub const OllamaProvider = struct {
 
     pub fn deinit(self: *OllamaProvider) void {
         self.http_client.deinit();
+    }
+
+    /// Reset HTTP client connections (recreate client to clear stale connections)
+    pub fn resetConnections(self: *OllamaProvider) void {
+        self.http_client.deinit();
+        const io = @import("../http_util.zig").getThreadedIo();
+        self.http_client = .{ .allocator = self.allocator, .io = io };
     }
 
     /// Persistent HTTP POST using the provider's HTTP client (connection reuse).

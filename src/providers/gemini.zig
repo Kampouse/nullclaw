@@ -787,7 +787,13 @@ pub const GeminiProvider = struct {
         .deinit = deinitImpl,
         .stream_chat = streamChatImpl,
         .supports_streaming = supportsStreamingImpl,
+        .resetConnections = resetConnectionsImpl,
     };
+
+    fn resetConnectionsImpl(ptr: *anyopaque) void {
+        const self: *GeminiProvider = @ptrCast(@alignCast(ptr));
+        self.resetConnections();
+    }
 
     fn chatWithSystemImpl(
         ptr: *anyopaque,
@@ -874,6 +880,13 @@ pub const GeminiProvider = struct {
             }
         }
         self.auth = null;
+    }
+
+    /// Reset HTTP client connections (recreate client to clear stale connections)
+    pub fn resetConnections(self: *GeminiProvider) void {
+        self.http_client.deinit();
+        const threaded_io = @import("../http_util.zig").getThreadedIo();
+        self.http_client = .{ .allocator = self.allocator, .io = threaded_io };
     }
 
     /// Persistent HTTP POST using the provider's HTTP client (connection reuse).

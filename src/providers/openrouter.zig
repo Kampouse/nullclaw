@@ -291,7 +291,13 @@ pub const OpenRouterProvider = struct {
         .warmup = warmupImpl,
         .stream_chat = streamChatImpl,
         .supports_streaming = supportsStreamingImpl,
+        .resetConnections = resetConnectionsImpl,
     };
+
+    fn resetConnectionsImpl(ptr: *anyopaque) void {
+        const self: *OpenRouterProvider = @ptrCast(@alignCast(ptr));
+        self.resetConnections();
+    }
 
     fn warmupImpl(ptr: *anyopaque) void {
         const self: *OpenRouterProvider = @ptrCast(@alignCast(ptr));
@@ -405,6 +411,13 @@ pub const OpenRouterProvider = struct {
 
     pub fn deinit(self: *OpenRouterProvider) void {
         self.http_client.deinit();
+    }
+
+    /// Reset HTTP client connections (recreate client to clear stale connections)
+    pub fn resetConnections(self: *OpenRouterProvider) void {
+        self.http_client.deinit();
+        const io = @import("../http_util.zig").getThreadedIo();
+        self.http_client = .{ .allocator = self.allocator, .io = io };
     }
 
     /// Persistent HTTP POST using the provider's HTTP client (connection reuse).
@@ -561,7 +574,7 @@ fn curlGet(allocator: std.mem.Allocator, url: []const u8, auth_hdr: []const u8) 
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{
         "curl", "-s",
-        "-H", auth_hdr,
+        "-H",   auth_hdr,
         url,
     });
 

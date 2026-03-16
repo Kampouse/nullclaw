@@ -26,18 +26,18 @@ pub const OpenAiProvider = struct {
 
     pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) OpenAiProvider {
         const io = @import("../http_util.zig").getThreadedIo();
-        
+
         // Check for OPENAI_BASE_URL environment variable (for testing)
-        const env_base_url: ?[]const u8 = if (std.c.getenv("OPENAI_BASE_URL")) |url| 
-            std.mem.span(url) 
-        else 
+        const env_base_url: ?[]const u8 = if (std.c.getenv("OPENAI_BASE_URL")) |url|
+            std.mem.span(url)
+        else
             null;
-        
+
         const base_url: []const u8 = if (env_base_url) |env_url|
             env_url
         else
             DEFAULT_BASE_URL;
-        
+
         return .{
             .api_key = api_key,
             .base_url = base_url,
@@ -45,15 +45,14 @@ pub const OpenAiProvider = struct {
             .http_client = .{ .allocator = allocator, .io = io },
         };
     }
-    
-    pub fn initWithBaseUrl(allocator: std.mem.Allocator, api_key: ?[]const u8, base_url: []const u8) OpenAiProvider {
+
+    /// Reset HTTP client connections (recreate client to clear stale connections)
+    pub fn resetConnections(self: *OpenAiProvider) void {
+        // Deinit existing client
+        self.http_client.deinit();
+        // Recreate with fresh connection state
         const io = @import("../http_util.zig").getThreadedIo();
-        return .{
-            .api_key = api_key,
-            .base_url = base_url,
-            .allocator = allocator,
-            .http_client = .{ .allocator = allocator, .io = io },
-        };
+        self.http_client = .{ .allocator = self.allocator, .io = io };
     }
 
     /// Build a simple chat request JSON body.
@@ -204,7 +203,13 @@ pub const OpenAiProvider = struct {
         .deinit = deinitImpl,
         .stream_chat = streamChatImpl,
         .supports_streaming = supportsStreamingImpl,
+        .resetConnections = resetConnectionsImpl,
     };
+
+    fn resetConnectionsImpl(ptr: *anyopaque) void {
+        const self: *OpenAiProvider = @ptrCast(@alignCast(ptr));
+        self.resetConnections();
+    }
 
     fn streamChatImpl(
         ptr: *anyopaque,

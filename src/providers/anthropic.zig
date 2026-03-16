@@ -223,7 +223,13 @@ pub const AnthropicProvider = struct {
         .deinit = deinitImpl,
         .stream_chat = streamChatImpl,
         .supports_streaming = supportsStreamingImpl,
+        .resetConnections = resetConnectionsImpl,
     };
+
+    fn resetConnectionsImpl(ptr: *anyopaque) void {
+        const self: *AnthropicProvider = @ptrCast(@alignCast(ptr));
+        self.resetConnections();
+    }
 
     fn chatWithSystemImpl(
         ptr: *anyopaque,
@@ -326,6 +332,13 @@ pub const AnthropicProvider = struct {
 
     pub fn deinit(self: *AnthropicProvider) void {
         self.http_client.deinit();
+    }
+
+    /// Reset HTTP client connections (recreate client to clear stale connections)
+    pub fn resetConnections(self: *AnthropicProvider) void {
+        self.http_client.deinit();
+        const io = @import("../http_util.zig").getThreadedIo();
+        self.http_client = .{ .allocator = self.allocator, .io = io };
     }
 
     /// Persistent HTTP POST using the provider's HTTP client (connection reuse).

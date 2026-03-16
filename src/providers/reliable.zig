@@ -438,6 +438,12 @@ pub const ReliableProvider = struct {
             }
         }
 
+        // All providers failed - reset HTTP connections for next request
+        self.inner.resetConnections();
+        for (self.extras) |entry| {
+            entry.provider.resetConnections();
+        }
+
         return self.finalFailureError();
     }
 
@@ -476,6 +482,12 @@ pub const ReliableProvider = struct {
                     return result;
                 }
             }
+        }
+
+        // All providers failed - reset HTTP connections for next request
+        self.inner.resetConnections();
+        for (self.extras) |entry| {
+            entry.provider.resetConnections();
         }
 
         return self.finalFailureError();
