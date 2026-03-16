@@ -2628,15 +2628,16 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     defer if (session_mgr_opt) |*sm| sm.deinit();
     defer if (sec_tracker_opt) |*tracker| tracker.deinit();
 
-    // Resolve the listen address
-    const addr = try std.Io.net.IpAddress.parse(host, port);
-    var server = try std.Io.net.IpAddress.listen(addr, std.Options.debug_io, .{
-        .reuse_address = true,
-    });
-    defer server.deinit(std.Options.debug_io);
+    // Create listening socket using direct BSD calls (avoids Zig 0.16 I/O race condition)
+    const net_socket = @import("net_socket.zig");
+    const server_fd = net_socket.listenSocket(host, port) catch |err| {
+        std.log.err("Gateway: listen socket failed: {}", .{err});
+        return err;
+    };
+    defer net_socket.closeSocket(server_fd);
 
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
+    var bw = std.Io.File.stdout().writer(io, &stdout_buf);
     const stdout = &bw.interface;
     try stdout.print("Gateway listening on {s}:{d}\n", .{ host, port });
     try stdout.flush();
@@ -2653,8 +2654,8 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
     // Accept loop — read raw HTTP from TCP connections
     while (true) {
-        var conn = server.accept(std.Options.debug_io) catch continue;
-        defer conn.close(std.Options.debug_io);
+        const client_fd = net_socket.acceptConnection(server_fd) catch continue;
+        defer net_socket.closeSocket(client_fd);
 
         // Per-request arena — all request-scoped allocations freed in one shot
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -2663,8 +2664,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
         // Read request line + headers from TCP stream
         var req_buf: [4096]u8 = undefined;
-        var conn_reader = conn.reader(std.Options.debug_io, &req_buf);
-        const n = conn_reader.interface.readSliceShort(&req_buf) catch continue;
+        const n = net_socket.readSocket(client_fd, &req_buf) catch continue;
         if (n == 0) continue;
         const raw = req_buf[0..n];
 
@@ -2844,12 +2844,9 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         }
 
         // Send HTTP response
-        var resp_buf: [2048]u8 = undefined;
-        const resp = std.fmt.bufPrint(&resp_buf, "HTTP/1.1 {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}", .{ response_status, response_body.len, response_body }) catch continue;
-        // Write the response using the Stream's write method
-        var write_buf: [2048]u8 = undefined;
-        var writer = conn.writer(std.Options.debug_io, &write_buf);
-        _ = writer.interface.writeAll(resp) catch continue;
+        var resp_buf: [8192]u8 = undefined;
+        const resp = std.fmt.bufPrint(&resp_buf, "HTTP/1.1 {s}\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {d}\r\n\r\n{s}", .{ response_status, response_body.len, response_body }) catch continue;
+        _ = net_socket.writeSocket(client_fd, resp) catch continue;
     }
 }
 
