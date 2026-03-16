@@ -102,6 +102,13 @@ pub const SessionManager = struct {
         };
     }
 
+    /// Get current UNIX epoch seconds using the session manager's I/O context.
+    fn nowEpochSecs(self: *const SessionManager) u64 {
+        const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
+        if (now_ns < 0) return 0;
+        return @intCast(@as(u128, @intCast(now_ns)) / 1_000_000_000);
+    }
+
     pub fn deinit(self: *SessionManager) void {
         var it = self.sessions.iterator();
         while (it.next()) |entry| {
@@ -120,7 +127,7 @@ pub const SessionManager = struct {
         defer self.mutex.unlock(std.Options.debug_io);
 
         if (self.sessions.get(session_key)) |session| {
-            session.last_active = 0;
+            session.last_active = @intCast(self.nowEpochSecs());
             return session;
         }
 
@@ -146,10 +153,11 @@ pub const SessionManager = struct {
         agent.mem_rt = self.mem_rt;
         agent.memory_session_id = owned_key;
 
+        const now_secs = self.nowEpochSecs();
         session.* = .{
             .agent = agent,
-            .created_at = 0,
-            .last_active = 0,
+            .created_at = @intCast(now_secs),
+            .last_active = @intCast(now_secs),
             .last_consolidated = 0,
             .session_key = owned_key,
             .turn_count = 0,
@@ -280,11 +288,11 @@ pub const SessionManager = struct {
 
         const response = try session.agent.turn(content);
         session.turn_count += 1;
-        session.last_active = 0;
+        session.last_active = @intCast(self.nowEpochSecs());
 
         // Track consolidation timestamp
         if (session.agent.last_turn_compacted) {
-            session.last_consolidated = @intCast(@max(0, 0));
+            session.last_consolidated = @intCast(self.nowEpochSecs());
         }
 
         // Persist messages via session store
