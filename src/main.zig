@@ -2204,7 +2204,6 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         // Set up webhook message handler callback
         tg.webhook_handler = struct {
             fn handler(ctx: *anyopaque, alloc: std.mem.Allocator, sender: []const u8, content: []const u8, reply_target: ?[]const u8, message_id: ?i64, is_group: bool) ?[]const u8 {
-                _ = alloc;
                 _ = reply_target;
                 _ = message_id;
                 const hctx: *WebhookHandlerContext = @ptrCast(@alignCast(ctx));
@@ -2224,7 +2223,16 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
                 std.log.info("[WEBHOOK_HANDLER] Calling session_mgr.processMessage...", .{});
                 const reply = hctx.session_mgr.processMessage(session_key, content, null) catch |err| {
                     std.log.err("[WEBHOOK_HANDLER] Message processing error: {}", .{err});
-                    return null;
+                    const err_msg: []const u8 = switch (err) {
+                        error.AllProvidersFailed => "All configured providers failed. Check API credentials and try again.",
+                        error.RateLimited => "Rate limit exceeded. Please wait a moment and try again.",
+                        error.ContextLengthExceeded => "Message too long. Try /new for a fresh session.",
+                        error.ProviderDoesNotSupportVision => "Provider does not support image input.",
+                        error.NoResponseContent => "Model returned empty response. Please try again.",
+                        error.OutOfMemory => "Out of memory. Try /new for a fresh session.",
+                        else => "An error occurred. Please try again or use /new for a fresh session.",
+                    };
+                    return std.fmt.allocPrint(alloc, "❌ {s}", .{err_msg}) catch null;
                 };
 
                 // Log response (truncated)
@@ -2239,9 +2247,20 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 
         try tg.startWebhookServer(telegram_config.webhook_port);
 
-        // Keep main thread alive (Zig 0.16: use std.Io.sleep)
+        // Keep main thread alive and periodically evict idle sessions (Zig 0.16: use std.Io.sleep)
+        // This prevents memory leak from accumulating sessions in webhook mode
+        var eviction_counter: u32 = 0;
         while (true) {
             std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
+            eviction_counter += 1;
+            // Evict idle sessions every 5 minutes (5 iterations of 60-second sleep)
+            if (eviction_counter >= 5) {
+                eviction_counter = 0;
+                const evicted = session_mgr.evictIdle(3600, std.Options.debug_io); // 1 hour idle threshold
+                if (evicted > 0) {
+                    std.log.info("[WEBHOOK] Evicted {} idle sessions", .{evicted});
+                }
+            }
         }
     } else {
         // Traditional polling mode
