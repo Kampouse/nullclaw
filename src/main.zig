@@ -2260,6 +2260,9 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
                 if (evicted > 0) {
                     std.log.info("[WEBHOOK] Evicted {} idle sessions", .{evicted});
                 }
+                // Proactively send health check to keep HTTP connections alive during idle periods
+                // This is more efficient than resetting connections - it reuses the existing keep-alive connection
+                _ = tg.healthCheck();
             }
         }
     } else {

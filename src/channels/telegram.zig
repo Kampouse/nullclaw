@@ -2668,7 +2668,12 @@ pub const TelegramChannel = struct {
                     // Send the response back to Telegram (skip typing indicator for faster webhook response)
                     const reply_to_id: ?i64 = if (msg.is_group or self.reply_in_private) msg.message_id else null;
                     self.sendMessageWithReplySkipTyping(msg.sender, response, reply_to_id, true) catch |send_err| {
-                        log.warn("[WEBHOOK] Failed to send reply: {}", .{send_err});
+                        log.warn("[WEBHOOK] Failed to send reply: {} - resetting connections and retrying", .{send_err});
+                        // Reset stale HTTP connections and retry once
+                        self.resetConnections();
+                        self.sendMessageWithReplySkipTyping(msg.sender, response, reply_to_id, true) catch |retry_err| {
+                            log.warn("[WEBHOOK] Retry failed: {}", .{retry_err});
+                        };
                     };
                     log.debug("[WEBHOOK] Reply sent successfully", .{});
                 } else {
