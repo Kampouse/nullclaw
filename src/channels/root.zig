@@ -287,10 +287,11 @@ pub fn isAllowedExact(allowed: []const []const u8, sender: []const u8) bool {
 }
 
 /// Get current UNIX epoch seconds.
+/// Uses std.c.gettimeofday() which works in tests unlike Io.Clock.real.now().
 pub fn nowEpochSecs() u64 {
-    const ns = std.Io.Clock.real.now(io).nanoseconds;
-    if (ns < 0) return 0;
-    return @intCast(@as(u128, @intCast(ns)) / 1_000_000_000);
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    return @intCast(tv.sec);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

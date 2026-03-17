@@ -19,6 +19,7 @@ const Sha256 = hash.sha2.Sha256;
 const Atomic = @import("portable_atomic.zig").Atomic;
 const Allocator = std.mem.Allocator;
 const util = @import("util.zig");
+const IoMutex = std.Io.Mutex;
 
 pub const log = std.log.scoped(.session_git);
 
@@ -28,6 +29,12 @@ pub const log = std.log.scoped(.session_git);
 
 /// SHA-256 hash used for content addressing
 pub const Hash = [32]u8;
+
+/// History entry returned by getHistory
+pub const HistoryEntry = struct {
+    role: MessageRole,
+    content: []const u8,
+};
 
 /// Compute SHA-256 hash of data
 fn computeHash(data: []const u8) Hash {
@@ -241,8 +248,11 @@ pub const Thread = struct {
 
 /// Content-addressable object store (like Git object database)
 /// Owns all Message and Turn objects
+/// Thread-safe: protected by mutex for concurrent access
 pub const ObjectStore = struct {
     allocator: Allocator,
+    /// Mutex for thread-safe access to HashMaps
+    mutex: IoMutex,
 
     /// Message hash -> Message (owned)
     messages: std.HashMapUnmanaged(Hash, *Message, struct {
@@ -267,6 +277,7 @@ pub const ObjectStore = struct {
     pub fn init(allocator: Allocator) ObjectStore {
         return .{
             .allocator = allocator,
+            .mutex = IoMutex{ .state = .init(.unlocked) },
             .messages = .{},
             .turns = .{},
         };
@@ -302,13 +313,18 @@ pub const ObjectStore = struct {
     }
 
     /// Store a message (deduplicated by hash)
+    /// Thread-safe: locks mutex during HashMap operation
     pub fn storeMessage(self: *ObjectStore, role: MessageRole, content: []const u8) !*const Message {
-        // Compute hash first
+        // Compute hash first (no lock needed)
         var hasher = Sha256.init(.{});
         hasher.update(role.toSlice());
         hasher.update(content);
         var computed_hash: Hash = undefined;
         hasher.final(&computed_hash);
+
+        // Lock for HashMap access
+        try self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
 
         // Check if already stored
         if (self.messages.get(computed_hash)) |existing| {
@@ -324,15 +340,20 @@ pub const ObjectStore = struct {
     }
 
     /// Store a turn (deduplicated by hash)
+    /// Thread-safe: locks mutex during HashMap operation
     pub fn storeTurn(
         self: *ObjectStore,
         messages: []*const Message,
         parents: []*const Turn,
         metadata: TurnMetadata,
     ) !*const Turn {
-        // Create turn (computes hash internally)
+        // Create turn (computes hash internally - no lock needed)
         const turn = try Turn.init(self.allocator, messages, parents, metadata);
         errdefer self.allocator.destroy(turn);
+
+        // Lock for HashMap access
+        try self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
 
         // Check if already stored
         if (self.turns.get(turn.id)) |existing| {
@@ -346,13 +367,17 @@ pub const ObjectStore = struct {
         return turn;
     }
 
-    /// Get message by hash
+    /// Get message by hash (thread-safe read)
     pub fn getMessage(self: *ObjectStore, h: Hash) ?*const Message {
+        self.mutex.lock(std.Options.debug_io) catch return null;
+        defer self.mutex.unlock(std.Options.debug_io);
         return self.messages.get(h);
     }
 
-    /// Get turn by hash
+    /// Get turn by hash (thread-safe read)
     pub fn getTurn(self: *ObjectStore, h: Hash) ?*const Turn {
+        self.mutex.lock(std.Options.debug_io) catch return null;
+        defer self.mutex.unlock(std.Options.debug_io);
         return self.turns.get(h);
     }
 };
@@ -383,9 +408,12 @@ pub const Conflict = struct {
 };
 
 /// Git-like session (repository)
+/// Thread-safe: protected by mutex for concurrent thread operations
 pub const GitSession = struct {
     allocator: Allocator,
     object_store: ObjectStore,
+    /// Mutex for thread-safe access to threads HashMap
+    mutex: IoMutex,
     /// Thread name -> Thread pointer
     /// Key is owned by this map, Thread.name points to the same memory
     threads: std.StringHashMapUnmanaged(*Thread),
@@ -425,6 +453,7 @@ pub const GitSession = struct {
         return .{
             .allocator = allocator,
             .object_store = store,
+            .mutex = IoMutex{ .state = .init(.unlocked) },
             .threads = threads,
             .active_thread_name = owned_name, // Points to same memory as hash map key
             .root_turn = root,
@@ -432,6 +461,9 @@ pub const GitSession = struct {
     }
 
     pub fn deinit(self: *GitSession) void {
+        self.mutex.lock(std.Options.debug_io) catch {};
+        defer self.mutex.unlock(std.Options.debug_io);
+
         // Free all threads
         // Note: thread.name and hash map key point to the same memory.
         // We only free the key (which also frees thread.name).
@@ -459,19 +491,27 @@ pub const GitSession = struct {
         self.object_store.deinit();
     }
 
-    /// Get current active thread
+    /// Get current active thread (thread-safe)
     pub fn getActiveThread(self: *GitSession) ?*Thread {
+        self.mutex.lock(std.Options.debug_io) catch return null;
+        defer self.mutex.unlock(std.Options.debug_io);
         return self.threads.get(self.active_thread_name);
     }
 
-    /// Get main thread
+    /// Get main thread (thread-safe)
     pub fn getMainThread(self: *GitSession) ?*Thread {
+        self.mutex.lock(std.Options.debug_io) catch return null;
+        defer self.mutex.unlock(std.Options.debug_io);
         return self.threads.get(self.main_thread_name);
     }
 
     /// Fork current thread (create new branch from current head)
+    /// Thread-safe: locks mutex during HashMap operation
     pub fn fork(self: *GitSession, new_thread_name: []const u8) !*Thread {
-        const active = self.getActiveThread() orelse return error.NoActiveThread;
+        try self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
+
+        const active = self.threads.get(self.active_thread_name) orelse return error.NoActiveThread;
 
         // Check if thread name already exists
         if (self.threads.get(new_thread_name)) |_| {
@@ -496,6 +536,7 @@ pub const GitSession = struct {
     }
 
     /// Add a turn to a thread
+    /// Thread-safe: locks mutex during thread lookup and head update
     pub fn commit(
         self: *GitSession,
         thread_name: []const u8,
@@ -503,9 +544,7 @@ pub const GitSession = struct {
         contents: []const []const u8,
         metadata: TurnMetadata,
     ) !*const Turn {
-        const thread = self.threads.get(thread_name) orelse return error.ThreadNotFound;
-
-        // Store all messages
+        // Store all messages (ObjectStore has its own mutex)
         var msg_list: std.ArrayListUnmanaged(*const Message) = .{};
         defer msg_list.deinit(self.allocator);
 
@@ -513,6 +552,12 @@ pub const GitSession = struct {
             const msg = try self.object_store.storeMessage(role, content);
             try msg_list.append(self.allocator, msg);
         }
+
+        // Lock for thread access and head update
+        try self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
+
+        const thread = self.threads.get(thread_name) orelse return error.ThreadNotFound;
 
         // Create new turn with current head as parent
         var parent_buf: [1]*const Turn = .{thread.head};
@@ -616,9 +661,13 @@ pub const GitSession = struct {
     }
 
     /// Merge a thread into main thread
+    /// Thread-safe: locks mutex during entire merge operation
     pub fn merge(self: *GitSession, source_thread_name: []const u8) !MergeResult {
+        try self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
+
         const source = self.threads.get(source_thread_name) orelse return error.ThreadNotFound;
-        const main = self.getMainThread() orelse return error.NoMainThread;
+        const main = self.threads.get(self.main_thread_name) orelse return error.NoMainThread;
 
         // Find common ancestor
         const ancestor = self.findCommonAncestor(main.head, source.head);
@@ -672,6 +721,84 @@ pub const GitSession = struct {
             .conflicts = &.{},
             .merged_turn = merge_turn,
         };
+    }
+
+    /// Try to merge if this worker was the first to complete (main hasn't changed since fork).
+    /// Returns error.StaleFork if another worker has already merged.
+    /// This implements "first-to-complete wins" conflict resolution.
+    pub fn tryMergeIfFirst(
+        self: *GitSession,
+        source_thread_name: []const u8,
+        expected_main_head: *const Turn,
+    ) !MergeResult {
+        try self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
+
+        const source = self.threads.get(source_thread_name) orelse return error.ThreadNotFound;
+        const main = self.threads.get(self.main_thread_name) orelse return error.NoMainThread;
+
+        // Check if main has moved since we forked
+        if (!std.mem.eql(u8, &main.head.id, &expected_main_head.id)) {
+            // Another worker finished first - our work is stale
+            return error.StaleFork;
+        }
+
+        // Main hasn't changed - safe to merge
+        // Collect turns from source branch
+        var source_turns: std.ArrayListUnmanaged(*const Turn) = .{};
+        defer source_turns.deinit(self.allocator);
+
+        var current: *const Turn = source.head;
+        while (true) {
+            if (std.mem.eql(u8, &current.id, &expected_main_head.id)) break;
+            source_turns.append(self.allocator, current) catch return error.OutOfMemory;
+            if (current.parents.len == 0) break;
+            current = current.parents[0];
+        }
+
+        // Reverse to get chronological order
+        std.mem.reverse(*const Turn, source_turns.items);
+
+        // Collect messages from source branch
+        var all_messages: std.ArrayListUnmanaged(*const Message) = .{};
+        defer all_messages.deinit(self.allocator);
+
+        for (source_turns.items) |turn| {
+            for (turn.messages) |msg| {
+                all_messages.append(self.allocator, msg) catch return error.OutOfMemory;
+            }
+        }
+
+        // Create merge commit with both parents
+        var merge_parents: [2]*const Turn = .{ main.head, source.head };
+        const merge_turn = try self.object_store.storeTurn(
+            all_messages.items,
+            &merge_parents,
+            .{ .model_name = "merge", .provider = "system" },
+        );
+
+        // Update main thread head
+        main.updateHead(merge_turn);
+
+        // Clean up merged thread
+        if (self.threads.fetchRemove(source_thread_name)) |entry| {
+            self.allocator.destroy(entry.value);
+            self.allocator.free(entry.key);
+        }
+
+        return .{
+            .success = true,
+            .conflicts = &.{},
+            .merged_turn = merge_turn,
+        };
+    }
+
+    /// Get the current main head (for comparison before merge)
+    pub fn getMainHead(self: *GitSession) ?*const Turn {
+        self.mutex.lock(std.Options.debug_io) catch return null;
+        defer self.mutex.unlock(std.Options.debug_io);
+        const main = self.threads.get(self.main_thread_name) orelse return null;
+        return main.head;
     }
 
     /// Delete a thread (does not delete turns)
@@ -847,4 +974,314 @@ test "GitSession finds common ancestor" {
 
     const ancestor = session.findCommonAncestor(main_thread.head, branch_thread.head);
     try testing.expect(ancestor != null);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GitSessionManager - Manages GitSession instances per chat
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Manages GitSession instances keyed by chat_id.
+/// Thread-safe: uses mutex to protect the sessions HashMap.
+/// Each chat_id gets its own GitSession for parallel processing.
+pub const GitSessionManager = struct {
+    allocator: Allocator,
+    /// Map of chat_id -> GitSession
+    sessions: std.StringHashMapUnmanaged(*GitSession),
+    /// Mutex for thread-safe access to sessions map
+    mutex: IoMutex,
+
+    pub fn init(allocator: Allocator) GitSessionManager {
+        return .{
+            .allocator = allocator,
+            .sessions = .{},
+            .mutex = IoMutex{ .state = .init(.unlocked) },
+        };
+    }
+
+    pub fn deinit(self: *GitSessionManager) void {
+        self.mutex.lock(std.Options.debug_io) catch {};
+        defer self.mutex.unlock(std.Options.debug_io);
+
+        var iter = self.sessions.iterator();
+        while (iter.next()) |entry| {
+            const session = entry.value_ptr.*;
+            const key = entry.key_ptr.*;
+
+            session.deinit();
+            self.allocator.destroy(session);
+            self.allocator.free(key);
+        }
+        self.sessions.deinit(self.allocator);
+    }
+
+    /// Get or create a GitSession for the given chat_id.
+    /// Thread-safe: locks mutex during lookup/insert.
+    /// Get or create a session for a chat ID.
+    /// Thread-safe: locks mutex internally.
+    pub fn getOrCreate(self: *GitSessionManager, chat_id: []const u8) !*GitSession {
+        try self.mutex.lock(std.Options.debug_io);
+        defer self.mutex.unlock(std.Options.debug_io);
+
+        return self.getOrCreateInternal(chat_id);
+    }
+
+    /// Internal version of getOrCreate that assumes mutex is already held.
+    /// Must only be called when mutex is locked.
+    fn getOrCreateInternal(self: *GitSessionManager, chat_id: []const u8) !*GitSession {
+        // Check if session exists
+        if (self.sessions.get(chat_id)) |session| {
+            return session;
+        }
+
+        // Create new session
+        const owned_key = try self.allocator.dupe(u8, chat_id);
+        errdefer self.allocator.free(owned_key);
+
+        const session = try self.allocator.create(GitSession);
+        errdefer self.allocator.destroy(session);
+
+        session.* = try GitSession.init(self.allocator);
+        errdefer session.deinit();
+
+        try self.sessions.put(self.allocator, owned_key, session);
+
+        return session;
+    }
+
+    /// Result of forking a worker thread.
+    /// Contains both the thread name and the expected main head for "first-to-complete wins" merge.
+    pub const ForkResult = struct {
+        thread_name: []const u8,
+        expected_main_head: *const Turn,
+    };
+
+    /// Fork a worker thread for parallel processing.
+    /// Returns ForkResult with thread name and expected main head for "first-to-complete wins" merge.
+    /// Thread-safe: the GitSession has its own mutex for fork operation.
+    pub fn forkWorker(self: *GitSessionManager, chat_id: []const u8, worker_id: []const u8) !ForkResult {
+        const session = try self.getOrCreate(chat_id);
+
+        // Get main head BEFORE forking (for "first-to-complete wins" comparison)
+        const expected_main_head = session.getMainHead() orelse return error.NoMainThread;
+
+        // Generate unique thread name
+        const thread_name = try std.fmt.allocPrint(
+            self.allocator,
+            "worker-{s}",
+            .{worker_id},
+        );
+        errdefer self.allocator.free(thread_name);
+
+        // Fork from current head
+        _ = try session.fork(thread_name);
+
+        return .{
+            .thread_name = thread_name,
+            .expected_main_head = expected_main_head,
+        };
+    }
+
+    /// Commit messages to a worker thread.
+    /// Thread-safe: the GitSession has its own mutex for commit operation.
+    pub fn commitToWorker(
+        self: *GitSessionManager,
+        chat_id: []const u8,
+        thread_name: []const u8,
+        messages: []const MessageRole,
+        contents: []const []const u8,
+        metadata: TurnMetadata,
+    ) !*const Turn {
+        const session = try self.getOrCreate(chat_id);
+        return try session.commit(thread_name, messages, contents, metadata);
+    }
+
+    /// Try to merge a worker thread back to main using "first-to-complete wins" strategy.
+    /// Returns error.StaleFork if another worker has already merged.
+    /// Thread-safe: the GitSession has its own mutex for merge operation.
+    /// NOTE: Caller owns thread_name and must free it after merge.
+    pub fn tryMergeWorkerIfFirst(
+        self: *GitSessionManager,
+        chat_id: []const u8,
+        thread_name: []const u8,
+        expected_main_head: *const Turn,
+    ) !MergeResult {
+        const session = try self.getOrCreate(chat_id);
+        return try session.tryMergeIfFirst(thread_name, expected_main_head);
+    }
+
+    /// Merge a worker thread back to main (unconditional merge).
+    /// Use tryMergeWorkerIfFirst for "first-to-complete wins" strategy.
+    /// Thread-safe: the GitSession has its own mutex for merge operation.
+    /// NOTE: Caller owns thread_name and must free it after merge.
+    pub fn mergeWorker(self: *GitSessionManager, chat_id: []const u8, thread_name: []const u8) !MergeResult {
+        const session = try self.getOrCreate(chat_id);
+        return try session.merge(thread_name);
+    }
+
+    /// Get history from a specific thread (for processing).
+    /// Returns allocated slice that caller must free.
+    /// Each message content is also allocated and must be freed by caller.
+    /// Thread-safe: locks mutex during entire operation to prevent race with merge().
+    pub fn getHistory(
+        self: *GitSessionManager,
+        chat_id: []const u8,
+        thread_name: []const u8,
+        allocator: Allocator,
+    ) ![]HistoryEntry {
+        // Lock mutex to prevent race condition with merge() modifying GitSession
+        // while we're reading Turn pointers. merge() holds this same mutex.
+        self.mutex.lock(std.Options.debug_io) catch return error.InvalidState;
+        defer self.mutex.unlock(std.Options.debug_io);
+
+        // Use internal version to avoid deadlock (mutex already held)
+        const session = try self.getOrCreateInternal(chat_id);
+        const turns = try session.getHistory(thread_name, allocator);
+        defer allocator.free(turns);
+
+        // Count total messages
+        var total_messages: usize = 0;
+        for (turns) |turn| {
+            total_messages += turn.messages.len;
+        }
+
+        // Allocate result
+        var result = try allocator.alloc(HistoryEntry, total_messages);
+        errdefer allocator.free(result);
+
+        // Flatten turns into messages (oldest first)
+        var idx: usize = 0;
+        // Iterate in reverse order (turns are from newest to oldest)
+        var turn_idx: usize = turns.len;
+        while (turn_idx > 0) {
+            turn_idx -= 1;
+            const turn = turns[turn_idx];
+            // Messages within a turn are already in order
+            for (turn.messages) |msg| {
+                result[idx].role = msg.role;
+                result[idx].content = try allocator.dupe(u8, msg.content);
+                idx += 1;
+            }
+        }
+
+        return result;
+    }
+
+    /// Delete a session (for cleanup or reset).
+    pub fn deleteSession(self: *GitSessionManager, chat_id: []const u8) void {
+        self.mutex.lock(std.Options.debug_io) catch {};
+        defer self.mutex.unlock(std.Options.debug_io);
+
+        if (self.sessions.fetchRemove(chat_id)) |entry| {
+            const session = entry.value;
+            const key = entry.key;
+
+            session.deinit();
+            self.allocator.destroy(session);
+            self.allocator.free(key);
+        }
+    }
+
+    /// Get number of active sessions.
+    pub fn sessionCount(self: *GitSessionManager) usize {
+        self.mutex.lock(std.Options.debug_io) catch return 0;
+        defer self.mutex.unlock(std.Options.debug_io);
+        return self.sessions.count();
+    }
+
+    /// Generate a unique worker ID from timestamp and thread ID.
+    pub fn generateWorkerId(allocator: Allocator) ![]const u8 {
+        const timestamp = util.nanoTimestamp();
+        const thread_id = std.Thread.getCurrentId();
+        return std.fmt.allocPrint(allocator, "{}-{}", .{ timestamp, thread_id });
+    }
+};
+
+test "GitSessionManager getOrCreate" {
+    const testing = std.testing;
+    var manager = GitSessionManager.init(testing.allocator);
+    defer manager.deinit();
+
+    const session1 = try manager.getOrCreate("chat-123");
+    const session2 = try manager.getOrCreate("chat-123");
+
+    // Same chat_id returns same session
+    try testing.expect(session1 == session2);
+
+    // Different chat_id creates new session
+    const session3 = try manager.getOrCreate("chat-456");
+    try testing.expect(session1 != session3);
+
+    try testing.expectEqual(@as(usize, 2), manager.sessionCount());
+}
+
+test "GitSessionManager fork and merge worker" {
+    const testing = std.testing;
+    var manager = GitSessionManager.init(testing.allocator);
+    defer manager.deinit();
+
+    // Fork a worker
+    const worker_id = try GitSessionManager.generateWorkerId(testing.allocator);
+    defer testing.allocator.free(worker_id);
+
+    const fork_result = try manager.forkWorker("chat-123", worker_id);
+    const thread_name = fork_result.thread_name;
+    const expected_main_head = fork_result.expected_main_head;
+    defer testing.allocator.free(thread_name);
+
+    // Commit to worker
+    _ = try manager.commitToWorker(
+        "chat-123",
+        thread_name,
+        &.{ .user, .assistant },
+        &.{ "Hello", "Hi!" },
+        .{},
+    );
+
+    // Merge back to main using first-to-complete wins strategy
+    const result = try manager.tryMergeWorkerIfFirst("chat-123", thread_name, expected_main_head);
+    try testing.expect(result.success);
+}
+
+test "GitSessionManager first-to-complete wins" {
+    const testing = std.testing;
+    var manager = GitSessionManager.init(testing.allocator);
+    defer manager.deinit();
+
+    // Fork two workers from the same main
+    const worker_id1 = try GitSessionManager.generateWorkerId(testing.allocator);
+    defer testing.allocator.free(worker_id1);
+    const worker_id2 = try GitSessionManager.generateWorkerId(testing.allocator);
+    defer testing.allocator.free(worker_id2);
+
+    const fork1 = try manager.forkWorker("chat-456", worker_id1);
+    const fork2 = try manager.forkWorker("chat-456", worker_id2);
+
+    defer testing.allocator.free(fork1.thread_name);
+    defer testing.allocator.free(fork2.thread_name);
+
+    // Commit to worker 1
+    _ = try manager.commitToWorker(
+        "chat-456",
+        fork1.thread_name,
+        &.{ .user, .assistant },
+        &.{ "Worker 1 says hi", "Hello!" },
+        .{},
+    );
+
+    // Commit to worker 2
+    _ = try manager.commitToWorker(
+        "chat-456",
+        fork2.thread_name,
+        &.{ .user, .assistant },
+        &.{ "Worker 2 says bye", "Goodbye!" },
+        .{},
+    );
+
+    // Worker 1 merges first - should succeed
+    const result1 = try manager.tryMergeWorkerIfFirst("chat-456", fork1.thread_name, fork1.expected_main_head);
+    try testing.expect(result1.success);
+
+    // Worker 2 tries to merge - should fail because main changed
+    const result2 = manager.tryMergeWorkerIfFirst("chat-456", fork2.thread_name, fork2.expected_main_head);
+    try testing.expectError(error.StaleFork, result2);
 }

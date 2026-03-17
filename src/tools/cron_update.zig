@@ -112,7 +112,7 @@ test "cron_update_expression" {
     var ct = CronUpdateTool{};
     const t = ct.tool();
     // First create a job via CronScheduler so there's something to update
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
     cron.saveJobs(&scheduler) catch {};
@@ -132,7 +132,7 @@ test "cron_update_expression" {
 test "cron_update_disable" {
     var ct = CronUpdateTool{};
     const t = ct.tool();
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
     cron.saveJobs(&scheduler) catch {};

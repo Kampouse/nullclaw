@@ -260,7 +260,7 @@ pub const TelegramConfig = struct {
     /// Async webhook configuration
     /// When enabled, uses kqueue/epoll for connection handling and thread pool for LLM processing.
     /// Recommended for high-throughput scenarios or when LLM processing takes significant time.
-    async_webhook: bool = false,
+    async_webhook: bool = true,
     /// Number of worker threads for async webhook (only used when async_webhook is true)
     webhook_workers: usize = 4,
 };

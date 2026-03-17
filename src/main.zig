@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const yc = @import("nullclaw");
+const async_session = yc.async_session;
 
 // Zig 0.16.0 compatibility layer
 
@@ -2250,13 +2251,29 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
             // Async webhook mode - use thread pool for parallel processing
             std.debug.print("  Async webhook enabled with {} workers\n", .{telegram_config.webhook_workers});
 
+            // Create AsyncSessionManager for parallel processing with Git-like history
+            // Note: Uses same config, provider, tools, memory as sync mode but with Git-like history
+            // This enables true parallel processing without mutex blocking on session history
+            var async_session_mgr = async_session.AsyncSessionManager.init(
+                allocator,
+                io,
+                &config,
+                provider_i,
+                tools,
+                mem_opt,
+                obs,
+                if (mem_rt) |*rt| rt.session_store else null,
+                if (mem_rt) |*rt| rt.response_cache else null,
+            );
+            defer async_session_mgr.deinit();
+
             // Create async webhook handler context
             const AsyncWebhookContext = struct {
-                session_mgr: *yc.session.SessionManager,
+                async_session_mgr: *async_session.AsyncSessionManager,
                 account_id: []const u8,
             };
             var async_ctx = AsyncWebhookContext{
-                .session_mgr = &session_mgr,
+                .async_session_mgr = &async_session_mgr,
                 .account_id = tg.account_id,
             };
 
@@ -2265,7 +2282,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
                 telegram_config.webhook_port,
                 telegram_config.webhook_workers,
                 &async_ctx,
-                asyncWebhookHandler,
+                asyncWebhookHandlerNew,
             );
 
             // Keep main thread alive
@@ -2308,6 +2325,64 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 // ── Async Webhook Handler ─────────────────────────────────────────────────────────
 
 /// Handler for async webhook mode - called by worker threads to process messages
+/// Uses AsyncSessionManager with Git-like fork/merge for parallel processing
+fn asyncWebhookHandlerNew(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    chat_id: []const u8,
+    content: []const u8,
+    reply_to: ?i64,
+    is_group: bool,
+) ?[]const u8 {
+    _ = reply_to;
+    _ = is_group;
+    const async_ctx: *const struct {
+        async_session_mgr: *async_session.AsyncSessionManager,
+        account_id: []const u8,
+    } = @ptrCast(@alignCast(ctx));
+
+    std.log.info("[ASYNC_WEBHOOK] Processing message from chat_id={s} content_len={d}", .{ chat_id, content.len });
+
+    // Build session key
+    var key_buf: [256]u8 = undefined;
+    const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ async_ctx.account_id, chat_id }) catch chat_id;
+
+    // Process message through AsyncSessionManager (parallel, non-blocking)
+    const reply = async_ctx.async_session_mgr.processMessageAsync(
+        session_key,
+        content,
+        null, // conversation_context
+        null, // stream_sink
+    ) catch |err| {
+        std.log.err("[ASYNC_WEBHOOK] Message processing error: {}", .{err});
+        const err_msg: []const u8 = switch (err) {
+            error.ConflictResolutionNeeded => "Another message is being processed. Please try again.",
+            error.AllProvidersFailed => "All configured providers failed. Check API credentials and try again.",
+            error.RateLimited => "Rate limit exceeded. Please wait a moment and try again.",
+            error.ContextLengthExceeded => "Message too long. Try /new for a fresh session.",
+            error.ProviderDoesNotSupportVision => "Provider does not support image input.",
+            error.NoResponseContent => "Model returned empty response. Please try again.",
+            error.OutOfMemory => "Out of memory. Try /new for a fresh session.",
+            error.ForkFailed => "Session conflict. Please try again.",
+            error.MergeFailed => "Session merge failed. Please try again.",
+            error.SessionNotFound => "Session not found. Please try again.",
+            error.ProviderError => "Provider error. Please try again.",
+            error.InvalidState => "Invalid session state. Please try again.",
+        };
+        return std.fmt.allocPrint(allocator, "❌ {s}", .{err_msg}) catch null;
+    };
+
+    std.log.info("[ASYNC_WEBHOOK] Response generated (len={d})", .{reply.len});
+
+    // Free the response (duplicated by processMessageAsync)
+    defer allocator.free(reply);
+
+    // Return a copy for the caller
+    return allocator.dupe(u8, reply) catch null;
+}
+
+/// Legacy handler for async webhook mode - kept for backward compatibility
+/// Uses traditional SessionManager (blocks on mutex)
 fn asyncWebhookHandler(
     ctx: *anyopaque,
     allocator: std.mem.Allocator,

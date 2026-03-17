@@ -251,26 +251,13 @@ pub const WorkerPool = struct {
         const contexts = try allocator.alloc(WorkerContext, config.num_workers);
         errdefer allocator.free(contexts);
 
-        var running = Atomic(bool).init(true);
-
-        for (0..config.num_workers) |i| {
-            contexts[i] = .{
-                .id = i,
-                .queue = queue,
-                .handler_ctx = handler_ctx,
-                .handler = handler,
-                .sender_ctx = sender_ctx,
-                .sender = sender,
-                .running = &running,
-                .allocator = allocator,
-                .health_check_interval_secs = config.health_check_interval_secs,
-            };
-        }
+        // Note: contexts are initialized in start() after pool is in its final location
+        // This avoids a dangling pointer bug where contexts would point to a local running variable
 
         return .{
             .workers = workers,
             .contexts = contexts,
-            .running = running,
+            .running = Atomic(bool).init(true),
             .queue = queue,
             .handler_ctx = handler_ctx,
             .handler = handler,
@@ -296,6 +283,21 @@ pub const WorkerPool = struct {
 
     /// Start all worker threads
     pub fn start(self: *WorkerPool) !void {
+        // Initialize contexts now that pool is in its final location
+        // This ensures running pointer points to the pool's field, not a local variable
+        for (0..self.workers.len) |i| {
+            self.contexts[i] = .{
+                .id = i,
+                .queue = self.queue,
+                .handler_ctx = self.handler_ctx,
+                .handler = self.handler,
+                .sender_ctx = self.sender_ctx,
+                .sender = self.sender,
+                .running = &self.running,
+                .allocator = self.allocator,
+                .health_check_interval_secs = 60,
+            };
+        }
         for (0..self.workers.len) |i| {
             self.workers[i] = try std.Thread.spawn(.{}, WorkerContext.run, .{&self.contexts[i]});
         }
@@ -654,7 +656,7 @@ test "MessageQueue push and pop" {
         .content = try testing.allocator.dupe(u8, "Hello"),
         .reply_to = null,
         .is_group = false,
-        .queued_at = std.time.timestamp(),
+        .queued_at = util.timestampUnix(),
         .allocator = testing.allocator,
     };
 
@@ -675,7 +677,7 @@ test "WorkerPool initialization" {
     var queue = MessageQueue.init(testing.allocator);
     defer queue.deinit(testing.allocator);
 
-    const pool = try WorkerPool.init(
+    var pool = try WorkerPool.init(
         testing.allocator,
         &queue,
         .{ .num_workers = 2 },

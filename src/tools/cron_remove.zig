@@ -72,7 +72,7 @@ test "cron_remove_not_found" {
 
 test "cron_remove_success" {
     // First, create a job via the scheduler directly
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
     const job_id = try std.testing.allocator.dupe(u8, job.id);

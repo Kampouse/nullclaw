@@ -40,6 +40,8 @@ pub const update = @import("update.zig");
 // Phase 2: Agent core
 pub const agent = @import("agent.zig");
 pub const session = @import("session.zig");
+pub const async_session = @import("async_session.zig");
+pub const session_git = @import("session_git.zig");
 pub const providers = @import("providers/root.zig");
 pub const memory = @import("memory/root.zig");
 

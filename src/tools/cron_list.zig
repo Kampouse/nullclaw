@@ -56,7 +56,7 @@ pub const CronListTool = struct {
 
 test "cron_list_empty" {
     // An empty scheduler should produce no formatted output
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const jobs = scheduler.listJobs();
@@ -64,7 +64,7 @@ test "cron_list_empty" {
 }
 
 test "cron_list_with_jobs" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/5 * * * *", "echo hello");
@@ -87,7 +87,7 @@ test "cron_list_with_jobs" {
 }
 
 test "cron_list_shows_paused" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("0 * * * *", "echo paused_test");

@@ -826,7 +826,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
         }
 
         const content = pid_buf[0..@as(usize, @intCast(bytes_read))];
-        const pid_str = std.mem.trim(u8, content, &.{'\n', '\r'});
+        const pid_str = std.mem.trim(u8, content, &.{ '\n', '\r' });
         const pid = std.fmt.parseInt(u32, pid_str, 10) catch 0;
         break :blk pid;
     };
@@ -879,7 +879,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     {
         var onboard_span = trace.startSpan(.config, "scaffold_workspace");
         defer if (onboard_span) |*s| s.end();
-        
+
         try onboard.scaffoldWorkspace(allocator, config.workspace_dir, &onboard.ProjectContext{});
         trace.info(.daemon, "Workspace scaffolded", .{});
     }
@@ -918,7 +918,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     config.printModelConfig();
     try stdout.print("  Ctrl+C to stop\n\n", .{});
     try stdout.flush();
-    
+
     trace.info(.daemon, "Components: gateway={}, channels={}, heartbeat={}, scheduler={}", .{
         true,
         has_supervised_channels,
@@ -940,7 +940,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
     // Spawn gateway thread with larger stack for TLS operations (8MB)
     var gw_span = trace.startSpan(.gateway, "start") orelse null;
     defer if (gw_span) |*s| trace.endSpan(s);
-    
+
     state.markRunning("gateway");
     const gw_thread = std.Thread.spawn(.{ .stack_size = 8 * 1024 * 1024 }, gatewayThread, .{ allocator, config, host, port, &state, &event_bus, io }) catch |err| {
         state.markError("gateway", @errorName(err));
@@ -1851,13 +1851,13 @@ test "mergeSchedulerTickChangesAndSave preserves externally added jobs" {
     const cmd_runtime = "echo merge_runtime_keep_7d1c";
     const cmd_external = "echo merge_external_add_9a42";
 
-    var runtime = CronScheduler.init(allocator, 32, true);
+    var runtime = CronScheduler.init(allocator, 32, true, std.Options.debug_io);
     defer runtime.deinit();
     _ = try runtime.addJob("* * * * *", cmd_runtime);
     runtime.jobs.items[runtime.jobs.items.len - 1].next_run_secs = 0;
     try cron.saveJobs(&runtime);
 
-    var loaded = CronScheduler.init(allocator, 32, true);
+    var loaded = CronScheduler.init(allocator, 32, true, std.Options.debug_io);
     defer loaded.deinit();
     try cron.loadJobs(&loaded);
 
@@ -1869,7 +1869,7 @@ test "mergeSchedulerTickChangesAndSave preserves externally added jobs" {
     try buildSchedulerSnapshot(allocator, &loaded, &before_tick);
 
     // Simulate concurrent writer adding a new job after scheduler reload.
-    var external = CronScheduler.init(allocator, 32, true);
+    var external = CronScheduler.init(allocator, 32, true, std.Options.debug_io);
     defer external.deinit();
     try cron.loadJobs(&external);
     _ = try external.addJob("*/5 * * * *", cmd_external);
@@ -1878,7 +1878,7 @@ test "mergeSchedulerTickChangesAndSave preserves externally added jobs" {
     _ = loaded.tick(util.timestampUnix(), null);
     try mergeSchedulerTickChangesAndSave(allocator, &loaded, &before_tick);
 
-    var merged = CronScheduler.init(allocator, 64, true);
+    var merged = CronScheduler.init(allocator, 64, true, std.Options.debug_io);
     defer merged.deinit();
     try cron.loadJobs(&merged);
 
@@ -1895,13 +1895,13 @@ test "mergeSchedulerTickChangesAndSave preserves externally added jobs" {
 test "mergeSchedulerTickChangesAndSave preserves runtime agent fields" {
     const allocator = std.testing.allocator;
 
-    var runtime = CronScheduler.init(allocator, 32, true);
+    var runtime = CronScheduler.init(allocator, 32, true, std.Options.debug_io);
     defer runtime.deinit();
     _ = try runtime.addAgentJob("* * * * *", "summarize merge state", "openrouter/anthropic/claude-sonnet-4");
     runtime.jobs.items[runtime.jobs.items.len - 1].next_run_secs = 0;
     try cron.saveJobs(&runtime);
 
-    var loaded = CronScheduler.init(allocator, 32, true);
+    var loaded = CronScheduler.init(allocator, 32, true, std.Options.debug_io);
     defer loaded.deinit();
     try cron.loadJobs(&loaded);
 
@@ -1914,14 +1914,14 @@ test "mergeSchedulerTickChangesAndSave preserves runtime agent fields" {
 
     // Simulate concurrent rewrite removing jobs from disk; merge should restore
     // runtime job with all agent fields.
-    var external = CronScheduler.init(allocator, 32, true);
+    var external = CronScheduler.init(allocator, 32, true, std.Options.debug_io);
     defer external.deinit();
     try cron.saveJobs(&external);
 
     _ = loaded.tick(util.timestampUnix(), null);
     try mergeSchedulerTickChangesAndSave(allocator, &loaded, &before_tick);
 
-    var merged = CronScheduler.init(allocator, 32, true);
+    var merged = CronScheduler.init(allocator, 32, true, std.Options.debug_io);
     defer merged.deinit();
     try cron.loadJobsStrict(&merged);
     try std.testing.expectEqual(@as(usize, 1), merged.listJobs().len);
