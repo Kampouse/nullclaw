@@ -9,6 +9,7 @@ const config_types = @import("../config_types.zig");
 const interaction_choices = @import("../interactions/choices.zig");
 const Atomic = @import("../portable_atomic.zig").Atomic;
 const profiling = @import("../profiling.zig");
+const async_webhook = @import("../webhook/async_handler.zig");
 
 const io = std.Options.debug_io;
 
@@ -575,6 +576,11 @@ pub const TelegramChannel = struct {
     webhook_handler: ?*const fn (ctx: *anyopaque, allocator: std.mem.Allocator, sender: []const u8, content: []const u8, reply_target: ?[]const u8, message_id: ?i64, is_group: bool) ?[]const u8 = null,
     webhook_handler_ctx: ?*anyopaque = null,
 
+    // Async webhook state (for high-throughput webhook mode)
+    async_webhook_queue: ?*async_webhook.MessageQueue = null,
+    async_webhook_pool: ?*async_webhook.WorkerPool = null,
+    async_webhook_server: ?*async_webhook.AsyncWebhookServer = null,
+
     pub const MAX_MESSAGE_LEN: usize = 4096;
     const TYPING_INTERVAL_NS: u64 = 4 * std.time.ns_per_s;
     const TYPING_SLEEP_STEP_NS: u64 = 100 * std.time.ns_per_ms;
@@ -623,6 +629,9 @@ pub const TelegramChannel = struct {
         // Stop webhook server if running
         self.stopWebhookServer();
 
+        // Stop async webhook server if running
+        self.stopAsyncWebhook();
+
         self.http_pool.deinit();
         if (self.http_client) |*client| {
             client.deinit();
@@ -645,6 +654,88 @@ pub const TelegramChannel = struct {
     /// Reset all HTTP connections in the pool (useful for recovering from persistent errors)
     pub fn resetConnections(self: *TelegramChannel) void {
         self.http_pool.reset();
+    }
+
+    /// Start async webhook server with thread pool for parallel processing
+    /// This is recommended for high-throughput scenarios where multiple messages
+    /// may arrive concurrently or LLM processing takes significant time.
+    pub fn startAsyncWebhook(
+        self: *TelegramChannel,
+        port: u16,
+        num_workers: usize,
+        handler_ctx: *anyopaque,
+        handler: async_webhook.MessageHandler,
+    ) !void {
+        const allocator = self.allocator;
+
+        // Create message queue
+        const queue = try allocator.create(async_webhook.MessageQueue);
+        queue.* = async_webhook.MessageQueue.init(allocator);
+        self.async_webhook_queue = queue;
+
+        // Create worker pool
+        const pool = try allocator.create(async_webhook.WorkerPool);
+        pool.* = try async_webhook.WorkerPool.init(
+            allocator,
+            queue,
+            .{ .num_workers = num_workers, .health_check_interval_secs = 60 },
+            handler_ctx,
+            handler,
+            self,
+            asyncWebhookSender,
+        );
+        self.async_webhook_pool = pool;
+        try pool.start();
+
+        // Create async webhook server
+        const server = try allocator.create(async_webhook.AsyncWebhookServer);
+        server.* = .{
+            .config = .{ .port = port },
+            .queue = queue,
+            .running = Atomic(bool).init(false),
+            .allocator = allocator,
+        };
+        self.async_webhook_server = server;
+        try server.start();
+
+        log.info("[Telegram] Async webhook server started on port {} with {} workers", .{ port, num_workers });
+    }
+
+    /// Stop async webhook server and clean up resources
+    pub fn stopAsyncWebhook(self: *TelegramChannel) void {
+        if (self.async_webhook_server) |server| {
+            server.stop();
+            self.allocator.destroy(server);
+            self.async_webhook_server = null;
+        }
+        if (self.async_webhook_pool) |pool| {
+            pool.deinit();
+            self.allocator.destroy(pool);
+            self.async_webhook_pool = null;
+        }
+        if (self.async_webhook_queue) |queue| {
+            queue.deinit(self.allocator);
+            self.allocator.destroy(queue);
+            self.async_webhook_queue = null;
+        }
+        log.info("[Telegram] Async webhook server stopped", .{});
+    }
+
+    /// Sender callback for async webhook (called by worker threads)
+    fn asyncWebhookSender(
+        ctx: *anyopaque,
+        chat_id: []const u8,
+        response: []const u8,
+        reply_to: ?i64,
+    ) void {
+        const self: *TelegramChannel = @ptrCast(@alignCast(ctx));
+        self.sendMessageWithReplySkipTyping(chat_id, response, reply_to, true) catch |err| {
+            log.warn("[AsyncWebhook] Failed to send response: {} - resetting connections and retrying", .{err});
+            self.resetConnections();
+            self.sendMessageWithReplySkipTyping(chat_id, response, reply_to, true) catch |retry_err| {
+                log.warn("[AsyncWebhook] Retry failed: {}", .{retry_err});
+            };
+        };
     }
 
     /// Get error count from the pool (for monitoring)

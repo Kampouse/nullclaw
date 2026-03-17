@@ -25,14 +25,11 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Atomic = @import("../portable_atomic.zig").Atomic;
 const net_socket = @import("../net_socket.zig");
+const util = @import("../util.zig");
 const log = std.log.scoped(.async_webhook);
 
-// Platform-specific imports
-const system = switch (builtin.target.os.tag) {
-    .macos, .ios, .tvos, .watchos, .freebsd, .netbsd, .openbsd => std.os.system,
-    .linux => std.os.linux,
-    else => @compileError("Async webhook requires kqueue (BSD/macOS) or epoll (Linux)"),
-};
+// Platform-specific imports for kqueue/epoll
+const posix = std.posix;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Message Queue (Thread-Safe)
@@ -61,10 +58,10 @@ pub const QueuedMessage = struct {
 
 /// Thread-safe message queue
 pub const MessageQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    condition: std.Thread.Condition = .{},
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
+    condition: std.Io.Condition = .{ .state = .init(.{ .waiters = 0, .signals = 0 }), .epoch = .init(0) },
     messages: std.ArrayListUnmanaged(QueuedMessage) = .{},
-    running: bool = true,
+    running: Atomic(bool) = Atomic(bool).init(true),
 
     pub fn init(allocator: std.mem.Allocator) MessageQueue {
         _ = allocator;
@@ -72,35 +69,35 @@ pub const MessageQueue = struct {
     }
 
     pub fn deinit(self: *MessageQueue, allocator: std.mem.Allocator) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return;
+        defer self.mutex.unlock(std.Options.debug_io);
 
         for (self.messages.items) |*msg| {
             msg.deinit();
         }
         self.messages.deinit(allocator);
-        self.running = false;
-        self.condition.broadcast();
+        self.running.store(false, .release);
+        self.condition.broadcast(std.Options.debug_io);
     }
 
     /// Push a message to the queue (thread-safe)
     pub fn push(self: *MessageQueue, allocator: std.mem.Allocator, msg: QueuedMessage) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return error.QueueShutdown;
+        defer self.mutex.unlock(std.Options.debug_io);
 
-        if (!self.running) return error.QueueShutdown;
+        if (!self.running.load(.acquire)) return error.QueueShutdown;
 
         try self.messages.append(allocator, msg);
-        self.condition.signal();
+        self.condition.signal(std.Options.debug_io);
     }
 
     /// Pop a message from the queue (thread-safe, blocks if empty)
     pub fn pop(self: *MessageQueue) ?QueuedMessage {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return null;
+        defer self.mutex.unlock(std.Options.debug_io);
 
-        while (self.messages.items.len == 0 and self.running) {
-            self.condition.wait(&self.mutex);
+        while (self.messages.items.len == 0 and self.running.load(.acquire)) {
+            self.condition.wait(std.Options.debug_io, &self.mutex) catch return null;
         }
 
         if (self.messages.items.len == 0) return null;
@@ -109,8 +106,8 @@ pub const MessageQueue = struct {
 
     /// Try to pop without blocking
     pub fn tryPop(self: *MessageQueue) ?QueuedMessage {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return null;
+        defer self.mutex.unlock(std.Options.debug_io);
 
         if (self.messages.items.len == 0) return null;
         return self.messages.orderedRemove(0);
@@ -118,17 +115,17 @@ pub const MessageQueue = struct {
 
     /// Get queue length (thread-safe)
     pub fn len(self: *MessageQueue) usize {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return 0;
+        defer self.mutex.unlock(std.Options.debug_io);
         return self.messages.items.len;
     }
 
     /// Signal shutdown
     pub fn shutdown(self: *MessageQueue) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        self.running = false;
-        self.condition.broadcast();
+        self.mutex.lock(std.Options.debug_io) catch return;
+        defer self.mutex.unlock(std.Options.debug_io);
+        self.running.store(false, .release);
+        self.condition.broadcast(std.Options.debug_io);
     }
 };
 
@@ -165,50 +162,21 @@ pub const WorkerContext = struct {
     running: *Atomic(bool),
     allocator: std.mem.Allocator,
     health_check_interval_secs: u64 = 60,
-    last_health_check: Atomic(i64) = .{ .value = 0 },
+    last_health_check: Atomic(i64) = Atomic(i64).init(0),
 
     /// Run the worker loop
     pub fn run(self: *WorkerContext) void {
         log.info("[Worker {}] Starting", .{self.id});
 
         while (self.running.load(.acquire)) {
-            // Try to get a message (with timeout for health checks)
-            const msg = blk: {
-                self.queue.mutex.lock();
-                defer self.queue.mutex.unlock();
-
-                // Wait for message or timeout (1 second)
-                const timeout_ns: i64 = 1_000_000_000; // 1 second
-                const start = std.time.nanoTimestamp();
-
-                while (self.queue.messages.items.len == 0 and self.running.load(.acquire)) {
-                    // Check if we should do a health check
-                    const now = std.time.nanoTimestamp();
-                    const elapsed_ms = @divTrunc(now - self.last_health_check.value, 1_000_000);
-
-                    if (elapsed_ms > self.health_check_interval_secs * 1000) {
-                        self.last_health_check.store(now, .release);
-                        // Release mutex temporarily for health check
-                        // (health check would be done by the sender context)
-                        break :blk null; // Will do health check then retry
-                    }
-
-                    // Wait with timeout
-                    self.queue.condition.timedWait(
-                        &self.queue.mutex,
-                        @intCast(timeout_ns),
-                    ) catch {};
-
-                    const elapsed_ns = std.time.nanoTimestamp() - start;
-                    if (elapsed_ns > timeout_ns) break :blk null;
-                }
-
-                if (self.queue.messages.items.len == 0) break :blk null;
-                break :blk self.queue.messages.orderedRemove(0);
-            };
+            // Try to get a message
+            const msg = self.queue.tryPop();
 
             if (msg) |m| {
                 self.processMessage(m);
+            } else {
+                // No message, sleep briefly to avoid busy-waiting
+                std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = 10 * std.time.ns_per_ms }, .real) catch {};
             }
         }
 
@@ -217,19 +185,20 @@ pub const WorkerContext = struct {
 
     /// Process a single message
     fn processMessage(self: *WorkerContext, msg: QueuedMessage) void {
-        defer msg.deinit();
+        var msg_mut = msg;
+        defer msg_mut.deinit();
 
-        const start = std.time.nanoTimestamp();
-        log.debug("[Worker {}] Processing message from chat_id={s}", .{ self.id, msg.chat_id });
+        const start = util.nanoTimestamp();
+        log.debug("[Worker {}] Processing message from chat_id={s}", .{ self.id, msg_mut.chat_id });
 
         // Call handler (LLM processing)
         const response = self.handler(
             self.handler_ctx,
             self.allocator,
-            msg.chat_id,
-            msg.content,
-            msg.reply_to,
-            msg.is_group,
+            msg_mut.chat_id,
+            msg_mut.content,
+            msg_mut.reply_to,
+            msg_mut.is_group,
         ) orelse {
             log.warn("[Worker {}] Handler returned null for chat_id={s}", .{ self.id, msg.chat_id });
             return;
@@ -239,12 +208,12 @@ pub const WorkerContext = struct {
         // Send response
         self.sender(
             self.sender_ctx,
-            msg.chat_id,
+            msg_mut.chat_id,
             response,
-            msg.reply_to,
+            msg_mut.reply_to,
         );
 
-        const elapsed_ms = @divTrunc(std.time.nanoTimestamp() - start, 1_000_000);
+        const elapsed_ms = @divTrunc(util.nanoTimestamp() - start, 1_000_000);
         log.info("[Worker {}] Processed message in {}ms", .{ self.id, elapsed_ms });
     }
 };
@@ -409,34 +378,38 @@ pub const AsyncWebhookServer = struct {
 
     /// Run with kqueue (BSD/macOS)
     fn runKqueue(self: *Self, server_fd: c_int) !void {
-        const kq = system.kqueue();
+        const kq = posix.system.kqueue();
         if (kq == -1) return error.KqueueFailed;
-        defer _ = system.close(kq);
+        defer _ = posix.system.close(kq);
 
         // Register server socket for accept events
-        var kev: system.Kevent = .{
+        const kev: posix.system.Kevent = .{
             .ident = @intCast(server_fd),
-            .filter = system.EVFILT.READ,
-            .flags = system.EV.ADD | system.EV.ENABLE,
+            .filter = posix.system.EVFILT.READ,
+            .flags = posix.system.EV.ADD | posix.system.EV.ENABLE,
             .fflags = 0,
             .data = 0,
-            .udata = null,
+            .udata = 0,
         };
 
-        const rc = system.kevent(kq, &kev, 1, null, 0, null);
-        if (rc == -1) return error.KeventFailed;
+        // Register the kevent - pass as single-element array
+        var changelist: [1]posix.system.Kevent = .{kev};
+        var empty_events: [0]posix.system.Kevent = undefined;
+        const reg_rc = posix.system.kevent(kq, &changelist, changelist.len, &empty_events, 0, null);
+        if (reg_rc == -1) return error.KeventFailed;
 
-        var events: [64]system.Kevent = undefined;
+        var events: [64]posix.system.Kevent = undefined;
 
+        var empty_changes: [0]posix.system.Kevent = undefined;
         while (self.running.load(.monotonic)) {
-            const nev = system.kevent(kq, null, 0, &events, events.len, null);
+            const nev = posix.system.kevent(kq, &empty_changes, 0, &events, events.len, null);
             if (nev == -1) {
-                if (system.errno == system.EINTR) continue;
+                if (posix.errno(nev) == .INTR) continue;
                 return error.KeventFailed;
             }
 
             for (events[0..@intCast(nev)]) |ev| {
-                if (ev.ident == @as(c_ulong, @intCast(server_fd))) {
+                if (ev.ident == @as(usize, @intCast(server_fd))) {
                     // Accept new connection
                     self.acceptConnection(server_fd) catch |err| {
                         log.warn("[AsyncWebhook] Accept error: {}", .{err});
@@ -448,24 +421,24 @@ pub const AsyncWebhookServer = struct {
 
     /// Run with epoll (Linux)
     fn runEpoll(self: *Self, server_fd: c_int) !void {
-        const epfd = system.epoll_create1(0);
+        const epfd = posix.system.epoll_create1(0);
         if (epfd == -1) return error.EpollFailed;
-        defer _ = system.close(epfd);
+        defer _ = posix.close(epfd);
 
-        var ev: system.epoll_event = .{
-            .events = system.EPOLL.IN,
+        var ev: posix.system.epoll_event = .{
+            .events = posix.system.EPOLL.IN,
             .data = .{ .fd = server_fd },
         };
 
-        const rc = system.epoll_ctl(epfd, system.EPOLL.CTL_ADD, server_fd, &ev);
+        const rc = posix.system.epoll_ctl(epfd, posix.system.EPOLL.CTL_ADD, server_fd, &ev);
         if (rc == -1) return error.EpollCtlFailed;
 
-        var events: [64]system.epoll_event = undefined;
+        var events: [64]posix.system.epoll_event = undefined;
 
         while (self.running.load(.monotonic)) {
-            const nev = system.epoll_wait(epfd, &events, events.len, -1);
+            const nev = posix.system.epoll_wait(epfd, &events, events.len, -1);
             if (nev == -1) {
-                if (system.errno == system.EINTR) continue;
+                if (posix.errno(nev) == .INTR) continue;
                 return error.EpollFailed;
             }
 
@@ -634,14 +607,16 @@ pub const AsyncWebhookServer = struct {
         };
 
         // Extract reply_to (if any)
-        const reply_to: ?i64 = if (result.object.get("reply_to_message")) |rtm|
-            switch (rtm.object.get("message_id") orelse null) {
-                .integer => |n| n,
-                .string => |s| std.fmt.parseInt(i64, s, 10) catch null,
-                else => null,
+        const reply_to: ?i64 = if (result.object.get("reply_to_message")) |rtm| blk: {
+            if (rtm.object.get("message_id")) |msg_id| {
+                switch (msg_id) {
+                    .integer => |n| break :blk n,
+                    .string => |s| break :blk std.fmt.parseInt(i64, s, 10) catch null,
+                    else => {},
+                }
             }
-        else
-            null;
+            break :blk null;
+        } else null;
 
         // Determine if group chat
         const is_group = if (chat.object.get("type")) |t|
@@ -655,7 +630,7 @@ pub const AsyncWebhookServer = struct {
             .content = try self.allocator.dupe(u8, content),
             .reply_to = reply_to,
             .is_group = is_group,
-            .queued_at = std.time.timestamp(),
+            .queued_at = @intCast(@divTrunc(util.nanoTimestamp(), 1_000_000_000)),
             .allocator = self.allocator,
         };
 

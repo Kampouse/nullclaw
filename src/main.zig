@@ -2245,24 +2245,54 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         }.handler;
         tg.webhook_handler_ctx = &webhook_ctx;
 
-        try tg.startWebhookServer(telegram_config.webhook_port);
+        // Check if async webhook mode is enabled
+        if (telegram_config.async_webhook) {
+            // Async webhook mode - use thread pool for parallel processing
+            std.debug.print("  Async webhook enabled with {} workers\n", .{telegram_config.webhook_workers});
 
-        // Keep main thread alive and periodically evict idle sessions (Zig 0.16: use std.Io.sleep)
-        // This prevents memory leak from accumulating sessions in webhook mode
-        var eviction_counter: u32 = 0;
-        while (true) {
-            std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
-            eviction_counter += 1;
-            // Evict idle sessions every 5 minutes (5 iterations of 60-second sleep)
-            if (eviction_counter >= 5) {
-                eviction_counter = 0;
-                const evicted = session_mgr.evictIdle(3600, std.Options.debug_io); // 1 hour idle threshold
-                if (evicted > 0) {
-                    std.log.info("[WEBHOOK] Evicted {} idle sessions", .{evicted});
+            // Create async webhook handler context
+            const AsyncWebhookContext = struct {
+                session_mgr: *yc.session.SessionManager,
+                account_id: []const u8,
+            };
+            var async_ctx = AsyncWebhookContext{
+                .session_mgr = &session_mgr,
+                .account_id = tg.account_id,
+            };
+
+            // Start async webhook with thread pool
+            try tg.startAsyncWebhook(
+                telegram_config.webhook_port,
+                telegram_config.webhook_workers,
+                &async_ctx,
+                asyncWebhookHandler,
+            );
+
+            // Keep main thread alive
+            while (true) {
+                std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
+            }
+        } else {
+            // Synchronous webhook mode (original behavior)
+            try tg.startWebhookServer(telegram_config.webhook_port);
+
+            // Keep main thread alive and periodically evict idle sessions (Zig 0.16: use std.Io.sleep)
+            // This prevents memory leak from accumulating sessions in webhook mode
+            var eviction_counter: u32 = 0;
+            while (true) {
+                std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
+                eviction_counter += 1;
+                // Evict idle sessions every 5 minutes (5 iterations of 60-second sleep)
+                if (eviction_counter >= 5) {
+                    eviction_counter = 0;
+                    const evicted = session_mgr.evictIdle(3600, std.Options.debug_io); // 1 hour idle threshold
+                    if (evicted > 0) {
+                        std.log.info("[WEBHOOK] Evicted {} idle sessions", .{evicted});
+                    }
+                    // Proactively send health check to keep HTTP connections alive during idle periods
+                    // This is more efficient than resetting connections - it reuses the existing keep-alive connection
+                    _ = tg.healthCheck();
                 }
-                // Proactively send health check to keep HTTP connections alive during idle periods
-                // This is more efficient than resetting connections - it reuses the existing keep-alive connection
-                _ = tg.healthCheck();
             }
         }
     } else {
@@ -2273,8 +2303,49 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         tg.deleteWebhookKeepPending();
         yc.channel_loop.runTelegramLoop(allocator, &config, &channel_rt, &loop_state, &tg);
     }
+}
 
-    // Note: runTelegramLoop never returns, so code below is unreachable
+// ── Async Webhook Handler ─────────────────────────────────────────────────────────
+
+/// Handler for async webhook mode - called by worker threads to process messages
+fn asyncWebhookHandler(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    chat_id: []const u8,
+    content: []const u8,
+    reply_to: ?i64,
+    is_group: bool,
+) ?[]const u8 {
+    _ = reply_to;
+    _ = is_group;
+    const async_ctx: *const struct {
+        session_mgr: *yc.session.SessionManager,
+        account_id: []const u8,
+    } = @ptrCast(@alignCast(ctx));
+
+    std.log.info("[ASYNC_WEBHOOK] Processing message from chat_id={s} content_len={d}", .{ chat_id, content.len });
+
+    // Build session key
+    var key_buf: [256]u8 = undefined;
+    const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ async_ctx.account_id, chat_id }) catch chat_id;
+
+    // Process message through session manager
+    const reply = async_ctx.session_mgr.processMessage(session_key, content, null) catch |err| {
+        std.log.err("[ASYNC_WEBHOOK] Message processing error: {}", .{err});
+        const err_msg: []const u8 = switch (err) {
+            error.AllProvidersFailed => "All configured providers failed. Check API credentials and try again.",
+            error.RateLimited => "Rate limit exceeded. Please wait a moment and try again.",
+            error.ContextLengthExceeded => "Message too long. Try /new for a fresh session.",
+            error.ProviderDoesNotSupportVision => "Provider does not support image input.",
+            error.NoResponseContent => "Model returned empty response. Please try again.",
+            error.OutOfMemory => "Out of memory. Try /new for a fresh session.",
+            else => "An error occurred. Please try again or use /new for a fresh session.",
+        };
+        return std.fmt.allocPrint(allocator, "❌ {s}", .{err_msg}) catch null;
+    };
+
+    std.log.info("[ASYNC_WEBHOOK] Response generated (len={d})", .{reply.len});
+    return reply;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────

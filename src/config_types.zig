@@ -256,6 +256,13 @@ pub const TelegramConfig = struct {
     /// Public URL that Telegram should send webhooks to (e.g., "https://mybot.example.com:8443/")
     /// Required when webhook_mode is true.
     webhook_url: ?[]const u8 = null,
+
+    /// Async webhook configuration
+    /// When enabled, uses kqueue/epoll for connection handling and thread pool for LLM processing.
+    /// Recommended for high-throughput scenarios or when LLM processing takes significant time.
+    async_webhook: bool = false,
+    /// Number of worker threads for async webhook (only used when async_webhook is true)
+    webhook_workers: usize = 4,
 };
 
 pub const DiscordConfig = struct {
