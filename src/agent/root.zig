@@ -276,6 +276,8 @@ pub const Agent = struct {
     message_timeout_secs: u64 = 0,
     log_tool_calls: bool = false,
     log_llm_io: bool = false,
+    /// Maximum number of tools to execute in parallel (0 = sequential, 1+ = parallel)
+    max_parallel_tools: u32 = 0,
     compaction_keep_recent: u32 = compaction.DEFAULT_COMPACTION_KEEP_RECENT,
     compaction_max_summary_chars: u32 = compaction.DEFAULT_COMPACTION_MAX_SUMMARY_CHARS,
     compaction_max_source_chars: u32 = compaction.DEFAULT_COMPACTION_MAX_SOURCE_CHARS,
@@ -378,6 +380,7 @@ pub const Agent = struct {
             .message_timeout_secs = cfg.agent.message_timeout_secs,
             .log_tool_calls = cfg.diagnostics.log_tool_calls,
             .log_llm_io = cfg.diagnostics.log_llm_io,
+            .max_parallel_tools = cfg.diagnostics.max_parallel_tools,
             .compaction_keep_recent = cfg.agent.compaction_keep_recent,
             .compaction_max_summary_chars = cfg.agent.compaction_max_summary_chars,
             .compaction_max_source_chars = cfg.agent.compaction_max_source_chars,
@@ -1192,55 +1195,72 @@ pub const Agent = struct {
 
             slog.debug("agent", "turn_entering_tool_execution_loop", .{ .parsed_calls_count = parsed_calls.len });
 
-            for (parsed_calls, 0..) |call, idx| {
-                slog.logStructured("DEBUG", "agent", "tool_iteration", .{ .index = idx, .tool = call.name });
+            // Choose execution strategy based on number of tools and configuration
+            const use_parallel = parsed_calls.len > 1 and
+                (self.max_parallel_tools == 0 or self.max_parallel_tools > 1);
 
-                if (self.log_tool_calls) {
-                    log.info(
-                        "tool-call start session=0x{x} index={d} name={s} id={s}",
-                        .{ session_hash, idx + 1, call.name, call.tool_call_id orelse "-" },
-                    );
+            if (use_parallel) {
+                // Parallel execution for multiple tools
+                slog.debug("agent", "turn_using_parallel_tool_execution", .{ .count = parsed_calls.len });
+                const parallel_results = try self.executeToolsParallel(arena, parsed_calls, batch_updates_tools_md);
+
+                // Copy results to results_buf
+                for (parallel_results) |result| {
+                    try results_buf.append(self.allocator, result);
                 }
+            } else {
+                // Sequential execution (single tool or parallel disabled)
+                slog.debug("agent", "turn_using_sequential_tool_execution", .{ .count = parsed_calls.len });
+                for (parsed_calls, 0..) |call, idx| {
+                    slog.logStructured("DEBUG", "agent", "tool_iteration", .{ .index = idx, .tool = call.name });
 
-                slog.debug("agent", "turn_recording_tool_call_start_event", .{});
-                const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
-                self.observer.recordEvent(&tool_start_event);
-                slog.debug("agent", "turn_tool_call_start_event_recorded", .{});
+                    if (self.log_tool_calls) {
+                        log.info(
+                            "tool-call start session=0x{x} index={d} name={s} id={s}",
+                            .{ session_hash, idx + 1, call.name, call.tool_call_id orelse "-" },
+                        );
+                    }
 
-                const tool_timer = util.timestampUnix();
+                    slog.debug("agent", "turn_recording_tool_call_start_event", .{});
+                    const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
+                    self.observer.recordEvent(&tool_start_event);
+                    slog.debug("agent", "turn_tool_call_start_event_recorded", .{});
 
-                slog.debug("agent", "turn_checking_duplicate_memory_store", .{});
-                const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call)) blk: {
-                    slog.debug("agent", "turn_skipping_duplicate_memory_store", .{});
-                    break :blk ToolExecutionResult{
-                        .name = call.name,
-                        .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
-                        .success = true,
-                        .tool_call_id = call.tool_call_id,
+                    const tool_timer = util.timestampUnix();
+
+                    slog.debug("agent", "turn_checking_duplicate_memory_store", .{});
+                    const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call)) blk: {
+                        slog.debug("agent", "turn_skipping_duplicate_memory_store", .{});
+                        break :blk ToolExecutionResult{
+                            .name = call.name,
+                            .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
+                            .success = true,
+                            .tool_call_id = call.tool_call_id,
+                        };
+                    } else blk: {
+                        slog.debug("agent", "turn_calling_execute_tool", .{ .tool = call.name });
+                        break :blk self.executeTool(arena, call);
                     };
-                } else blk: {
-                    slog.debug("agent", "turn_calling_execute_tool", .{ .tool = call.name });
-                    break :blk self.executeTool(arena, call);
-                };
-                slog.debug("agent", "turn_execute_tool_returned", .{ .tool = call.name });
-                const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
+                    slog.debug("agent", "turn_execute_tool_returned", .{ .tool = call.name });
+                    const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
 
-                if (self.log_tool_calls) {
-                    log.info(
-                        "tool-call done session=0x{x} index={d} name={s} success={} duration_ms={d}",
-                        .{ session_hash, idx + 1, call.name, result.success, tool_duration },
-                    );
+                    if (self.log_tool_calls) {
+                        log.info(
+                            "tool-call done session=0x{x} index={d} name={s} success={} duration_ms={d}",
+                            .{ session_hash, idx + 1, call.name, result.success, tool_duration },
+                        );
+                    }
+
+                    const tool_event = ObserverEvent{ .tool_call = .{
+                        .tool = call.name,
+                        .duration_ms = tool_duration,
+                        .success = result.success,
+                        .detail = if (result.success) null else result.output,
+                    } };
+                    self.observer.recordEvent(&tool_event);
+
+                    try results_buf.append(self.allocator, result);
                 }
-
-                const tool_event = ObserverEvent{ .tool_call = .{
-                    .tool = call.name,
-                    .duration_ms = tool_duration,
-                    .success = result.success,
-                    .detail = if (result.success) null else result.output,
-                } };
-                self.observer.recordEvent(&tool_event);
-
-                try results_buf.append(self.allocator, result);
             }
 
             // Format tool results, scrub credentials, add reflection prompt, and add to history
@@ -1535,6 +1555,154 @@ pub const Agent = struct {
             .success = false,
             .tool_call_id = call.tool_call_id,
         };
+    }
+
+    /// Context for parallel tool execution - shared across threads
+    const ParallelToolContext = struct {
+        agent: *Agent,
+        calls: []const ParsedToolCall,
+        results: []ToolExecutionResult,
+        arenas: []std.mem.Allocator,
+        arena_allocators: []std.heap.ArenaAllocator,
+        mutex: @import("../spinlock.zig").Spinlock = .{},
+        batch_updates_tools_md: bool,
+        session_hash: u64,
+        log_tool_calls: bool,
+        observer: *Observer,
+
+        fn executeOne(context: *ParallelToolContext, index: usize) void {
+            const call = context.calls[index];
+            const arena = context.arenas[index];
+
+            slog.logStructured("DEBUG", "agent", "parallel_tool_start", .{ .index = index, .tool = call.name });
+
+            if (context.log_tool_calls) {
+                log.info(
+                    "tool-call start session=0x{x} index={d} name={s} id={s}",
+                    .{ context.session_hash, index + 1, call.name, call.tool_call_id orelse "-" },
+                );
+            }
+
+            const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
+            context.observer.recordEvent(&tool_start_event);
+
+            const tool_timer = util.timestampUnix();
+
+            // Check for duplicate memory_store
+            const result = if (should_skip_tools_memory_store_duplicate(arena, context.batch_updates_tools_md, call)) blk: {
+                slog.debug("agent", "parallel_tool_skipping_duplicate_memory_store", .{ .index = index });
+                break :blk ToolExecutionResult{
+                    .name = call.name,
+                    .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
+                    .success = true,
+                    .tool_call_id = call.tool_call_id,
+                };
+            } else blk: {
+                // Execute the tool
+                // Note: We need to clone agent data for thread safety
+                break :blk context.agent.executeTool(arena, call);
+            };
+
+            const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
+
+            if (context.log_tool_calls) {
+                log.info(
+                    "tool-call done session=0x{x} index={d} name={s} success={} duration_ms={d}",
+                    .{ context.session_hash, index + 1, call.name, result.success, tool_duration },
+                );
+            }
+
+            const tool_event = ObserverEvent{ .tool_call = .{
+                .tool = call.name,
+                .duration_ms = tool_duration,
+                .success = result.success,
+                .detail = if (result.success) null else result.output,
+            } };
+            context.observer.recordEvent(&tool_event);
+
+            // Store result (protected by mutex)
+            context.mutex.lock();
+            defer context.mutex.unlock();
+            context.results[index] = result;
+        }
+    };
+
+    /// Execute multiple tools in parallel using threads.
+    /// Returns results in the same order as the input calls.
+    fn executeToolsParallel(
+        self: *Agent,
+        base_arena: std.mem.Allocator,
+        calls: []const ParsedToolCall,
+        batch_updates_tools_md: bool,
+    ) ![]ToolExecutionResult {
+        const call_count = calls.len;
+        slog.debug("agent", "execute_tools_parallel_start", .{ .count = call_count });
+
+        // Determine number of parallel workers
+        const max_workers = if (self.max_parallel_tools == 0)
+            @min(call_count, @as(usize, 3)) // Default: max 3 parallel tools
+        else
+            @min(call_count, @as(usize, self.max_parallel_tools));
+
+        slog.debug("agent", "execute_tools_parallel_workers", .{ .max_workers = max_workers });
+
+        // Allocate results array
+        const results = try base_arena.alloc(ToolExecutionResult, call_count);
+
+        // Create arena for each thread
+        const arena_allocators = try base_arena.alloc(std.heap.ArenaAllocator, call_count);
+        const arenas = try base_arena.alloc(std.mem.Allocator, call_count);
+        for (arena_allocators, arenas) |*arena_alloc, *arena| {
+            arena_alloc.* = std.heap.ArenaAllocator.init(base_arena);
+            arena.* = arena_alloc.allocator();
+        }
+
+        // Create shared context
+        var context = ParallelToolContext{
+            .agent = self,
+            .calls = calls,
+            .results = results,
+            .arenas = arenas,
+            .arena_allocators = arena_allocators,
+            .batch_updates_tools_md = batch_updates_tools_md,
+            .session_hash = if (self.memory_session_id) |sid| std.hash.Wyhash.hash(0, sid) else 0,
+            .log_tool_calls = self.log_tool_calls,
+            .observer = &self.observer,
+        };
+
+        // Spawn worker threads
+        var threads = try self.allocator.alloc(std.Thread, max_workers);
+        defer self.allocator.free(threads);
+
+        var next_index: usize = 0;
+        var thread_count: usize = 0;
+
+        // Distribute work across threads
+        while (next_index < call_count and thread_count < max_workers) : ({
+            next_index += 1;
+            thread_count += 1;
+        }) {
+            const index = next_index;
+            threads[thread_count] = try std.Thread.spawn(
+                .{ .allocator = self.allocator },
+                struct {
+                    fn threadFn(ctx: *ParallelToolContext, idx: usize) void {
+                        ctx.executeOne(idx);
+                    }
+                }.threadFn,
+                .{ &context, index },
+            );
+        }
+
+        // Wait for all threads to complete
+        for (threads[0..thread_count]) |thread| {
+            thread.join();
+        }
+
+        slog.debug("agent", "execute_tools_parallel_complete", .{ .count = call_count });
+
+        slog.debug("agent", "execute_tools_parallel_complete", .{ .count = call_count });
+        return results;
     }
 
     const LLM_LOG_MAX_BYTES: usize = 8192;

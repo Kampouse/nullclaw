@@ -71,6 +71,10 @@ pub const DiagnosticsConfig = struct {
     /// Emit request/response payloads around provider chat calls.
     /// Intended for local debugging only (can include sensitive text).
     log_llm_io: bool = false,
+    /// Maximum number of tools to execute in parallel (0 = default 3, 1 = sequential).
+    /// Setting to 0 enables parallel execution with a default of 3 concurrent tools.
+    /// Setting to 1 disables parallel execution (sequential mode).
+    max_parallel_tools: u32 = 0,
 };
 
 pub const AutonomyConfig = struct {
