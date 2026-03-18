@@ -21,6 +21,7 @@ const util = @import("util.zig");
 const session_git = @import("session_git.zig");
 const GitSession = session_git.GitSession;
 const GitSessionManager = session_git.GitSessionManager;
+const Message = session_git.Message;
 const MessageRole = session_git.MessageRole;
 const TurnMetadata = session_git.TurnMetadata;
 const MergeResult = session_git.MergeResult;
@@ -239,6 +240,36 @@ pub const AsyncSessionManager = struct {
         assistant_content: ?[]const u8,
     };
 
+    /// Create a true deep copy of a history ArrayList.
+    /// Unlike ArrayList.clone() which only allocates a new items array,
+    /// this also duplicates each message's content string.
+    /// This is essential for thread safety: if another thread deallocates
+    /// the original history during an LLM call, this deep copy remains valid.
+    fn deepCloneHistory(
+        source: std.ArrayListUnmanaged(Agent.OwnedMessage),
+        allocator: std.mem.Allocator,
+    ) !std.ArrayListUnmanaged(Agent.OwnedMessage) {
+        var result = std.ArrayListUnmanaged(Agent.OwnedMessage).empty;
+        errdefer {
+            // Clean up on error
+            for (result.items) |*msg| {
+                msg.deinit(allocator);
+            }
+            result.deinit(allocator);
+        }
+
+        for (source.items) |msg| {
+            const owned_content = try allocator.dupe(u8, msg.content);
+            errdefer allocator.free(owned_content);
+            try result.append(allocator, .{
+                .role = msg.role,
+                .content = owned_content,
+            });
+        }
+
+        return result;
+    }
+
     /// Process a message using a forked Agent with independent history.
     /// This allows true parallel processing - each worker has its own history clone.
     fn processWithForkedAgent(
@@ -284,9 +315,18 @@ pub const AsyncSessionManager = struct {
             worker_history.deinit(allocator);
         }
 
-        // Save the original history VALUE (not a pointer - we need to restore it later)
-        // We swap the Agent's history field with our clone, process, then restore
-        var original_history = session.agent.history;
+        // Create a DEEP COPY of the original history before swapping
+        // This is critical: a shallow copy would share the items pointer,
+        // and if another worker calls syncHistoryToAgent during our LLM call,
+        // it would deallocate the memory we still reference.
+        var original_history = try deepCloneHistory(session.agent.history, session.agent.allocator);
+        errdefer {
+            // On error, clean up the deep copy
+            for (original_history.items) |*msg| {
+                msg.deinit(session.agent.allocator);
+            }
+            original_history.deinit(session.agent.allocator);
+        }
         const original_len = original_history.items.len;
 
         // Swap in the forked history
@@ -313,7 +353,10 @@ pub const AsyncSessionManager = struct {
                 msg.deinit(allocator);
             }
             session.agent.history.deinit(allocator);
+            // Transfer ownership of original_history back to agent
             session.agent.history = original_history;
+            // Clear the errdefer since we've transferred ownership
+            original_history = std.ArrayListUnmanaged(Agent.OwnedMessage).empty;
             return error.InvalidState;
         };
         log.debug("PHASE 3: Mutex acquired for merge", .{});
@@ -341,11 +384,14 @@ pub const AsyncSessionManager = struct {
                             m.deinit(allocator);
                         }
                         processed_history.deinit(allocator);
+                        // Transfer ownership of original_history back to agent
                         session.agent.history = original_history;
                         session.agent.conversation_context = null;
                         session.agent.stream_callback = prev_stream_callback;
                         session.agent.stream_ctx = prev_stream_ctx;
                         session.mutex.unlock(std.Options.debug_io);
+                        // Prevent errdefer from deinitializing transferred memory
+                        original_history = std.ArrayListUnmanaged(Agent.OwnedMessage).empty;
                         return error.OutOfMemory;
                     };
                     errdefer allocator.free(owned_content);
@@ -358,11 +404,14 @@ pub const AsyncSessionManager = struct {
                             m.deinit(allocator);
                         }
                         processed_history.deinit(allocator);
+                        // Transfer ownership of original_history back to agent
                         session.agent.history = original_history;
                         session.agent.conversation_context = null;
                         session.agent.stream_callback = prev_stream_callback;
                         session.agent.stream_ctx = prev_stream_ctx;
                         session.mutex.unlock(std.Options.debug_io);
+                        // Prevent errdefer from deinitializing transferred memory
+                        original_history = std.ArrayListUnmanaged(Agent.OwnedMessage).empty;
                         return error.OutOfMemory;
                     };
                 }
@@ -379,6 +428,8 @@ pub const AsyncSessionManager = struct {
             // Restore original history (now with new messages appended)
             log.debug("PHASE 3: Restoring original history (ptr={*})", .{original_history.items.ptr});
             session.agent.history = original_history;
+            // Prevent errdefer from deinitializing transferred memory
+            original_history = std.ArrayListUnmanaged(Agent.OwnedMessage).empty;
             session.agent.conversation_context = null;
             session.agent.stream_callback = prev_stream_callback;
             session.agent.stream_ctx = prev_stream_ctx;
@@ -437,6 +488,8 @@ pub const AsyncSessionManager = struct {
 
             // Restore original history
             session.agent.history = original_history;
+            // Prevent errdefer from deinitializing transferred memory
+            original_history = std.ArrayListUnmanaged(Agent.OwnedMessage).empty;
             session.agent.conversation_context = null;
             session.agent.stream_callback = prev_stream_callback;
             session.agent.stream_ctx = prev_stream_ctx;
