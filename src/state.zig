@@ -5,6 +5,7 @@
 //! Persisted to `~/.nullclaw/state.json` with atomic writes (temp + rename).
 
 const std = @import("std");
+const util = @import("util.zig");
 const json_util = @import("json_util.zig");
 const Allocator = std.mem.Allocator;
 
@@ -25,7 +26,7 @@ pub const State = struct {
 pub const StateManager = struct {
     allocator: Allocator,
     state_path: []const u8, // owned
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = std.Io.Mutex.init,
     state: State = .{},
 
     pub fn init(allocator: Allocator, state_path: []const u8) Allocator.Error!StateManager {
@@ -42,8 +43,9 @@ pub const StateManager = struct {
 
     /// Set the last active channel and chat_id. Thread-safe.
     pub fn setLastChannel(self: *StateManager, channel: []const u8, chat_id: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
 
         // Free old values
         if (self.state.last_channel) |old| self.allocator.free(old);
@@ -51,14 +53,15 @@ pub const StateManager = struct {
 
         self.state.last_channel = self.allocator.dupe(u8, channel) catch null;
         self.state.last_chat_id = self.allocator.dupe(u8, chat_id) catch null;
-        self.state.updated_at = std.time.timestamp();
+        self.state.updated_at = util.timestampUnix();
     }
 
     /// Get the last active channel. Returns null if not set.
     /// Caller does NOT own the returned slices (valid until next setLastChannel).
     pub fn getLastChannel(self: *StateManager) struct { channel: ?[]const u8, chat_id: ?[]const u8 } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         return .{
             .channel = self.state.last_channel,
             .chat_id = self.state.last_chat_id,
@@ -67,23 +70,25 @@ pub const StateManager = struct {
 
     /// Get updated_at timestamp.
     pub fn getUpdatedAt(self: *StateManager) i64 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         return self.state.updated_at;
     }
 
     /// Save state to disk. Atomic: write to temp file then rename.
     pub fn save(self: *StateManager) !void {
-        self.mutex.lock();
+        const io = std.Options.debug_io;
+        self.mutex.lockUncancelable(io);
         const channel = if (self.state.last_channel) |ch| self.allocator.dupe(u8, ch) catch null else null;
         const chat_id = if (self.state.last_chat_id) |cid| self.allocator.dupe(u8, cid) catch null else null;
         const updated = self.state.updated_at;
-        self.mutex.unlock();
+        self.mutex.unlock(io);
 
         defer if (channel) |ch| self.allocator.free(ch);
         defer if (chat_id) |cid| self.allocator.free(cid);
 
-        var buf: std.ArrayList(u8) = .empty;
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
         defer buf.deinit(self.allocator);
 
         try buf.appendSlice(self.allocator, "{\n");
@@ -101,35 +106,51 @@ pub const StateManager = struct {
         } else {
             try buf.appendSlice(self.allocator, "  \"last_chat_id\": null,\n");
         }
-        try std.fmt.format(buf.writer(self.allocator), "  \"updated_at\": {d}\n", .{updated});
+
+        // Write updated_at field
+        var updated_buf: [32]u8 = undefined;
+        const updated_str = std.fmt.bufPrint(&updated_buf, "  \"updated_at\": {d}\n", .{updated}) catch "  \"updated_at\": 0\n";
+        try buf.appendSlice(self.allocator, updated_str);
+
         try buf.appendSlice(self.allocator, "}\n");
 
         // Atomic write: temp file + rename
         const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}.tmp", .{self.state_path});
         defer self.allocator.free(tmp_path);
 
-        const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
-        try tmp_file.writeAll(buf.items);
-        tmp_file.close();
+        const tmp_file = try std.Io.Dir.cwd().createFile(io, tmp_path, .{});
+        defer tmp_file.close(io);
 
-        std.fs.renameAbsolute(tmp_path, self.state_path) catch {
+        // Use a writer for better compatibility
+        var write_buf: [4096]u8 = undefined;
+        var bw = tmp_file.writer(io, &write_buf);
+        try bw.interface.writeAll(buf.items);
+        try bw.interface.flush(); // Ensure data is written before close
+
+        std.Io.Dir.renameAbsolute(tmp_path, self.state_path, io) catch {
             // If rename fails (cross-device), fall back to direct write
-            std.fs.deleteFileAbsolute(tmp_path) catch {};
-            const file = try std.fs.createFileAbsolute(self.state_path, .{});
-            try file.writeAll(buf.items);
-            file.close();
+            std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
+            const file = try std.Io.Dir.cwd().createFile(io, self.state_path, .{});
+            defer file.close(io);
+            var write_buf2: [4096]u8 = undefined;
+            var bw2 = file.writer(io, &write_buf2);
+            try bw2.interface.writeAll(buf.items);
+            try bw2.interface.flush(); // Ensure data is written before close
         };
     }
 
     /// Load state from disk. Overwrites current in-memory state.
     pub fn load(self: *StateManager) !void {
-        const file = std.fs.openFileAbsolute(self.state_path, .{}) catch |err| switch (err) {
+        const io = std.Options.debug_io;
+        const file = std.Io.Dir.cwd().openFile(io, self.state_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return, // No state file — fresh start
             else => return err,
         };
-        defer file.close();
+        defer file.close(io);
 
-        const content = try file.readToEndAlloc(self.allocator, 64 * 1024);
+        var read_buf: [64 * 1024]u8 = undefined;
+        var reader = file.reader(io, &read_buf);
+        const content = try std.Io.Reader.allocRemaining(&reader.interface, self.allocator, .unlimited);
         defer self.allocator.free(content);
 
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, content, .{}) catch return;
@@ -140,8 +161,8 @@ pub const StateManager = struct {
             else => return,
         };
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
 
         // Free old values
         if (self.state.last_channel) |old| self.allocator.free(old);
@@ -226,9 +247,12 @@ test "StateManager updated_at is set" {
 test "StateManager save and load roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(dir);
-    const path = try std.fs.path.join(testing.allocator, &.{ dir, "state.json" });
+
+    // Use absolute path from tmpDir
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+    const path = try std.fs.path.join(testing.allocator, &.{ tmp_path, "state.json" });
     defer testing.allocator.free(path);
 
     // Save
@@ -254,9 +278,12 @@ test "StateManager save and load roundtrip" {
 test "StateManager load missing file is ok" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(dir);
-    const path = try std.fs.path.join(testing.allocator, &.{ dir, "nonexistent.json" });
+
+    // Use absolute path from tmpDir
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+    const path = try std.fs.path.join(testing.allocator, &.{ tmp_path, "nonexistent.json" });
     defer testing.allocator.free(path);
 
     var mgr = try StateManager.init(testing.allocator, path);
@@ -268,9 +295,11 @@ test "StateManager load missing file is ok" {
 test "StateManager save with null values" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(dir);
-    const path = try std.fs.path.join(testing.allocator, &.{ dir, "state-null.json" });
+    // Use absolute path from tmpDir
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+    const path = try std.fs.path.join(testing.allocator, &.{ tmp_path, "state-null.json" });
     defer testing.allocator.free(path);
 
     {
@@ -292,9 +321,11 @@ test "StateManager save with null values" {
 test "StateManager save overwrites previous file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(dir);
-    const path = try std.fs.path.join(testing.allocator, &.{ dir, "state-overwrite.json" });
+    // Use absolute path from tmpDir
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+    const path = try std.fs.path.join(testing.allocator, &.{ tmp_path, "state-overwrite.json" });
     defer testing.allocator.free(path);
 
     var mgr = try StateManager.init(testing.allocator, path);
@@ -316,9 +347,11 @@ test "StateManager save overwrites previous file" {
 test "StateManager handles special chars in values" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(dir);
-    const path = try std.fs.path.join(testing.allocator, &.{ dir, "state-special.json" });
+    // Use absolute path from tmpDir
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.Options.debug_io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+    const path = try std.fs.path.join(testing.allocator, &.{ tmp_path, "state-special.json" });
     defer testing.allocator.free(path);
 
     {

@@ -1,4 +1,42 @@
 const std = @import("std");
+const slog = @import("structured_log.zig");
+
+/// CRITICAL: std.Options.debug_io uses a .failing allocator (see Io/Threaded.zig:1622)
+/// This causes OutOfMemory when std.process.run() creates internal ArenaAllocator.
+/// Helper function to create a Threaded Io instance with page_allocator for process spawning.
+/// Use this for any code that needs to spawn child processes.
+/// Global static Io.Threaded instance for process spawning.
+/// This must be global because Io returned by ioBasic() contains pointers to this struct.
+var global_threaded_io: ?std.Io.Threaded = null;
+
+pub fn createProcessIo() std.Io {
+    slog.logStructured("DEBUG", "util", "create_process_io_start", .{});
+
+    // Initialize global instance once
+    if (global_threaded_io == null) {
+        slog.logStructured("DEBUG", "util", "init_global_threaded_io", .{});
+        global_threaded_io = std.Io.Threaded{
+            .allocator = std.heap.page_allocator,
+            .stack_size = std.Thread.SpawnConfig.default_stack_size,
+            .async_limit = .nothing,
+            .cpu_count_error = null,
+            .concurrent_limit = .nothing,
+            .old_sig_io = undefined,
+            .old_sig_pipe = undefined,
+            .have_signal_handler = false,
+            .argv0 = .empty,
+            .environ_initialized = true,
+            .environ = .empty,
+            .worker_threads = .init(null),
+            .disable_memory_mapping = false,
+        };
+        slog.logStructured("DEBUG", "util", "global_threaded_io_initialized", .{});
+    }
+    slog.logStructured("DEBUG", "util", "calling_io_basic", .{});
+    const io = global_threaded_io.?.ioBasic();
+    slog.logStructured("DEBUG", "util", "returning_io", .{});
+    return io;
+}
 
 /// Format bytes as human-readable string (e.g. "3.4 MB")
 pub fn formatBytes(bytes: u64) struct { value: f64, unit: []const u8 } {
@@ -13,7 +51,10 @@ pub fn formatBytes(bytes: u64) struct { value: f64, unit: []const u8 } {
 
 /// Get current timestamp as ISO 8601 string
 pub fn timestamp(buf: []u8) []const u8 {
-    const epoch = std.time.timestamp();
+    // Use C library time in Zig 0.16.0
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const epoch = tv.sec;
     const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = @intCast(epoch) };
     const day = epoch_seconds.getEpochDay();
     const year_day = day.calculateYearDay();
@@ -42,6 +83,152 @@ test "timestamp produces valid length" {
     var buf: [32]u8 = undefined;
     const ts = timestamp(&buf);
     try std.testing.expectEqual(@as(usize, 20), ts.len);
+}
+
+/// Get current Unix timestamp in seconds (Zig 0.16.0 compatible)
+pub fn timestampUnix() i64 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    return tv.sec;
+}
+
+/// Get current Unix timestamp in nanoseconds (Zig 0.16.0 compatible)
+pub fn nanoTimestamp() i128 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const secs: i128 = @intCast(tv.sec);
+    const usecs: i128 = @intCast(tv.usec);
+    return secs * 1_000_000_000 + usecs * 1_000;
+}
+
+/// Fill buffer with random bytes (Zig 0.16.0 compatible)
+pub fn randomBytes(buf: []u8) void {
+    const io = std.Options.debug_io;
+    io.random(buf);
+}
+
+/// Get a random integer of the specified type (Zig 0.16.0 compatible)
+pub fn randomInt(comptime T: type) T {
+    var bytes: [@sizeOf(T)]u8 = undefined;
+    randomBytes(&bytes);
+    return std.mem.readInt(T, &bytes, .little);
+}
+
+/// Sleep for the specified number of nanoseconds (Zig 0.16.0 compatible)
+/// Replaces std.Thread.sleep() which was removed in Zig 0.16.0
+/// Uses C's nanosleep for cross-platform compatibility
+pub fn sleep(nanoseconds: u64) void {
+    const sec = nanoseconds / 1_000_000_000;
+    const nsec = nanoseconds % 1_000_000_000;
+
+    var req = std.c.timespec{
+        .sec = @as(isize, @intCast(sec)),
+        .nsec = @as(isize, @intCast(nsec)),
+    };
+
+    var rem: std.c.timespec = undefined;
+    while (true) {
+        const rc = std.c.nanosleep(&req, &rem);
+        if (rc == 0) {
+            // Success
+            break;
+        } else if (rc == -(@as(i32, @intFromEnum(std.posix.E.INTR)))) {
+            // Sleep was interrupted, continue with remaining time
+            req = rem;
+        } else {
+            // Other error, just break
+            break;
+        }
+    }
+}
+
+// ── FixedBufferStream Compatibility Layer for Zig 0.16.0 ───────────────
+
+/// FixedBufferStream provides a buffer stream compatible with Zig 0.16.0's IO interface.
+/// This replaces the removed std.io.fixedBufferStream functionality.
+pub const FixedBufferStream = struct {
+    buf: []u8,
+    pos: usize = 0,
+
+    const Self = @This();
+
+    /// Create a new FixedBufferStream backed by the provided buffer.
+    pub fn init(buf: []u8) Self {
+        return .{ .buf = buf, .pos = 0 };
+    }
+
+    /// Get a writer for this stream (compatible with Zig 0.16.0's IO interface).
+    pub fn writer(self: *Self) Writer {
+        return .{ .context = self };
+    }
+
+    /// Get the written portion of the buffer.
+    pub fn getWritten(self: *const Self) []const u8 {
+        return self.buf[0..self.pos];
+    }
+
+    /// Write bytes to the buffer. Returns error.OutOfMemory if buffer is full.
+    pub fn write(self: *Self, bytes: []const u8) error{OutOfMemory}!usize {
+        if (self.pos + bytes.len > self.buf.len) {
+            return error.OutOfMemory;
+        }
+        @memcpy(self.buf[self.pos .. self.pos + bytes.len], bytes);
+        self.pos += bytes.len;
+        return bytes.len;
+    }
+
+    /// Write all bytes to the buffer (compatibility method).
+    pub fn writeAll(self: *Self, bytes: []const u8) error{OutOfMemory}!void {
+        const n = try self.write(bytes);
+        if (n != bytes.len) return error.OutOfMemory;
+    }
+
+    /// Write a byte to the buffer.
+    pub fn writeByte(self: *Self, byte: u8) error{OutOfMemory}!void {
+        if (self.pos >= self.buf.len) return error.OutOfMemory;
+        self.buf[self.pos] = byte;
+        self.pos += 1;
+    }
+
+    /// Print formatted string to the buffer.
+    pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) error{OutOfMemory}!void {
+        const result = std.fmt.bufPrint(self.buf[self.pos..], fmt, args) catch return error.OutOfMemory;
+        self.pos += result.len;
+    }
+
+    /// Writer interface for Zig 0.16.0.
+    pub const Writer = struct {
+        context: *Self,
+
+        pub const Error = error{OutOfMemory};
+
+        pub fn write(self: Writer, bytes: []const u8) Error!usize {
+            return self.context.write(bytes);
+        }
+
+        pub fn writeAll(self: Writer, bytes: []const u8) Error!void {
+            return self.context.writeAll(bytes);
+        }
+
+        pub fn writeByte(self: Writer, byte: u8) Error!void {
+            return self.context.writeByte(byte);
+        }
+
+        pub fn print(self: Writer, comptime fmt: []const u8, args: anytype) Error!void {
+            return self.context.print(fmt, args);
+        }
+
+        pub fn writeStreamingAll(self: Writer, io: std.Io, bytes: []const u8) Error!void {
+            _ = io;
+            return self.context.writeAll(bytes);
+        }
+    };
+};
+
+/// Convenience function to create a FixedBufferStream (Zig 0.16.0 compatible).
+/// Replaces std.io.fixedBufferStream which was removed in Zig 0.16.0.
+pub fn fixedBufferStream(buf: []u8) FixedBufferStream {
+    return FixedBufferStream.init(buf);
 }
 
 // ── JSON helpers ────────────────────────────────────────────────

@@ -40,7 +40,7 @@ pub const HeartbeatEngine = struct {
         while (iter.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t\r");
             if (std.mem.startsWith(u8, trimmed, "- ")) {
-                const task = std.mem.trimLeft(u8, trimmed[2..], " \t");
+                const task = std.mem.trim(u8, trimmed[2..], " \t");
                 if (task.len > 0) {
                     try list.append(allocator, try allocator.dupe(u8, task));
                 }
@@ -55,13 +55,15 @@ pub const HeartbeatEngine = struct {
         const heartbeat_path = try std.fs.path.join(allocator, &.{ self.workspace_dir, "HEARTBEAT.md" });
         defer allocator.free(heartbeat_path);
 
-        const file = std.fs.openFileAbsolute(heartbeat_path, .{}) catch |err| switch (err) {
+        const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, heartbeat_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return &.{},
             else => return err,
         };
-        defer file.close();
+        defer file.close(std.Options.debug_io);
 
-        const content = try file.readToEndAlloc(allocator, 1024 * 64);
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(std.Options.debug_io, &read_buf);
+        const content = try reader.interface.readAlloc(allocator, 1024 * 64);
         defer allocator.free(content);
 
         if (isContentEffectivelyEmpty(content)) return &.{};
@@ -91,13 +93,15 @@ pub const HeartbeatEngine = struct {
         const heartbeat_path = try std.fs.path.join(allocator, &.{ self.workspace_dir, "HEARTBEAT.md" });
         defer allocator.free(heartbeat_path);
 
-        const file = std.fs.openFileAbsolute(heartbeat_path, .{}) catch |err| switch (err) {
+        const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, heartbeat_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return .{ .outcome = .skipped_missing_file, .task_count = 0 },
             else => return err,
         };
-        defer file.close();
+        defer file.close(std.Options.debug_io);
 
-        const content = try file.readToEndAlloc(allocator, 1024 * 64);
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(std.Options.debug_io, &read_buf);
+        const content = try reader.interface.readAlloc(allocator, 1024 * 64);
         defer allocator.free(content);
         if (isContentEffectivelyEmpty(content)) {
             return .{ .outcome = .skipped_empty_file, .task_count = 0 };
@@ -115,8 +119,8 @@ pub const HeartbeatEngine = struct {
         defer allocator.free(path);
 
         // Try to open to check existence
-        if (std.fs.openFileAbsolute(path, .{})) |file| {
-            file.close();
+        if (std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{})) |file| {
+            file.close(std.Options.debug_io);
             return; // Already exists
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -135,9 +139,9 @@ pub const HeartbeatEngine = struct {
             \\# - Check the weather forecast
         ;
 
-        const file = try std.fs.createFileAbsolute(path, .{});
+        const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
         defer file.close();
-        try file.writeAll(default_content);
+        try file.writeStreamingAll(std.Options.debug_io, default_content);
     }
 };
 
@@ -156,14 +160,14 @@ fn isMarkdownHeader(line: []const u8) bool {
 fn isEmptyMarkdownBullet(line: []const u8) bool {
     if (line.len == 0 or !isMarkdownBulletPrefix(line[0])) return false;
 
-    const rest = std.mem.trimLeft(u8, line[1..], " \t");
+    const rest = std.mem.trim(u8, line[1..], " \t");
     if (rest.len == 0) return true;
 
     if (std.mem.startsWith(u8, rest, "[ ]") or
         std.mem.startsWith(u8, rest, "[x]") or
         std.mem.startsWith(u8, rest, "[X]"))
     {
-        const after_checkbox = std.mem.trimLeft(u8, rest[3..], " \t");
+        const after_checkbox = std.mem.trim(u8, rest[3..], " \t");
         return after_checkbox.len == 0;
     }
 

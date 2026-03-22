@@ -1,5 +1,7 @@
 const std = @import("std");
 const providers = @import("../providers/root.zig");
+const trace = @import("../trace_simple.zig");
+const log = std.log.scoped(.dispatcher);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Dispatcher — tool call parsing and result formatting
@@ -95,6 +97,203 @@ pub fn parseXmlToolCalls(
     }
 
     var remaining = response;
+
+    // Track seen tool calls to avoid duplicates
+    var seen_calls = std.StringHashMap(void).init(allocator);
+    defer seen_calls.deinit();
+
+    // Helper function to check if a tool call is a duplicate
+    const isDuplicate = struct {
+        fn check(alloc: std.mem.Allocator, seen: *std.StringHashMap(void), call: ParsedToolCall) bool {
+            const key = std.fmt.allocPrint(alloc, "{s}|{s}", .{call.name, call.arguments_json}) catch return false;
+            defer alloc.free(key);
+            return seen.contains(key);
+        }
+
+        fn mark(alloc: std.mem.Allocator, seen: *std.StringHashMap(void), call: ParsedToolCall) !void {
+            const key = std.fmt.allocPrint(alloc, "{s}|{s}", .{call.name, call.arguments_json}) catch return;
+            defer alloc.free(key);
+            try seen.put(key, {});
+        }
+    };
+
+    // Special case 1: Check for valid JSON format with "name" and "arguments"
+    // Format: {"name": "tool", "arguments": {...}}  (valid JSON, non-standard structure)
+    if (std.mem.indexOf(u8, remaining, "{\"name\":")) |start_idx| {
+        // Check if it has "arguments": key (JSON format)
+        if (std.mem.indexOf(u8, remaining, "\"arguments\":")) |_| {
+            // Find the end of this JSON object
+            var depth: usize = 1; // Already inside the opening {
+            var end_idx = start_idx + 8; // Skip past {"name":
+            while (end_idx < remaining.len and depth > 0) : (end_idx += 1) {
+                if (remaining[end_idx] == '{') depth += 1;
+                if (remaining[end_idx] == '}') depth -= 1;
+            }
+            if (depth == 0) {
+                const content = remaining[start_idx..end_idx];
+                log.debug("Detected valid JSON format (non-standard)", .{});
+                log.debug("Raw JSON content: {s}", .{content});
+
+                if (parseHybridTagCall(allocator, content)) |call| {
+                    // Check for duplicate
+                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                        log.info("✓ Parsed valid JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        try isDuplicate.mark(allocator, &seen_calls, call);
+                        try calls.append(allocator, call);
+
+                        // Capture text before the tool call
+                        const before = std.mem.trim(u8, remaining[0..start_idx], " \t\r\n");
+                        if (before.len > 0) {
+                            try text_parts.append(allocator, before);
+                        }
+                        remaining = remaining[end_idx..];
+                    } else {
+                        log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        remaining = remaining[end_idx..];
+                    }
+                } else |err| {
+                    log.warn("Failed to parse valid JSON tool call: {}", .{err});
+                }
+            }
+        }
+    }
+
+    // Special case 2: Check for malformed JSON-like format
+    // Format: {"name="tool", "arguments": {...}}  (no closing tags, uses = instead of :)
+    if (std.mem.indexOf(u8, remaining, "{\"name=")) |start_idx| {
+        // Check if it has "arguments": key (JSON format)
+        if (std.mem.indexOf(u8, remaining, "\"arguments\":")) |_| {
+            // Find the end of this JSON object
+            var depth: usize = 1; // Already inside the opening {
+            var end_idx = start_idx + 7; // Skip past {"name=
+            while (end_idx < remaining.len and depth > 0) : (end_idx += 1) {
+                if (remaining[end_idx] == '{') depth += 1;
+                if (remaining[end_idx] == '}') depth -= 1;
+            }
+            if (depth == 0) {
+                const content = remaining[start_idx..end_idx];
+                log.debug("Detected malformed JSON format (no closing tags)", .{});
+                log.debug("Raw JSON content: {s}", .{content});
+
+                if (parseHybridTagCall(allocator, content)) |call| {
+                    // Check for duplicate
+                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                        log.info("✓ Parsed malformed JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        try isDuplicate.mark(allocator, &seen_calls, call);
+                        try calls.append(allocator, call);
+
+                        // Capture text before the tool call
+                        const before = std.mem.trim(u8, remaining[0..start_idx], " \t\r\n");
+                        if (before.len > 0) {
+                            try text_parts.append(allocator, before);
+                        }
+                        remaining = remaining[end_idx..];
+                    } else {
+                        log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        remaining = remaining[end_idx..];
+                    }
+                } else |err| {
+                    log.warn("Failed to parse malformed JSON tool call: {}", .{err});
+                }
+            }
+        }
+    }
+
+    // Special case 3: Check for malformed MiniMax format at the start.
+    // This format starts with {"name": or {"name= or {"invoke name= or {"invoke name": and ends with </minimax:tool_call>
+    const mini_max_pattern_colon = "{\"name\":";
+    const mini_max_pattern_equals = "{\"name=";
+    const mini_max_pattern_invoke = "{\"invoke name=";
+    const mini_max_pattern_invoke_colon = "{\"invoke name\":";
+    const start_idx = blk: {
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_colon)) |idx| break :blk idx;
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_equals)) |idx| break :blk idx;
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_invoke)) |idx| break :blk idx;
+        if (std.mem.indexOf(u8, remaining, mini_max_pattern_invoke_colon)) |idx| break :blk idx;
+        break :blk null;
+    };
+
+    if (start_idx) |idx| {
+        // Check for the closing tag (either </minimax:tool_call> or standalone format)
+        if (std.mem.indexOf(u8, remaining, "</minimax:tool_call>")) |mini_end| {
+            // Found MiniMax hybrid format with closing tag
+            const content_start = idx;
+            const content_end = mini_end + "</minimax:tool_call>".len;
+            const mini_max_content = remaining[content_start..content_end];
+
+            // Determine format type for logging
+            const format_type = if (std.mem.indexOf(u8, mini_max_content, "{\"name\":")) |_| "colon"
+                                 else if (std.mem.indexOf(u8, mini_max_content, "{\"name=")) |_| "equals"
+                                 else if (std.mem.indexOf(u8, mini_max_content, "{\"invoke name\":")) |_| "invoke-colon"
+                                 else if (std.mem.indexOf(u8, mini_max_content, "{\"invoke name=")) |_| "invoke"
+                                 else "unknown";
+
+            log.debug("Detected MiniMax tool call (format: {s})", .{format_type});
+            log.debug("Raw MiniMax content: {s}", .{mini_max_content});
+
+            // Parse using hybrid tag parser
+            if (parseHybridTagCall(allocator, mini_max_content)) |call| {
+                // Check for duplicate
+                if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                    log.info("✓ Parsed MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                    try isDuplicate.mark(allocator, &seen_calls, call);
+                    try calls.append(allocator, call);
+
+                    // Capture text before the tool call
+                    const before = std.mem.trim(u8, remaining[0..content_start], " \t\r\n");
+                    if (before.len > 0) {
+                        try text_parts.append(allocator, before);
+                    }
+                } else {
+                    log.warn("Skipping duplicate MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                }
+                // Skip this entire block in remaining
+                remaining = remaining[content_end..];
+            } else |err| {
+                log.warn("Failed to parse MiniMax tool call: {}", .{err});
+                // If parsing fails, just continue normally
+            }
+        } else {
+            // Fallback: MiniMax format without closing tag - try to parse the JSON object
+            // Find the end of the JSON object by matching braces
+            var depth: usize = 1;
+            var content_end: usize = idx;
+            while (content_end < remaining.len and depth > 0) : (content_end += 1) {
+                if (remaining[content_end] == '{') depth += 1;
+                if (remaining[content_end] == '}') depth -= 1;
+            }
+
+            if (depth == 0 and content_end > idx + 10) {
+                // Found complete JSON object
+                const mini_max_content = remaining[idx..content_end];
+
+                log.debug("Detected MiniMax tool call without closing tag", .{});
+                log.debug("Raw MiniMax content: {s}", .{mini_max_content});
+
+                // Parse using hybrid tag parser
+                if (parseHybridTagCall(allocator, mini_max_content)) |call| {
+                    // Check for duplicate
+                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
+                        log.info("✓ Parsed MiniMax tool call (no closing tag): name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                        try isDuplicate.mark(allocator, &seen_calls, call);
+                        try calls.append(allocator, call);
+
+                        // Capture text before the tool call
+                        const before = std.mem.trim(u8, remaining[0..idx], " \t\r\n");
+                        if (before.len > 0) {
+                            try text_parts.append(allocator, before);
+                        }
+                    } else {
+                        log.warn("Skipping duplicate MiniMax tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
+                    }
+                    // Skip this entire block in remaining
+                    remaining = remaining[content_end..];
+                } else |err| {
+                    log.warn("Failed to parse MiniMax tool call (no closing tag): {}", .{err});
+                }
+            }
+        }
+    }
 
     while (true) {
         // Find next tool call marker: either <tool_call> or [TOOL_CALL] or [tool_call]
@@ -203,7 +402,23 @@ pub fn parseXmlToolCalls(
                 }
             }
             if (!call_parsed) {
-                if (parseHybridTagCall(allocator, inner)) |call| {
+                // Check for minimax-style hybrid format: {"name="tool">\n<parameter name="arg">value</parameter>\n</invoke>
+                if (containsIgnoreCase(inner, "invoke") and
+                    containsIgnoreCase(inner, "parameter") and
+                    (std.mem.indexOf(u8, inner, "name=") != null)) {
+                    // Strip the opening { if present and invoke parseHybridTagCall
+                    const adjusted_inner = if (inner[0] == '{')
+                        std.mem.trim(u8, inner[1..], " \t\r\n")
+                    else
+                        inner;
+                    if (parseHybridTagCall(allocator, adjusted_inner)) |call| {
+                        try calls.append(allocator, call);
+                        call_parsed = true;
+                    } else |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => {},
+                    }
+                } else if (parseHybridTagCall(allocator, inner)) |call| {
                     try calls.append(allocator, call);
                     call_parsed = true;
                 } else |err| switch (err) {
@@ -245,11 +460,13 @@ pub fn formatToolResults(allocator: std.mem.Allocator, results: []const ToolExec
     try buf.appendSlice(allocator, "[Tool results]\n");
     for (results) |result| {
         const status_str = if (result.success) "ok" else "error";
-        try std.fmt.format(buf.writer(allocator), "<tool_result name=\"{s}\" status=\"{s}\">\n{s}\n</tool_result>\n", .{
+        const formatted = try std.fmt.allocPrint(allocator, "<tool_result name=\"{s}\" status=\"{s}\">\n{s}\n</tool_result>\n", .{
             result.name,
             status_str,
             result.output,
         });
+        defer allocator.free(formatted);
+        try buf.appendSlice(allocator, formatted);
     }
 
     return try buf.toOwnedSlice(allocator);
@@ -258,29 +475,30 @@ pub fn formatToolResults(allocator: std.mem.Allocator, results: []const ToolExec
 /// Build tool use instructions for the system prompt.
 pub fn buildToolInstructions(allocator: std.mem.Allocator, tools: anytype) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
+    defer buf.deinit(allocator);
 
-    try w.writeAll("\n## Tool Use Protocol\n\n");
-    try w.writeAll("To use a tool, you MUST wrap a JSON object in <tool_call></tool_call> or [TOOL_CALL][/TOOL_CALL] tags.\n");
-    try w.writeAll("The JSON object MUST contain exactly two fields: \"name\" (string) and \"arguments\" (object).\n\n");
-    try w.writeAll("Example:\n```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n");
-    try w.writeAll("CRITICAL RULES:\n");
-    try w.writeAll("1. ONLY use the format above. NEVER use <invoke>, <function>, or other XML-like formats.\n");
-    try w.writeAll("2. Output actual tags -- never describe steps or give examples.\n");
-    try w.writeAll("3. The internal content MUST be valid JSON. No trailing commas, no unquoted keys.\n\n");
-    try w.writeAll("You may use multiple tool calls in a single response. ");
-    try w.writeAll("After tool execution, results appear in <tool_result> tags. ");
-    try w.writeAll("Continue reasoning with the results until you can give a final answer.\n\n");
-    try w.writeAll("Prefer memory tools (memory_recall, memory_list, memory_store, memory_forget) for assistant memory tasks instead of shell/sqlite commands.\n\n");
-    try w.writeAll("### Available Tools\n\n");
+    try buf.appendSlice(allocator, "\n## Tool Use Protocol\n\n");
+    try buf.appendSlice(allocator, "To use a tool, you MUST wrap a JSON object in [TOOL_CALL][/TOOL_CALL] tags.\n");
+    try buf.appendSlice(allocator, "The JSON object MUST contain exactly two fields: \"name\" (string) and \"arguments\" (object).\n\n");
+    try buf.appendSlice(allocator, "Example:\n```\n[TOOL_CALL]\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n[/TOOL_CALL]\n```\n\n");
+    try buf.appendSlice(allocator, "CRITICAL RULES:\n");
+    try buf.appendSlice(allocator, "1. ONLY use the format above. NEVER use <invoke>, <function>, or other XML-like formats.\n");
+    try buf.appendSlice(allocator, "2. Output actual tags -- never describe steps or give examples.\n");
+    try buf.appendSlice(allocator, "3. The internal content MUST be valid JSON. No trailing commas, no unquoted keys.\n\n");
+    try buf.appendSlice(allocator, "You may use multiple tool calls in a single response. ");
+    try buf.appendSlice(allocator, "After tool execution, results appear in <tool_result> tags. ");
+    try buf.appendSlice(allocator, "Continue reasoning with the results until you can give a final answer.\n\n");
+    try buf.appendSlice(allocator, "Prefer memory tools (memory_recall, memory_list, memory_store, memory_forget) for assistant memory tasks instead of shell/sqlite commands.\n\n");
+    try buf.appendSlice(allocator, "### Available Tools\n\n");
 
     for (tools) |t| {
-        try std.fmt.format(w, "**{s}**: {s}\nParameters: `{s}`\n\n", .{
+        const line = try std.fmt.allocPrint(allocator, "**{s}**: {s}\nParameters: `{s}`\n\n", .{
             t.name(),
             t.description(),
             t.parametersJson(),
         });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
     }
 
     return try buf.toOwnedSlice(allocator);
@@ -338,7 +556,7 @@ pub const DispatcherKind = enum {
 /// Returns true if the text starts with `{` (after trimming whitespace) and contains `"tool_calls"`.
 /// This is a lightweight heuristic — full JSON parsing happens in parseNativeToolCalls.
 pub fn isNativeJsonFormat(text: []const u8) bool {
-    const trimmed = std.mem.trimLeft(u8, text, " \n\r\t");
+    const trimmed = std.mem.trim(u8, text, " \n\r\t");
     if (trimmed.len == 0 or trimmed[0] != '{') return false;
     return std.mem.indexOf(u8, trimmed, "\"tool_calls\"") != null;
 }
@@ -393,6 +611,9 @@ pub fn parseNativeToolCalls(
     allocator: std.mem.Allocator,
     response: []const u8,
 ) !ParseResult {
+    log.debug("Detected native OpenAI tool call format", .{});
+    log.debug("Raw native response: {s}", .{response});
+
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
     defer parsed.deinit();
 
@@ -470,6 +691,12 @@ pub fn parseNativeToolCalls(
             .arguments_json = try allocator.dupe(u8, args_str),
             .tool_call_id = if (tc_id) |id| try allocator.dupe(u8, id) else null,
         });
+
+        log.info("✓ Parsed native tool call: name='{s}' args='{s}' id={s}", .{
+            name_str,
+            args_str,
+            if (tc_id) |id| id else "(none)",
+        });
     }
 
     return .{
@@ -489,20 +716,21 @@ pub fn parseNativeToolCalls(
 pub fn formatNativeToolResults(allocator: std.mem.Allocator, results: []const ToolExecutionResult) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
 
-    try w.writeAll("[");
+    try buf.append(allocator, '[');
     for (results, 0..) |result, i| {
-        if (i > 0) try w.writeAll(",");
+        if (i > 0) try buf.append(allocator, ',');
         const tc_id = result.tool_call_id orelse "unknown";
 
         // Serialize content as a JSON string value
-        try std.fmt.format(w, "{{\"role\":\"tool\",\"tool_call_id\":{f},\"content\":{f}}}", .{
-            std.json.fmt(tc_id, .{}),
-            std.json.fmt(result.output, .{}),
+        const formatted = try std.fmt.allocPrint(allocator, "{{\"role\":\"tool\",\"tool_call_id\":{s},\"content\":{s}}}", .{
+            tc_id,
+            result.output,
         });
+        defer allocator.free(formatted);
+        try buf.appendSlice(allocator, formatted);
     }
-    try w.writeAll("]");
+    try buf.append(allocator, ']');
 
     return try buf.toOwnedSlice(allocator);
 }
@@ -525,26 +753,25 @@ pub fn buildAssistantHistoryWithToolCalls(
 ) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
 
     if (response_text.len > 0) {
-        try w.writeAll(response_text);
-        try w.writeByte('\n');
+        try buf.appendSlice(allocator, response_text);
+        try buf.append(allocator, '\n');
     }
 
     for (parsed_calls) |call| {
-        try w.writeAll("<tool_call>\n");
+        try buf.appendSlice(allocator, " \n");
         const name_json = try std.json.Stringify.valueAlloc(allocator, call.name, .{});
         defer allocator.free(name_json);
-        try w.writeAll("{\"name\": ");
-        try w.writeAll(name_json);
-        try w.writeAll(", \"arguments\": ");
-        try w.writeAll(call.arguments_json);
-        try w.writeByte('}');
-        try w.writeAll("\n</tool_call>\n");
+        try buf.appendSlice(allocator, "{\"name\": ");
+        try buf.appendSlice(allocator, name_json);
+        try buf.appendSlice(allocator, ", \"arguments\": ");
+        try buf.appendSlice(allocator, call.arguments_json);
+        try buf.append(allocator, '}');
+        try buf.appendSlice(allocator, "\n \n");
     }
 
-    return buf.toOwnedSlice(allocator);
+    return try buf.toOwnedSlice(allocator);
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────
@@ -831,8 +1058,7 @@ fn parseFunctionTagCall(allocator: std.mem.Allocator, inner: []const u8) !Parsed
 
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer args_buf.deinit(allocator);
-    const w = args_buf.writer(allocator);
-    try w.writeByte('{');
+    try args_buf.append(allocator, '{');
 
     var remaining = body;
     var first = true;
@@ -849,7 +1075,7 @@ fn parseFunctionTagCall(allocator: std.mem.Allocator, inner: []const u8) !Parsed
         const value_end_pos = std.mem.indexOf(u8, value_start, param_close) orelse break;
         const value = std.mem.trim(u8, value_start[0..value_end_pos], " \t\r\n");
 
-        if (!first) try w.writeByte(',');
+        if (!first) try args_buf.append(allocator, ',');
         first = false;
 
         // Write "key": "value" with JSON string escaping via Stringify.valueAlloc
@@ -857,14 +1083,14 @@ fn parseFunctionTagCall(allocator: std.mem.Allocator, inner: []const u8) !Parsed
         defer allocator.free(key_json);
         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
         defer allocator.free(val_json);
-        try w.writeAll(key_json);
-        try w.writeByte(':');
-        try w.writeAll(val_json);
+        try args_buf.appendSlice(allocator, key_json);
+        try args_buf.append(allocator, ':');
+        try args_buf.appendSlice(allocator, val_json);
 
         remaining = value_start[value_end_pos + param_close.len ..];
     }
 
-    try w.writeByte('}');
+    try args_buf.append(allocator, '}');
 
     const args_json = try args_buf.toOwnedSlice(allocator);
     errdefer allocator.free(args_json);
@@ -915,8 +1141,7 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer args_buf.deinit(allocator);
-    const w = args_buf.writer(allocator);
-    try w.writeByte('{');
+    try args_buf.append(allocator, '{');
 
     var remaining = invoke_body;
     var first = true;
@@ -945,21 +1170,21 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
         const value_end_pos = std.mem.indexOf(u8, value_start, param_close) orelse break;
         const value = std.mem.trim(u8, value_start[0..value_end_pos], " \t\r\n");
 
-        if (!first) try w.writeByte(',');
+        if (!first) try args_buf.append(allocator, ',');
         first = false;
 
         const key_json = try std.json.Stringify.valueAlloc(allocator, key, .{});
         defer allocator.free(key_json);
         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
         defer allocator.free(val_json);
-        try w.writeAll(key_json);
-        try w.writeByte(':');
-        try w.writeAll(val_json);
+        try args_buf.appendSlice(allocator, key_json);
+        try args_buf.append(allocator, ':');
+        try args_buf.appendSlice(allocator, val_json);
 
         remaining = value_start[value_end_pos + param_close.len ..];
     }
 
-    try w.writeByte('}');
+    try args_buf.append(allocator, '}');
 
     const args_json = try args_buf.toOwnedSlice(allocator);
     errdefer allocator.free(args_json);
@@ -974,6 +1199,160 @@ fn parseInvokeTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
 fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedToolCall {
     // 1. Greedy Name Extraction
     const tool_name: []const u8 = blk: {
+        // SPECIAL CASE 0: MiniMax invoke format {"invoke name="tool", "arguments": {...}}
+        // This must be checked FIRST - handles {"invoke name= (equals, no colon)
+        if (std.mem.indexOf(u8, inner, "{\"invoke name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 13..]; // Skip past {"invoke name=
+                // Look for quoted tool name
+                if (after.len > 0 and after[0] == '"') {
+                    if (std.mem.indexOfScalar(u8, after[1..], '"')) |q_end| {
+                        const name_candidate = after[1 .. q_end + 1];
+                        // Verify it's followed by comma and "arguments" (JSON format)
+                        const name_end = idx + 13 + q_end + 2;
+                        if (name_end < inner.len) {
+                            const after_name = inner[name_end..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '"')) {
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 1: MiniMax invoke format {"invoke name": "tool", "arguments": {...}}
+        // This handles {"invoke name": (colon format)
+        if (std.mem.indexOf(u8, inner, "{\"invoke name\":")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 14..]; // Skip past {"invoke name":
+                if (std.mem.indexOfScalar(u8, after, '"')) |q1| {
+                    if (std.mem.indexOfScalar(u8, after[q1 + 1 ..], '"')) |q2| {
+                        const name_candidate = std.mem.trim(u8, after[q1 + 1 .. q1 + 1 + q2], " \t\r\n");
+                        // Check if followed by comma and "arguments" (valid JSON format)
+                        const name_end = idx + 14 + q1 + 1 + q2 + 1;
+                        if (name_end < inner.len) {
+                            const after_name = inner[name_end..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '}')) {
+                                // Valid JSON format with "arguments" key
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 2: Valid JSON format {"name": "tool", "arguments": {...}}
+        // This must be checked before the > marker check
+        // NOTE: There's a duplicate check below - this handles standard JSON format
+        if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 8 ..]; // Skip past {"name":
+                if (std.mem.indexOfScalar(u8, after, '"')) |q1| {
+                    if (std.mem.indexOfScalar(u8, after[q1 + 1 ..], '"')) |q2| {
+                        const name_candidate = std.mem.trim(u8, after[q1 + 1 .. q1 + 1 + q2], " \t\r\n");
+                        // Check if followed by comma and "arguments" (valid JSON format)
+                        const name_end = idx + 8 + q1 + 1 + q2 + 1;
+                        if (name_end < inner.len) {
+                            const after_name = inner[name_end..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '}')) {
+                                // Valid JSON format with "arguments" key
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 3: MiniMax format starts with {"name": "tool_name">
+        // This must be checked first to avoid matching parameter names
+        if (std.mem.indexOf(u8, inner, "{\"name\":")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 8 ..]; // Skip past {"name":
+                if (std.mem.indexOfScalar(u8, after, '"')) |q1| {
+                    if (std.mem.indexOfScalar(u8, after[q1 + 1 ..], '"')) |q2| {
+                        const name_candidate = std.mem.trim(u8, after[q1 + 1 .. q1 + 1 + q2], " \t\r\n");
+                        // Verify this is followed by > (MiniMax format marker)
+                        const name_end = idx + 8 + q1 + 1 + q2 + 1;
+                        if (name_end < inner.len and inner[name_end] == '>') {
+                            break :blk name_candidate;
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 4: MiniMax invoke format {"invoke name=tool_name" or {"invoke name=tool_name, ...}
+        if (std.mem.indexOf(u8, inner, "{\"invoke name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 13..]; // Skip past {"invoke name=
+                // Look for quoted tool name followed by comma or closing brace
+                if (after.len > 0 and after[0] == '"') {
+                    if (std.mem.indexOfScalarPos(u8, after, 1, '"')) |q_end| {
+                        const name_candidate = after[1..q_end];
+                        if (name_candidate.len > 0) {
+                            // Check if followed by comma, closing brace, or >
+                            const after_name = after[q_end + 1 ..];
+                            const trimmed = std.mem.trim(u8, after_name, " \t\r\n");
+                            if (trimmed.len > 0 and (trimmed[0] == ',' or trimmed[0] == '}' or trimmed[0] == '>')) {
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 5: MiniMax format {"name=tool_name> (no quotes, no colon)
+        if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 7 ..]; // Skip past {"name=
+                // Find the closing >
+                if (std.mem.indexOfScalar(u8, after, '>')) |gt_idx| {
+                    const name_candidate = std.mem.trim(u8, after[0..gt_idx], " \t\r\n");
+                    if (name_candidate.len > 0) {
+                        break :blk name_candidate;
+                    }
+                }
+            }
+        }
+
+        // SPECIAL CASE 6: Malformed JSON format {"name="tool_name", "arguments": {...}}
+        // This is a hybrid of JSON and MiniMax formats
+        if (std.mem.indexOf(u8, inner, "{\"name=")) |idx| {
+            if (idx == 0 or (idx > 0 and inner[idx - 1] != '\\')) { // At start or not escaped
+                const after = inner[idx + 7 ..]; // Skip past {"name=
+                // Look for quoted tool name followed by comma: "tool",
+                if (after[0] == '"') {
+                    if (std.mem.indexOfScalarPos(u8, after, 1, '"')) |q_end| {
+                        if (q_end + 1 < after.len and after[q_end + 1] == ',') {
+                            const name_candidate = after[1..q_end];
+                            if (name_candidate.len > 0) {
+                                break :blk name_candidate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try HTML-style name attribute: name="value" or name='value'
+        if (std.mem.indexOf(u8, inner, "name=\"")) |idx| {
+            const after = inner[idx + 6 ..];
+            if (std.mem.indexOfScalarPos(u8, after, 0, '"')) |q_end| {
+                break :blk std.mem.trim(u8, after[0..q_end], " \t\r\n");
+            }
+        } else if (std.mem.indexOf(u8, inner, "name='")) |idx| {
+            const after = inner[idx + 6 ..];
+            if (std.mem.indexOfScalarPos(u8, after, 0, '\'')) |q_end| {
+                break :blk std.mem.trim(u8, after[0..q_end], " \t\r\n");
+            }
+        }
         // Try JSON-style name
         if (std.mem.indexOf(u8, inner, "\"name\":")) |idx| {
             const after = inner[idx + 7 ..];
@@ -1020,10 +1399,42 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
     if (tool_name.len == 0) return error.EmptyToolName;
 
     // 2. Greedy Parameter Collection
+    // SPECIAL CASE: Check for JSON-style arguments like {"name="tool", "arguments": {...}}
+    const json_args: ?[]const u8 = blk: {
+        if (std.mem.indexOf(u8, inner, "\"arguments\":")) |args_idx| {
+            // Find the opening brace of the arguments value
+            const after_args = inner[args_idx + "\"arguments\":".len ..];
+            const brace_start = std.mem.trim(u8, after_args, " \t\r\n");
+            if (brace_start.len > 0 and brace_start[0] == '{') {
+                // Try to find the matching closing brace
+                var depth: usize = 1;
+                var i: usize = 1;
+                while (i < brace_start.len and depth > 0) : (i += 1) {
+                    if (brace_start[i] == '{') depth += 1;
+                    if (brace_start[i] == '}') depth -= 1;
+                }
+                if (depth == 0) {
+                    const json_content = brace_start[0..i];
+                    break :blk try allocator.dupe(u8, json_content);
+                }
+            }
+        }
+
+        // Default: fall through to parameter parsing
+        break :blk null;
+    };
+
+    if (json_args) |args| {
+        return .{
+            .name = try allocator.dupe(u8, tool_name),
+            .arguments_json = args,
+        };
+    }
+
+    // Regular parameter parsing (for XML-style formats)
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer args_buf.deinit(allocator);
-    const w = args_buf.writer(allocator);
-    try w.writeByte('{');
+    try args_buf.append(allocator, '{');
 
     var first = true;
     var remaining = inner;
@@ -1064,15 +1475,15 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
                     const value = std.mem.trim(u8, val_start[0..val_end], " \t\r\n");
 
                     if (!found_keys.contains(key)) {
-                        if (!first) try w.writeByte(',');
+                        if (!first) try args_buf.append(allocator, ',');
                         first = false;
                         const key_json = try std.json.Stringify.valueAlloc(allocator, key, .{});
                         defer allocator.free(key_json);
                         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
                         defer allocator.free(val_json);
-                        try w.writeAll(key_json);
-                        try w.writeByte(':');
-                        try w.writeAll(val_json);
+                        try args_buf.appendSlice(allocator, key_json);
+                        try args_buf.append(allocator, ':');
+                        try args_buf.appendSlice(allocator, val_json);
                         try found_keys.put(key, {});
                     }
                     search_idx = absolute_ps + 15 + q_end + 1 + tag_end + 1 + val_end + p_close.len;
@@ -1100,15 +1511,15 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
                 if (std.mem.indexOfScalar(u8, val_start, '"')) |val_q_end| {
                     const value = val_start[0..val_q_end];
                     if (!found_keys.contains(key) and !std.mem.eql(u8, key, "name") and !std.mem.eql(u8, key, "arguments")) {
-                        if (!first) try w.writeByte(',');
+                        if (!first) try args_buf.append(allocator, ',');
                         first = false;
                         const key_json = try std.json.Stringify.valueAlloc(allocator, key, .{});
                         defer allocator.free(key_json);
                         const val_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
                         defer allocator.free(val_json);
-                        try w.writeAll(key_json);
-                        try w.writeByte(':');
-                        try w.writeAll(val_json);
+                        try args_buf.appendSlice(allocator, key_json);
+                        try args_buf.append(allocator, ':');
+                        try args_buf.appendSlice(allocator, val_json);
                         try found_keys.put(key, {});
                     }
                     search_idx = absolute_q1 + 1 + q2 + 1 + i + 1 + val_q_end + 1;
@@ -1119,7 +1530,7 @@ fn parseHybridTagCall(allocator: std.mem.Allocator, inner: []const u8) !ParsedTo
         search_idx = absolute_q1 + 1;
     }
 
-    try w.writeByte('}');
+    try args_buf.append(allocator, '}');
 
     const args_json = try args_buf.toOwnedSlice(allocator);
     errdefer allocator.free(args_json);

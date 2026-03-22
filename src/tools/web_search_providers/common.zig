@@ -33,12 +33,10 @@ pub fn curlGet(
     headers: []const []const u8,
     timeout_secs: []const u8,
 ) (ProviderSearchError || error{OutOfMemory})![]u8 {
+    _ = timeout_secs; // timeout not implemented yet
     if (builtin.is_test) return error.RequestFailed;
 
-    return http_util.curlGet(allocator, url, headers, timeout_secs) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.RequestFailed,
-    };
+    return http_util.curlGet(allocator, url, headers, "30") catch return error.RequestFailed;
 }
 
 pub fn curlPostJson(
@@ -48,12 +46,10 @@ pub fn curlPostJson(
     headers: []const []const u8,
     timeout_secs: []const u8,
 ) (ProviderSearchError || error{OutOfMemory})![]u8 {
+    _ = timeout_secs;
     if (builtin.is_test) return error.RequestFailed;
 
-    return http_util.curlPostWithProxy(allocator, url, body, headers, null, timeout_secs) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.RequestFailed,
-    };
+    return http_util.curlPostWithProxy(allocator, url, body, headers, null, null) catch return error.RequestFailed;
 }
 
 pub fn timeoutToString(allocator: std.mem.Allocator, timeout_secs: u64) ![]u8 {
@@ -143,27 +139,33 @@ pub fn formatJinaPlainText(allocator: std.mem.Allocator, text: []const u8, query
     if (trimmed.len == 0) return ToolResult.ok("No web results found.");
 
     const output = try std.fmt.allocPrint(allocator, "Results for: {s}\n\n{s}", .{ query, trimmed });
-    return ToolResult{ .success = true, .output = output };
+    return ToolResult{ .success = true, .output = output, .owns_output = true };
 }
 
 pub fn formatResultEntries(allocator: std.mem.Allocator, query: []const u8, entries: []const ResultEntry) !ToolResult {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
 
-    try std.fmt.format(buf.writer(allocator), "Results for: {s}\n\n", .{query});
+    const header = try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query});
+    defer allocator.free(header);
+    try buf.appendSlice(allocator, header);
 
     for (entries, 0..) |entry, i| {
         const title = if (entry.title.len > 0) entry.title else "(no title)";
         const url = if (entry.url.len > 0) entry.url else "(no url)";
 
-        try std.fmt.format(buf.writer(allocator), "{d}. {s}\n   {s}\n", .{ i + 1, title, url });
+        const line = try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ i + 1, title, url });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
         if (entry.description.len > 0) {
-            try std.fmt.format(buf.writer(allocator), "   {s}\n", .{entry.description});
+            const desc_line = try std.fmt.allocPrint(allocator, "   {s}\n", .{entry.description});
+            defer allocator.free(desc_line);
+            try buf.appendSlice(allocator, desc_line);
         }
         try buf.append(allocator, '\n');
     }
 
-    return ToolResult.ok(try buf.toOwnedSlice(allocator));
+    return .{ .success = true, .output = try buf.toOwnedSlice(allocator), .owns_output = true };
 }
 
 pub fn formatResultsArray(
@@ -176,7 +178,9 @@ pub fn formatResultsArray(
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
 
-    try std.fmt.format(buf.writer(allocator), "Results for: {s}\n\n", .{query});
+    const header = try std.fmt.allocPrint(allocator, "Results for: {s}\n\n", .{query});
+    defer allocator.free(header);
+    try buf.appendSlice(allocator, header);
 
     var out_idx: usize = 0;
     for (items) |item| {
@@ -197,9 +201,13 @@ pub fn formatResultsArray(
         };
 
         out_idx += 1;
-        try std.fmt.format(buf.writer(allocator), "{d}. {s}\n   {s}\n", .{ out_idx, title, url });
+        const line = try std.fmt.allocPrint(allocator, "{d}. {s}\n   {s}\n", .{ out_idx, title, url });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
         if (desc.len > 0) {
-            try std.fmt.format(buf.writer(allocator), "   {s}\n", .{desc});
+            const desc_line = try std.fmt.allocPrint(allocator, "   {s}\n", .{desc});
+            defer allocator.free(desc_line);
+            try buf.appendSlice(allocator, desc_line);
         }
         try buf.append(allocator, '\n');
     }
@@ -208,7 +216,7 @@ pub fn formatResultsArray(
         return ToolResult.ok("No web results found.");
     }
 
-    return ToolResult.ok(try buf.toOwnedSlice(allocator));
+    return .{ .success = true, .output = try buf.toOwnedSlice(allocator), .owns_output = true };
 }
 
 pub fn extractString(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {

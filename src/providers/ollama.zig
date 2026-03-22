@@ -175,14 +175,17 @@ fn appendOllamaImageValue(
 pub const OllamaProvider = struct {
     base_url: []const u8,
     allocator: std.mem.Allocator,
+    http_client: std.http.Client,
 
     const DEFAULT_BASE_URL = "http://localhost:11434";
 
     pub fn init(allocator: std.mem.Allocator, base_url: ?[]const u8) OllamaProvider {
         const url = if (base_url) |u| trimTrailingSlash(u) else DEFAULT_BASE_URL;
+        const io = @import("../http_util.zig").getThreadedIo();
         return .{
             .base_url = url,
             .allocator = allocator,
+            .http_client = .{ .allocator = allocator, .io = io },
         };
     }
 
@@ -219,38 +222,163 @@ pub const OllamaProvider = struct {
 
     /// Parse an Ollama response, handling tool calls, thinking-only, and plain text.
     pub fn parseResponse(allocator: std.mem.Allocator, body: []const u8) ![]const u8 {
-        const parsed = try std.json.parseFromSlice(OllamaChatResponse, allocator, body, .{
+        // First try to parse as OllamaChatResponse
+        const parsed = std.json.parseFromSlice(OllamaChatResponse, allocator, body, .{
             .ignore_unknown_fields = true,
         });
+
+        if (parsed) |p| {
+            defer p.deinit();
+            const message = p.value.message;
+
+            // If model returned tool calls, format them for the agent loop
+            if (message.tool_calls) |tcs| {
+                if (tcs.len > 0) {
+                    return formatToolCallsForLoop(allocator, message);
+                }
+            }
+
+            // Plain text response
+            if (message.content) |content| {
+                if (content.len > 0) {
+                    // Check if content itself is a tool call (some models put it in content field)
+                    if (looksLikeDirectToolCall(content)) {
+                        return convertDirectToolCall(allocator, content);
+                    }
+                    return try allocator.dupe(u8, content);
+                }
+            }
+
+            // Thinking-only response (model reasoned but produced no output)
+            if (message.thinking) |thinking| {
+                const preview_len = @min(thinking.len, 200);
+                return try std.fmt.allocPrint(
+                    allocator,
+                    "I was thinking about this: {s}... but I didn't complete my response. Could you try asking again?",
+                    .{thinking[0..preview_len]},
+                );
+            }
+
+            // Empty response
+            return try allocator.dupe(u8, "");
+        } else |_| {
+            // If structured parsing fails, check if body is a tool call in various formats
+            // JSON format: {"name":"tool","arguments":{...}}
+            if (looksLikeDirectToolCall(body)) {
+                return convertDirectToolCall(allocator, body);
+            }
+            // XML format: <invoke name="tool"><parameter name="arg">value</parameter></invoke>
+            if (looksLikeXMLToolCall(body)) {
+                return convertXMLToolCall(allocator, body);
+            }
+            // Not a tool call, return as-is
+            return allocator.dupe(u8, body);
+        }
+    }
+
+    /// Check if JSON looks like a direct tool call: {"name":"tool","arguments":{...}}
+    fn looksLikeDirectToolCall(json: []const u8) bool {
+        const trimmed = std.mem.trim(u8, json, " \t\r\n");
+        return std.mem.startsWith(u8, trimmed, "{\"name\":") and
+            std.mem.indexOf(u8, trimmed, "\"arguments\":") != null;
+    }
+
+    /// Convert a direct tool call JSON to OpenAI format for the agent loop
+    fn convertDirectToolCall(allocator: std.mem.Allocator, json: []const u8) ![]const u8 {
+        // Parse {"name":"...","arguments":{...}}
+        const parsed = try std.json.parseFromSlice(struct { name: []const u8, arguments: std.json.Value }, allocator, json, .{});
         defer parsed.deinit();
-        const message = parsed.value.message;
 
-        // If model returned tool calls, format them for the agent loop
-        if (message.tool_calls) |tcs| {
-            if (tcs.len > 0) {
-                return formatToolCallsForLoop(allocator, message);
+        const name = parsed.value.name;
+        const args = parsed.value.arguments;
+
+        // Stringify arguments
+        const args_str = try std.json.Stringify.valueAlloc(allocator, args, .{});
+        defer allocator.free(args_str);
+
+        // Format as OpenAI tool call
+        return try std.fmt.allocPrint(allocator, "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}", .{ name, args_str });
+    }
+
+    /// Check if content looks like XML tool call: <invoke name="..."><parameter name="...">...</parameter></invoke>
+    fn looksLikeXMLToolCall(content: []const u8) bool {
+        const trimmed = std.mem.trim(u8, content, " \t\r\n");
+        // Check for various XML tool call formats
+        const has_invoke = std.mem.indexOf(u8, trimmed, "<invoke") != null or
+            std.mem.indexOf(u8, trimmed, "{\"invoke") != null or
+            std.mem.indexOf(u8, trimmed, "<invoke>") != null;
+        const has_parameter = std.mem.indexOf(u8, trimmed, "<parameter") != null;
+        return has_invoke and has_parameter;
+    }
+
+    /// Convert XML tool call to OpenAI format for the agent loop
+    fn convertXMLToolCall(allocator: std.mem.Allocator, xml: []const u8) ![]const u8 {
+        // Handle mixed format: {"invoke name="shell">...</invoke>}
+        // Skip the opening { if present
+        const content = if (std.mem.startsWith(u8, xml, "{\"invoke")) xml[1..] else xml;
+
+        // Extract tool name from <invoke name="...">
+        var tool_name: []const u8 = "";
+        if (std.mem.indexOf(u8, content, "<invoke name=\"")) |start| {
+            const name_start = start + "<invoke name=\"".len;
+            if (std.mem.indexOfScalarPos(u8, content, name_start, '"')) |name_end| {
+                tool_name = content[name_start..name_end];
+            }
+        } else if (std.mem.indexOf(u8, content, "<invoke>")) |start| {
+            // Try nested format: <invoke><name>shell</name>...
+            const name_tag_start = start + "<invoke>".len;
+            if (std.mem.indexOfPos(u8, content, name_tag_start, "<name>")) |name_start| {
+                const val_start = name_start + "<name>".len;
+                if (std.mem.indexOfPos(u8, content, val_start, "</name>")) |name_end| {
+                    tool_name = content[val_start..name_end];
+                }
             }
         }
 
-        // Plain text response
-        if (message.content) |content| {
-            if (content.len > 0) {
-                return try allocator.dupe(u8, content);
+        // If no tool name found, return as-is (not a valid tool call)
+        if (tool_name.len == 0) {
+            return allocator.dupe(u8, xml);
+        }
+
+        // Extract parameters
+        var args_obj = std.json.ObjectMap.init(allocator);
+        var param_idx = std.mem.indexOf(u8, content, "<parameter");
+        while (param_idx != null) : (param_idx = std.mem.indexOfPos(u8, content, param_idx.?, "<parameter")) {
+            const param_start = param_idx.? + "<parameter".len;
+            // Skip whitespace and find name="
+            var name_start = param_start;
+            while (name_start < content.len and (content[name_start] == ' ' or content[name_start] == '\t')) : (name_start += 1) {}
+
+            if (name_start >= content.len or !std.mem.startsWith(u8, content[name_start..], "name=\"")) {
+                break;
             }
+
+            const val_start = name_start + "name=\"".len;
+            const val_end = std.mem.indexOfScalarPos(u8, content, val_start, '"') orelse break;
+            const param_name = content[val_start..val_end];
+
+            // Find closing >
+            const gt_pos = std.mem.indexOfScalarPos(u8, content, val_end, '>') orelse break;
+            const content_start = gt_pos + 1;
+
+            // Find closing </parameter>
+            const close_tag = std.mem.indexOfPos(u8, content, content_start, "</parameter>") orelse break;
+            const param_value = content[content_start..close_tag];
+
+            // Store in args object
+            const key_copy = try allocator.dupe(u8, param_name);
+            const val_copy = try allocator.dupe(u8, param_value);
+            try args_obj.put(key_copy, std.json.Value{ .string = val_copy });
+
+            param_idx = close_tag + "</parameter>".len;
         }
 
-        // Thinking-only response (model reasoned but produced no output)
-        if (message.thinking) |thinking| {
-            const preview_len = @min(thinking.len, 200);
-            return try std.fmt.allocPrint(
-                allocator,
-                "I was thinking about this: {s}... but I didn't complete my response. Could you try asking again?",
-                .{thinking[0..preview_len]},
-            );
-        }
+        // Build arguments JSON string
+        const args_str = try std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = args_obj }, .{});
+        defer allocator.free(args_str);
 
-        // Empty response
-        return try allocator.dupe(u8, "");
+        // Format as OpenAI tool call
+        return try std.fmt.allocPrint(allocator, "{{\"content\":\"\",\"tool_calls\":[{{\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}]}}", .{ tool_name, args_str });
     }
 
     /// Create a Provider interface from this OllamaProvider.
@@ -268,7 +396,13 @@ pub const OllamaProvider = struct {
         .supports_vision = supportsVisionImpl,
         .getName = getNameImpl,
         .deinit = deinitImpl,
+        .resetConnections = resetConnectionsImpl,
     };
+
+    fn resetConnectionsImpl(ptr: *anyopaque) void {
+        const self: *OllamaProvider = @ptrCast(@alignCast(ptr));
+        self.resetConnections();
+    }
 
     fn chatWithSystemImpl(
         ptr: *anyopaque,
@@ -286,7 +420,7 @@ pub const OllamaProvider = struct {
         const body = try buildRequestBody(allocator, system_prompt, message, model, temperature);
         defer allocator.free(body);
 
-        const resp_body = root.curlPost(allocator, url, body, &.{}) catch return error.OllamaApiError;
+        const resp_body = self.httpPost(allocator, url, body, &.{}, 0) catch return error.OllamaApiError;
         defer allocator.free(resp_body);
 
         return parseResponse(allocator, resp_body);
@@ -307,7 +441,7 @@ pub const OllamaProvider = struct {
         const body = try buildChatRequestBody(allocator, request, model, temperature);
         defer allocator.free(body);
 
-        const resp_body = root.curlPostTimed(allocator, url, body, &.{}, request.timeout_secs) catch return error.OllamaApiError;
+        const resp_body = self.httpPost(allocator, url, body, &.{}, request.timeout_secs) catch return error.OllamaApiError;
         defer allocator.free(resp_body);
 
         const text = try parseResponse(allocator, resp_body);
@@ -315,7 +449,7 @@ pub const OllamaProvider = struct {
     }
 
     fn supportsNativeToolsImpl(_: *anyopaque) bool {
-        return false;
+        return true; // Ollama supports tool calling via tools parameter
     }
 
     fn supportsVisionImpl(_: *anyopaque) bool {
@@ -326,7 +460,84 @@ pub const OllamaProvider = struct {
         return "Ollama";
     }
 
-    fn deinitImpl(_: *anyopaque) void {}
+    fn deinitImpl(ptr: *anyopaque) void {
+        const self: *OllamaProvider = @ptrCast(@alignCast(ptr));
+        self.deinit();
+    }
+
+    pub fn deinit(self: *OllamaProvider) void {
+        self.http_client.deinit();
+    }
+
+    /// Reset HTTP client connections (recreate client to clear stale connections)
+    pub fn resetConnections(self: *OllamaProvider) void {
+        self.http_client.deinit();
+        const io = @import("../http_util.zig").getThreadedIo();
+        self.http_client = .{ .allocator = self.allocator, .io = io };
+    }
+
+    /// Persistent HTTP POST using the provider's HTTP client (connection reuse).
+    pub fn httpPost(self: *OllamaProvider, allocator: std.mem.Allocator, url: []const u8, body: []const u8, headers: []const []const u8, timeout_secs: u64) ![]u8 {
+        _ = timeout_secs; // TODO: Add timeout support
+
+        const uri = try std.Uri.parse(url);
+
+        // Build headers array
+        var header_buf: [32]std.http.Header = undefined;
+        var n_headers: usize = 0;
+        header_buf[n_headers] = .{ .name = "content-type", .value = "application/json" };
+        n_headers += 1;
+        for (headers) |header| {
+            if (n_headers >= header_buf.len) break;
+            const colon_idx = std.mem.indexOfScalar(u8, header, ':') orelse continue;
+            const name = header[0..colon_idx];
+            const value = std.mem.trim(u8, header[colon_idx + 1 ..], " \t\r\n");
+            header_buf[n_headers] = .{ .name = name, .value = value };
+            n_headers += 1;
+        }
+        const extra_headers = header_buf[0..n_headers];
+
+        var req = try self.http_client.request(.POST, uri, .{
+            .extra_headers = extra_headers,
+        });
+        defer req.deinit();
+
+        const body_dup = try allocator.dupe(u8, body);
+        defer allocator.free(body_dup);
+        try req.sendBodyComplete(body_dup);
+
+        var redirect_buf: [4096]u8 = undefined;
+        var response = try req.receiveHead(&redirect_buf);
+
+        // Read response body
+        var transfer_buf: [16384]u8 = undefined;
+        const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+        var response_body = std.ArrayListUnmanaged(u8){};
+        errdefer response_body.deinit(allocator);
+
+        while (true) {
+            body_reader.fill(4096) catch |err| {
+                if (err == error.EndOfStream) {
+                    const buffered = body_reader.bufferedLen();
+                    if (buffered == 0) break;
+                    const data = try body_reader.take(buffered);
+                    try response_body.appendSlice(allocator, data);
+                    break;
+                }
+                return err;
+            };
+
+            const buffered = body_reader.bufferedLen();
+            if (buffered == 0) break;
+
+            const data = try body_reader.take(buffered);
+            if (data.len == 0) break;
+            try response_body.appendSlice(allocator, data);
+        }
+
+        return response_body.toOwnedSlice(allocator);
+    }
 };
 
 /// Build a full chat request JSON body from a ChatRequest (Ollama format).
@@ -376,7 +587,17 @@ fn buildChatRequestBody(
         try buf.append(allocator, '}');
     }
 
-    try buf.appendSlice(allocator, "],\"stream\":false,\"options\":{\"temperature\":");
+    try buf.appendSlice(allocator, "],\"stream\":false");
+
+    // Add tools if present (Ollama uses OpenAI-compatible tool format)
+    if (request.tools) |tools| {
+        if (tools.len > 0) {
+            try buf.appendSlice(allocator, ",\"tools\":");
+            try root.convertToolsOpenAI(&buf, allocator, tools);
+        }
+    }
+
+    try buf.appendSlice(allocator, ",\"options\":{\"temperature\":");
     var temp_buf: [16]u8 = undefined;
     const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.2}", .{temperature}) catch return error.OllamaApiError;
     try buf.appendSlice(allocator, temp_str);
@@ -440,10 +661,10 @@ test "parseResponse empty content" {
     try std.testing.expectEqualStrings("", result);
 }
 
-test "supportsNativeTools returns false" {
+test "supportsNativeTools returns true" {
     var p = OllamaProvider.init(std.testing.allocator, null);
     const prov = p.provider();
-    try std.testing.expect(!prov.supportsNativeTools());
+    try std.testing.expect(prov.supportsNativeTools());
 }
 
 // ─── Tool Call Tests ─────────────────────────────────────────────────────────

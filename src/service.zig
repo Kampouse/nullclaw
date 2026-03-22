@@ -129,7 +129,7 @@ fn stopServiceForRestart(allocator: std.mem.Allocator) !void {
 
 fn serviceStatus(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const w = &bw.interface;
 
     if (comptime builtin.os.tag == .macos) {
@@ -177,12 +177,12 @@ fn uninstall(allocator: std.mem.Allocator) !void {
         try stopService(allocator);
         const plist = try macosServiceFile(allocator);
         defer allocator.free(plist);
-        std.fs.deleteFileAbsolute(plist) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, plist) catch {};
     } else if (comptime builtin.os.tag == .linux) {
         try stopService(allocator);
         const unit = try linuxServiceFile(allocator);
         defer allocator.free(unit);
-        std.fs.deleteFileAbsolute(unit) catch |err| switch (err) {
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, unit) catch |err| switch (err) {
             error.FileNotFound => {},
             else => return err,
         };
@@ -201,21 +201,21 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
 
     // Ensure parent directory exists
     if (std.mem.lastIndexOfScalar(u8, plist, '/')) |idx| {
-        std.fs.makeDirAbsolute(plist[0..idx]) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, plist[0..idx]) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
     }
 
     // Get current executable path
-    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_path = try std.fs.selfExePath(&exe_buf);
+    const exe_path = try std.process.executablePathAlloc(std.Options.debug_io, allocator);
+    defer allocator.free(exe_path);
 
     const home = try getHomeDir(allocator);
     defer allocator.free(home);
     const logs_dir = try std.fmt.allocPrint(allocator, "{s}/.nullclaw/logs", .{home});
     defer allocator.free(logs_dir);
-    std.fs.makeDirAbsolute(logs_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, logs_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -250,9 +250,9 @@ fn installMacos(allocator: std.mem.Allocator, _: []const u8) !void {
     , .{ SERVICE_LABEL, xmlEscape(exe_path), xmlEscape(stdout_log), xmlEscape(stderr_log) });
     defer allocator.free(content);
 
-    const file = try std.fs.createFileAbsolute(plist, .{});
-    defer file.close();
-    try file.writeAll(content);
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, plist, .{});
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, content);
 }
 
 fn installLinux(allocator: std.mem.Allocator) !void {
@@ -262,7 +262,7 @@ fn installLinux(allocator: std.mem.Allocator) !void {
     try assertLinuxSystemdUserAvailable(allocator);
 
     if (std.mem.lastIndexOfScalar(u8, unit, '/')) |idx| {
-        try std.fs.cwd().makePath(unit[0..idx]);
+        try std.fs.cwd().createDirPath(std.Options.debug_io, unit[0..idx]);
     }
 
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -290,9 +290,9 @@ fn installLinux(allocator: std.mem.Allocator) !void {
     , .{ exe_path, config_dir });
     defer allocator.free(content);
 
-    const file = try std.fs.createFileAbsolute(unit, .{});
-    defer file.close();
-    try file.writeAll(content);
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, unit, .{});
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, content);
 
     try runChecked(allocator, &.{ "systemctl", "--user", "daemon-reload" });
     try runChecked(allocator, &.{ "systemctl", "--user", "enable", "nullclaw.service" });
@@ -430,7 +430,7 @@ fn windowsServiceState(query_output: []const u8) []const u8 {
 }
 
 fn runCaptureStatus(allocator: std.mem.Allocator, argv: []const []const u8) !CaptureStatus {
-    var child = std.process.Child.init(argv, allocator);
+    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv });
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     child.spawn() catch |err| switch (err) {
@@ -442,20 +442,20 @@ fn runCaptureStatus(allocator: std.mem.Allocator, argv: []const []const u8) !Cap
     };
 
     const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
         return error.CommandFailed;
     };
     errdefer allocator.free(stdout);
     const stderr = child.stderr.?.readToEndAlloc(allocator, 1024 * 1024) catch {
         allocator.free(stdout);
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        _ = child.kill(std.Options.debug_io) catch {};
+        _ = child.wait(std.Options.debug_io) catch {};
         return error.CommandFailed;
     };
     errdefer allocator.free(stderr);
 
-    const result = try child.wait();
+    const result = try child.wait(std.Options.debug_io);
     const success = switch (result) {
         .Exited => |code| code == 0,
         else => false,
@@ -483,46 +483,60 @@ fn assertLinuxSystemdUserAvailable(allocator: std.mem.Allocator) !void {
 }
 
 fn runChecked(allocator: std.mem.Allocator, argv: []const []const u8) !void {
-    var child = std.process.Child.init(argv, allocator);
-    // Avoid deadlocks: we do not consume pipes in runChecked.
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    child.spawn() catch |err| switch (err) {
-        error.FileNotFound => {
-            if (argv.len > 0 and std.mem.eql(u8, argv[0], "systemctl")) return error.SystemctlUnavailable;
-            return err;
-        },
-        else => return err,
-    };
-    const result = try child.wait();
+    _ = allocator; // TODO: use for process spawning
+    const io = std.Options.debug_io;
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    const result = try child.wait(io);
     switch (result) {
-        .Exited => |code| if (code != 0) return error.CommandFailed,
+        .exited => |code| if (code != 0) return error.CommandFailed,
         else => return error.CommandFailed,
     }
 }
 
 fn runCapture(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    // We only need stdout here; inheriting/ignoring stderr prevents pipe backpressure hangs.
-    child.stderr_behavior = .Ignore;
-    child.spawn() catch |err| switch (err) {
+    const io = std.Options.debug_io;
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    }) catch |err| switch (err) {
         error.FileNotFound => {
             if (argv.len > 0 and std.mem.eql(u8, argv[0], "systemctl")) return error.SystemctlUnavailable;
             return err;
         },
         else => return err,
     };
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
-        return error.CommandFailed;
-    };
-    errdefer allocator.free(stdout);
-    _ = child.wait() catch {
-        return error.CommandFailed;
-    };
-    return stdout;
+
+    // Read from stdout pipe
+    const stdout_file = child.stdout orelse return error.CommandFailed;
+    var buf: [8192]u8 = undefined;
+    var reader = stdout_file.reader(io, &buf);
+    var list = std.ArrayList(u8){.items = &.{}, .capacity = 0};
+    errdefer list.deinit(allocator);
+
+    while (true) {
+        var chunk_bufs: [1][]u8 = .{try list.addManyAsSlice(allocator, 4096)};
+        const n = std.Io.Reader.readVec(&reader.interface, &chunk_bufs) catch |err| {
+            if (err == error.EndOfStream) break;
+            child.kill(io);
+            _ = child.wait(io) catch {};
+            return error.CommandFailed;
+        };
+        if (n == 0) break;
+    }
+
+    const result = try child.wait(io);
+    switch (result) {
+        .exited => |code| if (code != 0) return error.CommandFailed,
+        else => return error.CommandFailed,
+    }
+    return list.toOwnedSlice(allocator);
 }
 
 // ── XML escape ───────────────────────────────────────────────────

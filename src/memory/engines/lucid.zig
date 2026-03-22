@@ -147,18 +147,18 @@ pub const LucidMemory = struct {
             argv_buf[i + 1] = arg;
         }
 
-        var child = std.process.Child.init(argv_buf, self.allocator);
+        var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv_buf });
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Ignore;
 
         child.spawn() catch return null;
 
         const stdout_raw = child.stdout.?.readToEndAlloc(self.allocator, 1024 * 1024) catch {
-            _ = child.wait() catch {};
+            _ = child.wait(std.Options.debug_io) catch {};
             return null;
         };
 
-        const term = child.wait() catch {
+        const term = child.wait(std.Options.debug_io) catch {
             self.allocator.free(stdout_raw);
             return null;
         };

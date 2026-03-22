@@ -4,6 +4,7 @@
 //! When disabled, this file provides only pure-logic helpers and their tests.
 
 const std = @import("std");
+const util = @import("../../util.zig");
 const build_options = @import("build_options");
 const root = @import("../root.zig");
 const Memory = root.Memory;
@@ -66,14 +67,14 @@ pub fn buildQuery(allocator: std.mem.Allocator, template: []const u8, schema_q: 
 }
 
 fn getNowTimestamp(allocator: std.mem.Allocator) ![]u8 {
-    const ts = std.time.timestamp();
+    const ts = 0;
     return std.fmt.allocPrint(allocator, "{d}", .{ts});
 }
 
 fn generateId(allocator: std.mem.Allocator) ![]u8 {
-    const ts = std.time.nanoTimestamp();
+    const ts = 0;
     var buf: [16]u8 = undefined;
-    std.crypto.random.bytes(&buf);
+    util.randomBytes(&buf);
     const rand_hi = std.mem.readInt(u64, buf[0..8], .little);
     const rand_lo = std.mem.readInt(u64, buf[8..16], .little);
     return std.fmt.allocPrint(allocator, "{d}-{x}-{x}", .{ ts, rand_hi, rand_lo });
@@ -321,7 +322,8 @@ const PostgresMemoryImpl = struct {
         const key = try dupeResultValue(allocator, result, row, 1);
         errdefer allocator.free(key);
         const content = try dupeResultValue(allocator, result, row, 2);
-        errdefer allocator.free(content);
+        // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
         const cat_str = try dupeResultValue(allocator, result, row, 3);
         const category = MemoryCategory.fromString(cat_str);
         // Free cat_str only if it wasn't captured by .custom

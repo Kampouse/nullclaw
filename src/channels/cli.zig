@@ -18,14 +18,14 @@ pub const CliChannel = struct {
 
     pub fn sendMessage(_: *CliChannel, _: []const u8, message: []const u8) !void {
         var out_buf: [4096]u8 = undefined;
-        var bw = std.fs.File.stdout().writer(&out_buf);
+        var bw = std.Io.File.stdout().writer(std.Options.debug_io, &out_buf);
         const w = &bw.interface;
         try w.print("{s}\n", .{message});
         try w.flush();
     }
 
     pub fn readLine(_: *CliChannel, buf: []u8) !?[]const u8 {
-        const stdin = std.fs.File.stdin();
+        const stdin = std.Io.File.stdin();
         var pos: usize = 0;
         while (pos < buf.len) {
             const n = stdin.read(buf[pos .. pos + 1]) catch return null;
@@ -100,70 +100,42 @@ const MAX_HISTORY_LINES: usize = 500;
 /// If the file does not exist, returns an empty slice.
 /// Caller owns the returned slice and all strings within it.
 pub fn loadHistory(allocator: std.mem.Allocator, path: []const u8) ![][]const u8 {
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+    const content = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, path, allocator, .limited(1024 * 100)) catch |err| switch (err) {
         error.FileNotFound => return try allocator.alloc([]const u8, 0),
         else => return err,
     };
-    defer file.close();
+    defer allocator.free(content);
 
-    var lines: std.ArrayListUnmanaged([]const u8) = .empty;
-    errdefer {
-        for (lines.items) |l| allocator.free(l);
-        lines.deinit(allocator);
+    var lines: std.ArrayList([]const u8) = .empty;
+    defer lines.deinit(allocator);
+
+    var it = std.mem.splitScalar(u8, content, '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) continue; // Skip blank lines
+
+        const dupe = try allocator.dupe(u8, trimmed);
+        try lines.append(allocator, dupe);
     }
 
-    var read_buf: [8192]u8 = undefined;
-    var carry: std.ArrayListUnmanaged(u8) = .empty;
-    defer carry.deinit(allocator);
+    // Keep only the most recent MAX_HISTORY_LINES entries
+    const start = if (lines.items.len > MAX_HISTORY_LINES)
+        lines.items.len - MAX_HISTORY_LINES
+    else
+        0;
 
-    while (true) {
-        const n = file.read(&read_buf) catch break;
-        if (n == 0) break;
-        const data = read_buf[0..n];
-
-        var start: usize = 0;
-        for (data, 0..) |byte, i| {
-            if (byte == '\n') {
-                const segment = data[start..i];
-                if (carry.items.len > 0) {
-                    try carry.appendSlice(allocator, segment);
-                    const trimmed = std.mem.trim(u8, carry.items, " \t\r");
-                    if (trimmed.len > 0) {
-                        try lines.append(allocator, try allocator.dupe(u8, trimmed));
-                    }
-                    carry.clearRetainingCapacity();
-                } else {
-                    const trimmed = std.mem.trim(u8, segment, " \t\r");
-                    if (trimmed.len > 0) {
-                        try lines.append(allocator, try allocator.dupe(u8, trimmed));
-                    }
-                }
-                start = i + 1;
-            }
-        }
-        // Leftover bytes (no newline yet)
-        if (start < data.len) {
-            try carry.appendSlice(allocator, data[start..]);
-        }
+    const result = try allocator.alloc([]const u8, lines.items.len - start);
+    for (lines.items[start..], result) |src, *dst| {
+        dst.* = src;
     }
 
-    // Trailing content without final newline
-    if (carry.items.len > 0) {
-        const trimmed = std.mem.trim(u8, carry.items, " \t\r");
-        if (trimmed.len > 0) {
-            try lines.append(allocator, try allocator.dupe(u8, trimmed));
-        }
+    // Free the entries we're not keeping
+    for (lines.items[0..start]) |line| {
+        allocator.free(line);
     }
 
-    // Keep only the most recent MAX_HISTORY_LINES
-    if (lines.items.len > MAX_HISTORY_LINES) {
-        const excess = lines.items.len - MAX_HISTORY_LINES;
-        for (lines.items[0..excess]) |l| allocator.free(l);
-        std.mem.copyForwards([]const u8, lines.items[0..MAX_HISTORY_LINES], lines.items[excess..]);
-        lines.shrinkRetainingCapacity(MAX_HISTORY_LINES);
-    }
-
-    return lines.toOwnedSlice(allocator);
+    lines.clearAndFree(allocator);
+    return result;
 }
 
 /// Free history entries returned by loadHistory.
@@ -175,13 +147,18 @@ pub fn freeHistory(allocator: std.mem.Allocator, history: [][]const u8) void {
 /// Save command history to a file (one command per line).
 /// Writes at most MAX_HISTORY_LINES entries.
 pub fn saveHistory(history: []const []const u8, path: []const u8) !void {
-    const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{ .truncate = true });
+    defer file.close(std.Options.debug_io);
 
-    const start = if (history.len > MAX_HISTORY_LINES) history.len - MAX_HISTORY_LINES else 0;
-    for (history[start..]) |entry| {
-        file.writeAll(entry) catch return;
-        file.writeAll("\n") catch return;
+    // Write only the most recent MAX_HISTORY_LINES entries
+    const start = if (history.len > MAX_HISTORY_LINES)
+        history.len - MAX_HISTORY_LINES
+    else
+        0;
+
+    for (history[start..]) |line| {
+        try file.writeStreamingAll(std.Options.debug_io, line);
+        try file.writeStreamingAll(std.Options.debug_io, "\n");
     }
 }
 
@@ -215,16 +192,16 @@ test "loadHistory reads file lines" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "history_test" });
     defer allocator.free(tmp_path);
 
     // Write a temporary history file
     {
-        const f = try std.fs.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("hello world\nhow are you\ngoodbye\n");
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "hello world\nhow are you\ngoodbye\n");
     }
 
     const history = try loadHistory(allocator, tmp_path);
@@ -242,9 +219,9 @@ test "loadHistory returns empty for missing file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "nonexistent_history_file" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "nonexistent_history_file" });
     defer allocator.free(tmp_path);
 
     const history = try loadHistory(allocator, tmp_path);
@@ -258,9 +235,9 @@ test "saveHistory writes file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "save_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "save_history_test" });
     defer allocator.free(tmp_path);
 
     const entries = [_][]const u8{ "first", "second", "third" };
@@ -282,9 +259,9 @@ test "saveHistory and loadHistory roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "roundtrip_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "roundtrip_history_test" });
     defer allocator.free(tmp_path);
 
     // Save
@@ -306,15 +283,15 @@ test "loadHistory trims whitespace from entries" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "trim_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "trim_history_test" });
     defer allocator.free(tmp_path);
 
     {
-        const f = try std.fs.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("  hello  \n\t world \t\nfoo\r\n");
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "  hello  \n\t world \t\nfoo\r\n");
     }
 
     const history = try loadHistory(allocator, tmp_path);
@@ -332,15 +309,15 @@ test "loadHistory skips blank lines" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "blank_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "blank_history_test" });
     defer allocator.free(tmp_path);
 
     {
-        const f = try std.fs.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("first\n\n   \n\nsecond\n  \nthird\n");
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "first\n\n   \n\nsecond\n  \nthird\n");
     }
 
     const history = try loadHistory(allocator, tmp_path);
@@ -358,19 +335,19 @@ test "loadHistory enforces max entries limit" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const tmp_path = try std.fs.path.join(allocator, &.{ base, "max_history_test" });
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "max_history_test" });
     defer allocator.free(tmp_path);
 
     {
-        const f = try std.fs.cwd().createFile(tmp_path, .{ .truncate = true });
-        defer f.close();
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
         // Write more than MAX_HISTORY_LINES (500) entries
         for (0..600) |i| {
             var buf: [32]u8 = undefined;
             const line = std.fmt.bufPrint(&buf, "cmd-{d}\n", .{i}) catch unreachable;
-            f.writeAll(line) catch break;
+            f.writeStreamingAll(std.Options.debug_io, line) catch break;
         }
     }
 

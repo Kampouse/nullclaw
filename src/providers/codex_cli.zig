@@ -87,46 +87,56 @@ pub const CodexCliProvider = struct {
 
     /// Run the codex CLI and return stdout as plain text.
     fn runCodex(allocator: std.mem.Allocator, prompt: []const u8) ![]const u8 {
-        const argv = [_][]const u8{
-            CLI_NAME,
-            "--quiet",
-            prompt,
+        const io = std.Options.debug_io;
+
+        // Build argv: codex --quiet <prompt>
+        var argv_list = std.ArrayList([]const u8){};
+        try argv_list.append(allocator, "codex");
+        try argv_list.append(allocator, "--quiet");
+        try argv_list.append(allocator, prompt);
+
+        var child = try std.process.spawn(io, .{
+            .argv = argv_list.items,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
+        defer {
+            child.kill(io);
+            _ = child.wait(io) catch {};
+        }
+
+        // Close stdin
+        if (child.stdin) |stdin_file| {
+            stdin_file.close(io);
+            child.stdin = null;
+        }
+
+        // Read stdout
+        const stdout_file = child.stdout orelse return error.CodexExecutionFailed;
+        var read_buf: [4096]u8 = undefined;
+        var reader = stdout_file.reader(io, &read_buf);
+        const output = reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024)) catch return error.CodexExecutionFailed;
+
+        const term = child.wait(io) catch {
+            allocator.free(output);
+            return error.CodexExecutionFailed;
         };
 
-        var child = std.process.Child.init(&argv, allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        try child.spawn();
-
-        const max_output: usize = 4 * 1024 * 1024;
-        const stdout_result = child.stdout.?.readToEndAlloc(allocator, max_output) catch |err| {
-            _ = child.wait() catch {};
-            return err;
-        };
-
-        const term = try child.wait();
         switch (term) {
-            .Exited => |code| {
+            .exited => |code| {
                 if (code != 0) {
-                    allocator.free(stdout_result);
-                    return error.CliProcessFailed;
+                    allocator.free(output);
+                    return error.CodexExecutionFailed;
                 }
             },
             else => {
-                allocator.free(stdout_result);
-                return error.CliProcessFailed;
+                allocator.free(output);
+                return error.CodexExecutionFailed;
             },
         }
 
-        // Trim trailing whitespace
-        const trimmed = std.mem.trimRight(u8, stdout_result, " \t\r\n");
-        if (trimmed.len == stdout_result.len) {
-            return stdout_result;
-        }
-        const duped = try allocator.dupe(u8, trimmed);
-        allocator.free(stdout_result);
-        return duped;
+        return output;
     }
 
     /// Health check: run `codex --version` and verify exit code 0.
@@ -141,43 +151,69 @@ pub const CodexCliProvider = struct {
 
 /// Check if a CLI tool is available in PATH using `which`.
 fn checkCliAvailable(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    const argv = [_][]const u8{ "which", cli_name };
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-    const out = child.stdout.?.readToEndAlloc(allocator, 4096) catch {
-        _ = child.wait() catch {};
-        return error.CliNotFound;
-    };
-    allocator.free(out);
-    const term = try child.wait();
+    _ = allocator;
+    const io = std.Options.debug_io;
+
+    // Try to run `which <cli_name>` to check if it exists
+    var argv = [_][]const u8{ "which", cli_name };
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch return error.NotSupported;
+
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
+
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    const term = child.wait(io) catch return error.NotSupported;
     switch (term) {
-        .Exited => |code| {
-            if (code != 0) return error.CliNotFound;
+        .exited => |code| {
+            if (code != 0) return error.NotSupported;
         },
-        else => return error.CliNotFound,
+        else => return error.NotSupported,
     }
 }
 
 /// Run `<cli> --version` and verify exit code 0.
 fn checkCliVersion(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    const argv = [_][]const u8{ cli_name, "--version" };
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-    const out = child.stdout.?.readToEndAlloc(allocator, 4096) catch {
-        _ = child.wait() catch {};
-        return error.CliNotFound;
-    };
-    allocator.free(out);
-    const term = try child.wait();
+    const io = std.Options.debug_io;
+
+    // Run `<cli> --version` to verify it works
+    const version_arg = try std.fmt.allocPrint(allocator, "--version", .{});
+    defer allocator.free(version_arg);
+
+    var argv = [_][]const u8{ cli_name, version_arg };
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch return error.NotSupported;
+
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
+
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    const term = child.wait(io) catch return error.NotSupported;
     switch (term) {
-        .Exited => |code| {
-            if (code != 0) return error.CliNotFound;
+        .exited => |code| {
+            if (code != 0) return error.NotSupported;
         },
-        else => return error.CliNotFound,
+        else => return error.NotSupported,
     }
 }
 
@@ -216,9 +252,9 @@ test "CodexCliProvider supportsNativeTools returns false" {
     try std.testing.expect(!vtable.supportsNativeTools(@ptrCast(&dummy)));
 }
 
-test "CodexCliProvider checkCliAvailable returns CliNotFound for missing binary" {
+test "CodexCliProvider checkCliAvailable returns NotSupported for missing binary" {
     const result = checkCliAvailable(std.testing.allocator, "nonexistent_binary_xyzzy_codex_99999");
-    try std.testing.expectError(error.CliNotFound, result);
+    try std.testing.expectError(error.NotSupported, result);
 }
 
 test "extractLastUserMessage finds last user" {

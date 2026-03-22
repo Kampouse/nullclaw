@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
+const util = @import("../util.zig");
 
 const log = std.log.scoped(.matrix);
 
@@ -76,43 +77,43 @@ pub const MatrixChannel = struct {
     }
 
     fn buildWhoAmIUrl(self: *const MatrixChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.homeserver);
-        try w.writeAll("/_matrix/client/v3/account/whoami");
+        try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
+        try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/account/whoami");
         return fbs.getWritten();
     }
 
     fn buildSyncUrl(self: *const MatrixChannel, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.homeserver);
-        try w.writeAll("/_matrix/client/v3/sync?timeout=30000");
+        try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
+        try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/sync?timeout=30000");
         if (self.next_batch_len > 0) {
-            try w.writeAll("&since=");
+            try w.writeStreamingAll(std.Options.debug_io, "&since=");
             try appendUrlEncoded(w, self.nextBatch());
         }
         return fbs.getWritten();
     }
 
     fn buildSendUrl(self: *const MatrixChannel, buf: []u8, room_id: []const u8, txn_id: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.homeserver);
-        try w.writeAll("/_matrix/client/v3/rooms/");
+        try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
+        try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/rooms/");
         try appendUrlEncoded(w, room_id);
-        try w.writeAll("/send/m.room.message/");
+        try w.writeStreamingAll(std.Options.debug_io, "/send/m.room.message/");
         try appendUrlEncoded(w, txn_id);
         return fbs.getWritten();
     }
 
     fn buildTypingUrl(self: *const MatrixChannel, buf: []u8, room_id: []const u8, user_id: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll(self.homeserver);
-        try w.writeAll("/_matrix/client/v3/rooms/");
+        try w.writeStreamingAll(std.Options.debug_io, self.homeserver);
+        try w.writeStreamingAll(std.Options.debug_io, "/_matrix/client/v3/rooms/");
         try appendUrlEncoded(w, room_id);
-        try w.writeAll("/typing/");
+        try w.writeStreamingAll(std.Options.debug_io, "/typing/");
         try appendUrlEncoded(w, user_id);
         return fbs.getWritten();
     }
@@ -121,7 +122,7 @@ pub const MatrixChannel = struct {
         self.txn_counter += 1;
         return std.fmt.bufPrint(buf, "nullclaw-{s}-{d}-{d}", .{
             self.account_id,
-            std.time.timestamp(),
+            0,
             self.txn_counter,
         });
     }
@@ -147,10 +148,9 @@ pub const MatrixChannel = struct {
 
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const w = body_list.writer(self.allocator);
-        try w.writeAll("{\"msgtype\":\"m.text\",\"body\":");
-        try root.appendJsonStringW(w, chunk);
-        try w.writeAll("}");
+        try body_list.appendSlice(self.allocator, "{\"msgtype\":\"m.text\",\"body\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, chunk);
+        try body_list.appendSlice(self.allocator, "}");
 
         const auth_header = try self.authHeader(self.allocator);
         defer self.allocator.free(auth_header);
@@ -499,6 +499,20 @@ pub const MatrixChannel = struct {
         try self.stopTyping(recipient);
     }
 
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
+    }
+
     pub const vtable = root.Channel.VTable{
         .start = &vtableStart,
         .stop = &vtableStop,
@@ -534,7 +548,7 @@ fn appendUrlEncoded(writer: anytype, text: []const u8) !void {
             esc[0] = '%';
             esc[1] = upper[(c >> 4) & 0x0F];
             esc[2] = upper[c & 0x0F];
-            try writer.writeAll(&esc);
+            try writer.writeStreamingAll(std.Options.debug_io, &esc);
         }
     }
 }

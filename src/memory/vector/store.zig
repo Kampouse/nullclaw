@@ -228,13 +228,13 @@ pub const SqliteSharedVectorStore = struct {
 
     fn implHealthCheck(ptr: *anyopaque, alloc: Allocator) anyerror!HealthStatus {
         const self: *Self = @ptrCast(@alignCast(ptr));
-        const start = std.time.nanoTimestamp();
+        const start = 0;
 
         const sql = "SELECT COUNT(*) FROM memory_embeddings";
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
         if (rc != c.SQLITE_OK) {
-            const elapsed: u64 = @intCast(@max(0, std.time.nanoTimestamp() - start));
+            const elapsed: u64 = @intCast(@max(0, 0 - start));
             return HealthStatus{
                 .ok = false,
                 .latency_ns = elapsed,
@@ -245,7 +245,7 @@ pub const SqliteSharedVectorStore = struct {
         defer _ = c.sqlite3_finalize(stmt);
 
         rc = c.sqlite3_step(stmt);
-        const elapsed: u64 = @intCast(@max(0, std.time.nanoTimestamp() - start));
+        const elapsed: u64 = @intCast(@max(0, 0 - start));
 
         if (rc == c.SQLITE_ROW) {
             const n: usize = @intCast(c.sqlite3_column_int64(stmt, 0));

@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("util.zig");
 
 /// AIEOS v1.1 identity structure — portable AI identity specification.
 /// Mirrors ZeroClaw's identity.rs with AIEOS JSON parsing and system prompt generation.
@@ -239,13 +240,13 @@ fn dupeStrArray(allocator: std.mem.Allocator, val: std.json.Value, key: []const 
 
 /// Convert AIEOS identity to a system prompt string.
 pub fn aieosToSystemPrompt(allocator: std.mem.Allocator, identity: *const AieosIdentity) ![]const u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer buf.deinit(allocator);
-    const writer = buf.writer(allocator);
+    var buf_arr: [8192]u8 = undefined;
+    var buf = util.fixedBufferStream(&buf_arr);
+    const writer = buf.writer();
 
     // Identity section
     if (identity.identity) |id| {
-        try writer.writeAll("## Identity\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Identity\n\n");
         if (id.names) |names| {
             if (names.first) |first| {
                 try writer.print("**Name:** {s}\n", .{first});
@@ -262,15 +263,15 @@ pub fn aieosToSystemPrompt(allocator: std.mem.Allocator, identity: *const AieosI
         if (id.bio) |bio| try writer.print("**Bio:** {s}\n", .{bio});
         if (id.origin) |origin| try writer.print("**Origin:** {s}\n", .{origin});
         if (id.residence) |residence| try writer.print("**Residence:** {s}\n", .{residence});
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // Psychology section
     if (identity.psychology) |psych| {
-        try writer.writeAll("## Personality\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Personality\n\n");
         if (psych.mbti) |mbti| try writer.print("**MBTI:** {s}\n", .{mbti});
         if (psych.ocean) |ocean| {
-            try writer.writeAll("**OCEAN Traits:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "**OCEAN Traits:**\n");
             if (ocean.openness) |v| try writer.print("- Openness: {d:.2}\n", .{v});
             if (ocean.conscientiousness) |v| try writer.print("- Conscientiousness: {d:.2}\n", .{v});
             if (ocean.extraversion) |v| try writer.print("- Extraversion: {d:.2}\n", .{v});
@@ -278,94 +279,94 @@ pub fn aieosToSystemPrompt(allocator: std.mem.Allocator, identity: *const AieosI
             if (ocean.neuroticism) |v| try writer.print("- Neuroticism: {d:.2}\n", .{v});
         }
         if (psych.moral_compass) |compass| {
-            try writer.writeAll("\n**Moral Compass:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "\n**Moral Compass:**\n");
             for (compass) |principle| try writer.print("- {s}\n", .{principle});
         }
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // Linguistics section
     if (identity.linguistics) |ling| {
-        try writer.writeAll("## Communication Style\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Communication Style\n\n");
         if (ling.style) |style| try writer.print("**Style:** {s}\n", .{style});
         if (ling.formality) |formality| try writer.print("**Formality Level:** {s}\n", .{formality});
         if (ling.catchphrases) |phrases| {
-            try writer.writeAll("**Catchphrases:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "**Catchphrases:**\n");
             for (phrases) |phrase| try writer.print("- \"{s}\"\n", .{phrase});
         }
         if (ling.forbidden_words) |forbidden| {
-            try writer.writeAll("\n**Words/Phrases to Avoid:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "\n**Words/Phrases to Avoid:**\n");
             for (forbidden) |word| try writer.print("- {s}\n", .{word});
         }
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // Motivations section
     if (identity.motivations) |mot| {
-        try writer.writeAll("## Motivations\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Motivations\n\n");
         if (mot.core_drive) |drive| try writer.print("**Core Drive:** {s}\n", .{drive});
         if (mot.short_term_goals) |goals| {
-            try writer.writeAll("**Short-term Goals:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "**Short-term Goals:**\n");
             for (goals) |goal| try writer.print("- {s}\n", .{goal});
         }
         if (mot.long_term_goals) |goals| {
-            try writer.writeAll("\n**Long-term Goals:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "\n**Long-term Goals:**\n");
             for (goals) |goal| try writer.print("- {s}\n", .{goal});
         }
         if (mot.fears) |fears| {
-            try writer.writeAll("\n**Fears/Avoidances:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "\n**Fears/Avoidances:**\n");
             for (fears) |fear| try writer.print("- {s}\n", .{fear});
         }
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // Capabilities section
     if (identity.capabilities) |cap| {
-        try writer.writeAll("## Capabilities\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Capabilities\n\n");
         if (cap.skills) |skills| {
-            try writer.writeAll("**Skills:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "**Skills:**\n");
             for (skills) |skill| try writer.print("- {s}\n", .{skill});
         }
         if (cap.tools) |tools_list| {
-            try writer.writeAll("\n**Tools Access:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "\n**Tools Access:**\n");
             for (tools_list) |tool| try writer.print("- {s}\n", .{tool});
         }
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // History section
     if (identity.history) |hist| {
-        try writer.writeAll("## Background\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Background\n\n");
         if (hist.origin_story) |story| try writer.print("**Origin Story:** {s}\n", .{story});
         if (hist.education) |edu_list| {
-            try writer.writeAll("**Education:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "**Education:**\n");
             for (edu_list) |edu| try writer.print("- {s}\n", .{edu});
         }
         if (hist.occupation) |occ| try writer.print("\n**Occupation:** {s}\n", .{occ});
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // Physicality section
     if (identity.physicality) |phys| {
-        try writer.writeAll("## Appearance\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Appearance\n\n");
         if (phys.appearance) |appearance| try writer.print("{s}\n", .{appearance});
         if (phys.avatar_description) |avatar| try writer.print("**Avatar Description:** {s}\n", .{avatar});
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // Interests section
     if (identity.interests) |interests| {
-        try writer.writeAll("## Interests\n\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "## Interests\n\n");
         if (interests.hobbies) |hobbies| {
-            try writer.writeAll("**Hobbies:**\n");
+            try writer.writeStreamingAll(std.Options.debug_io, "**Hobbies:**\n");
             for (hobbies) |hobby| try writer.print("- {s}\n", .{hobby});
         }
         if (interests.lifestyle) |lifestyle| try writer.print("\n**Lifestyle:** {s}\n", .{lifestyle});
-        try writer.writeAll("\n");
+        try writer.writeStreamingAll(std.Options.debug_io, "\n");
     }
 
     // Trim trailing whitespace
-    const result = buf.items;
+    const result = buf.getWritten();
     var end: usize = result.len;
     while (end > 0 and (result[end - 1] == ' ' or result[end - 1] == '\n' or result[end - 1] == '\r' or result[end - 1] == '\t')) {
         end -= 1;

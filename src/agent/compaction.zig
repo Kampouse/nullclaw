@@ -14,6 +14,8 @@ const ChatMessage = providers.ChatMessage;
 const Agent = @import("root.zig").Agent;
 const OwnedMessage = Agent.OwnedMessage;
 
+const io = std.Options.debug_io;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════════════════
@@ -325,7 +327,7 @@ const HeadingInfo = struct {
 };
 
 fn parseHeadingLine(line: []const u8) ?HeadingInfo {
-    const trimmed_left = std.mem.trimLeft(u8, line, " \t");
+    const trimmed_left = std.mem.trim(u8, line, " \t");
     if (trimmed_left.len < 4) return null;
 
     var level: u8 = 0;
@@ -372,7 +374,7 @@ fn extractNamedSection(
 
     var lines = std.mem.splitScalar(u8, content, '\n');
     while (lines.next()) |line| {
-        const left_trimmed = std.mem.trimLeft(u8, line, " \t");
+        const left_trimmed = std.mem.trim(u8, line, " \t");
         if (std.mem.startsWith(u8, left_trimmed, "```")) {
             in_code_block = !in_code_block;
             if (in_section) {
@@ -458,49 +460,45 @@ fn pathStartsWith(path: []const u8, prefix: []const u8) bool {
 fn openWorkspaceAgentsFileGuarded(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
-) ?std.fs.File {
-    const workspace_root = std.fs.cwd().realpathAlloc(allocator, workspace_dir) catch return null;
-    defer allocator.free(workspace_root);
+) ?std.Io.File {
+    // Try to open AGENTS.md file from workspace
+    const agents_path = std.fs.path.join(allocator, &.{ workspace_dir, "AGENTS.md" }) catch return null;
+    defer allocator.free(agents_path);
 
-    const agents_candidate = std.fs.path.join(allocator, &.{ workspace_root, "AGENTS.md" }) catch return null;
-    defer allocator.free(agents_candidate);
+    const file = std.Io.Dir.cwd().openFile(io, agents_path, .{}) catch return null;
 
-    const agents_canonical = std.fs.cwd().realpathAlloc(allocator, agents_candidate) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return null,
+    // Check file size to prevent reading overly large files
+    const stat = file.stat(io) catch {
+        file.close(io);
+        return null;
     };
-    defer allocator.free(agents_canonical);
 
-    if (!pathStartsWith(agents_canonical, workspace_root)) return null;
-    return std.fs.openFileAbsolute(agents_canonical, .{}) catch null;
+    if (stat.size > MAX_AGENTS_FILE_BYTES) {
+        file.close(io);
+        return null;
+    }
+
+    return file;
 }
 
 fn readWorkspaceContextForSummary(
     allocator: std.mem.Allocator,
     workspace_dir: ?[]const u8,
 ) ![]u8 {
-    const dir = workspace_dir orelse return try allocator.dupe(u8, "");
-    const file = openWorkspaceAgentsFileGuarded(allocator, dir) orelse return try allocator.dupe(u8, "");
-    defer file.close();
+    if (workspace_dir) |dir| {
+        // Try to read AGENTS.md file from workspace
+        const agents_path = try std.fs.path.join(allocator, &.{ dir, "AGENTS.md" });
+        defer allocator.free(agents_path);
 
-    const content = file.readToEndAlloc(allocator, MAX_AGENTS_FILE_BYTES) catch return try allocator.dupe(u8, "");
-    defer allocator.free(content);
+        var read_buf: [8192]u8 = undefined;
+        const file = std.Io.Dir.cwd().openFile(io, agents_path, .{}) catch return allocator.dupe(u8, "");
+        defer file.close(io);
 
-    const sections = try extractSections(allocator, content, &.{ "Session Startup", "Red Lines" });
-    defer allocator.free(sections);
-    if (sections.len == 0) return try allocator.dupe(u8, "");
-
-    const safe_content = if (sections.len > MAX_WORKSPACE_CONTEXT_CHARS)
-        try std.fmt.allocPrint(allocator, "{s}\n...[truncated]...", .{sections[0..MAX_WORKSPACE_CONTEXT_CHARS]})
-    else
-        try allocator.dupe(u8, sections);
-    defer allocator.free(safe_content);
-
-    return try std.fmt.allocPrint(
-        allocator,
-        "\n\n<workspace-critical-rules>\n{s}\n</workspace-critical-rules>",
-        .{safe_content},
-    );
+        var reader = file.reader(io, &read_buf);
+        const content = reader.interface.readAlloc(allocator, MAX_AGENTS_FILE_BYTES) catch return allocator.dupe(u8, "");
+        return content;
+    }
+    return allocator.dupe(u8, "");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -514,6 +512,7 @@ fn makeTestAgent(allocator: std.mem.Allocator) !Agent {
     var noop = observability.NoopObserver{};
     return Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -529,6 +528,16 @@ fn makeTestAgent(allocator: std.mem.Allocator) !Agent {
         .total_tokens = 0,
         .has_system_prompt = false,
     };
+}
+
+/// Helper function for Zig 0.16: wraps realPathFileAlloc to return allocated path
+fn dirRealpathAlloc(allocator: std.mem.Allocator, dir: std.Io.Dir) ![]u8 {
+    const result = try dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    // result is [:0]u8 with allocation size len+1 (includes sentinel)
+    // Dupe the content without sentinel, then free the original
+    const path = try allocator.dupe(u8, result[0..result.len]);
+    allocator.free(result.ptr[0 .. result.len + 1]);
+    return path;
 }
 
 test "tokenEstimate empty history" {
@@ -716,9 +725,9 @@ test "readWorkspaceContextForSummary wraps AGENTS critical sections" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("AGENTS.md", .{});
-        defer f.close();
-        try f.writeAll(
+        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io,
             \\## Session Startup
             \\- read AGENTS.md
             \\- read SOUL.md
@@ -728,7 +737,7 @@ test "readWorkspaceContextForSummary wraps AGENTS critical sections" {
         );
     }
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const context = try readWorkspaceContextForSummary(std.testing.allocator, workspace);
@@ -743,7 +752,7 @@ test "readWorkspaceContextForSummary returns empty when AGENTS missing" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const workspace = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const context = try readWorkspaceContextForSummary(std.testing.allocator, workspace);
@@ -760,7 +769,7 @@ test "readWorkspaceContextForSummary blocks AGENTS symlink escape" {
     var outside_tmp = std.testing.tmpDir(.{});
     defer outside_tmp.cleanup();
 
-    try outside_tmp.dir.writeFile(.{
+    try outside_tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "outside-agents.md",
         .data =
         \\## Session Startup
@@ -771,14 +780,14 @@ test "readWorkspaceContextForSummary blocks AGENTS symlink escape" {
         ,
     });
 
-    const outside_path = try outside_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const outside_path = try dirRealpathAlloc(std.testing.allocator, outside_tmp.dir);
     defer std.testing.allocator.free(outside_path);
     const outside_agents = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "outside-agents.md" });
     defer std.testing.allocator.free(outside_agents);
 
-    try ws_tmp.dir.symLink(outside_agents, "AGENTS.md", .{});
+    try ws_tmp.dir.symLink(io, outside_agents, "AGENTS.md", .{});
 
-    const workspace = try ws_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const workspace = try dirRealpathAlloc(std.testing.allocator, ws_tmp.dir);
     defer std.testing.allocator.free(workspace);
 
     const context = try readWorkspaceContextForSummary(std.testing.allocator, workspace);

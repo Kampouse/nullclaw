@@ -1,0 +1,18 @@
+Build Summary: 8/8 steps succeeded; 10/10 tests passed
+test success
++- run test 10 pass (10 total) 643ms MaxRSS:6M
+|  +- compile test Debug native success 13s MaxRSS:578M
+|     +- WriteFile sqlite3.h cached
+|     +- compile lib sqlite3 Debug native cached 48ms MaxRSS:38M
+|     +- compile lib sqlite3 Debug native (reused)
+|     +- options cached
++- run test success 131ms MaxRSS:2M
+   +- compile test Debug native success 4s MaxRSS:247M
+      +- WriteFile sqlite3.h (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- WriteFile sqlite3.h (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- compile lib sqlite3 Debug native (reused)
+      +- options (reused)
+

@@ -3,8 +3,13 @@
 //! Contains `ChannelRuntime` (shared dependencies for message processing)
 //! and `runTelegramLoop` (the polling thread function spawned by the
 //! daemon supervisor).
+//!
+//! Uses worker pool for parallel message processing:
+//!   - Poll thread: enqueue messages (non-blocking)
+//!   - Worker threads: process messages (parallel, per-session locking)
 
 const std = @import("std");
+const util = @import("util.zig");
 const Config = @import("config.zig").Config;
 const telegram = @import("channels/telegram.zig");
 const session_mod = @import("session.zig");
@@ -21,6 +26,8 @@ const security = @import("security/policy.zig");
 const subagent_mod = @import("subagent.zig");
 const agent_routing = @import("agent_routing.zig");
 const provider_runtime = @import("providers/runtime_bundle.zig");
+const worker_pool_mod = @import("worker_pool.zig");
+const Spinlock = @import("spinlock.zig").Spinlock;
 
 const signal = @import("channels/signal.zig");
 const matrix = @import("channels/matrix.zig");
@@ -29,6 +36,235 @@ const Atomic = @import("portable_atomic.zig").Atomic;
 
 const log = std.log.scoped(.channel_loop);
 const TELEGRAM_OFFSET_STORE_VERSION: i64 = 1;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Message Classification (Hybrid Strategy)
+// ════════════════════════════════════════════════════════════════════════════
+
+const MessageClass = enum {
+    /// Independent query - can be processed in parallel (no context needed)
+    /// Examples: "/status", "BTC price?", "What's 2+2?"
+    independent,
+
+    /// Conversational - needs sequential processing (context-dependent)
+    /// Examples: "And tomorrow?", "What about that?", "Continue"
+    conversational,
+};
+
+/// Classify a message as independent or conversational
+fn classifyMessage(content: []const u8) MessageClass {
+    const trimmed = std.mem.trim(u8, content, " \t\r\n");
+
+    // Empty message → conversational (will error anyway)
+    if (trimmed.len == 0) return .conversational;
+
+    // 1. Commands are always independent
+    if (std.mem.startsWith(u8, trimmed, "/")) return .independent;
+
+    const lower = std.ascii.allocLowerString(std.heap.page_allocator, trimmed) catch return .conversational;
+    defer std.heap.page_allocator.free(lower);
+
+    // 2. Check for context-dependent keywords at START of message
+    const context_starters = [_][]const u8{
+        "and ",  "and\t",  "and\n", // "And tomorrow?" but not "Android"
+        "also ", "also\t",
+        "too", // "me too"
+        "continue",
+        "go on",
+        "keep going",
+        "what about",
+        "how about",
+        "what else",
+        "tell me more",
+        "why", // Usually follow-up
+        "how so",
+        "what do you mean",
+        "i mean",
+        "i meant",
+        "actually",
+        "wait",
+        "sorry",
+        "nevermind",
+        "forget it",
+    };
+
+    for (context_starters) |starter| {
+        if (std.mem.startsWith(u8, lower, starter)) {
+            return .conversational;
+        }
+    }
+
+    // 3. Pronoun detection (context references)
+    const pronouns = [_][]const u8{
+        " it ",   " it?",   " it.",   " it!",   "\nit",   "\tit",
+        " that ", " that?", " that.", " that!", " this ", " this?",
+        " this.", " this!", " he ",   " he?",   " he.",   " he!",
+        " she ",  " she?",  " she.",  " she!",  " they ", " they?",
+        " they.", " they!", " them ", " them?", " them.", " them!",
+    };
+
+    for (pronouns) |pronoun| {
+        if (std.mem.indexOf(u8, lower, pronoun) != null) {
+            return .conversational;
+        }
+    }
+
+    // 4. Questions are usually independent (unless they start with follow-up words)
+    if (std.mem.indexOfScalar(u8, trimmed, '?') != null) {
+        // Has question mark - likely independent
+        // Exception: if it STARTS with "and", "also", etc. (already checked above)
+        return .independent;
+    }
+
+    // 5. Currency symbols indicate independent queries
+    if (std.mem.indexOfAny(u8, trimmed, "$€£¥₿") != null) {
+        return .independent;
+    }
+
+    // 6. Short follow-ups (< 10 chars, no question mark)
+    if (trimmed.len < 10) {
+        return .conversational;
+    }
+
+    // 7. Default: conversational (safer)
+    return .conversational;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Telegram Worker Pool Types
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Message context for worker pool processing
+const TelegramWorkerMessage = struct {
+    sender: []const u8,
+    sender_first_name: ?[]const u8,
+    sender_id: []const u8,
+    content: []const u8,
+    is_group: bool,
+    message_id: ?i64,
+    account_id: []const u8,
+    message_class: MessageClass,
+
+    pub fn deinit(self: *const TelegramWorkerMessage, allocator: std.mem.Allocator) void {
+        // Defensive cleanup: only free valid allocated memory
+        // Use sentinel checks to detect corruption before freeing
+        log.debug("Message deinit: sender='{s}' sender_id='{s}' content_len={} account_id='{s}'", .{ self.sender, self.sender_id, self.content.len, self.account_id });
+
+        if (self.sender.len > 0 and self.sender.len < 1024 * 1024) {
+            log.debug("Message deinit: freeing sender ptr=0x{x} len={}", .{ @intFromPtr(self.sender.ptr), self.sender.len });
+            allocator.free(self.sender);
+        }
+        if (self.sender_first_name) |name| {
+            if (name.len > 0 and name.len < 1024) {
+                log.debug("Message deinit: freeing sender_first_name ptr=0x{x} len={}", .{ @intFromPtr(name.ptr), name.len });
+                allocator.free(name);
+            }
+        }
+        if (self.sender_id.len > 0 and self.sender_id.len < 1024) {
+            log.debug("Message deinit: freeing sender_id ptr=0x{x} len={}", .{ @intFromPtr(self.sender_id.ptr), self.sender_id.len });
+            allocator.free(self.sender_id);
+        }
+        if (self.content.len > 0 and self.content.len < 100 * 1024 * 1024) {
+            log.debug("Message deinit: freeing content ptr=0x{x} len={}", .{ @intFromPtr(self.content.ptr), self.content.len });
+            allocator.free(self.content);
+        }
+        if (self.account_id.len > 0 and self.account_id.len < 1024) {
+            log.debug("Message deinit: freeing account_id ptr=0x{x} len={}", .{ @intFromPtr(self.account_id.ptr), self.account_id.len });
+            allocator.free(self.account_id);
+        }
+        log.debug("Message deinit: complete", .{});
+    }
+};
+
+/// Handler for worker pool message processing
+const TelegramWorkerHandler = struct {
+    tg_ptr: *telegram.TelegramChannel,
+    runtime: *ChannelRuntime,
+    config: *const Config,
+    session_locks: ?*worker_pool_mod.SessionLockManager,
+    allocator: std.mem.Allocator,
+
+    pub fn process(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) void {
+        log.debug("Worker: received message sender='{s}' content_len={} is_group={}", .{ msg.sender, msg.content.len, msg.is_group });
+
+        // Ensure message is always cleaned up, even if processing fails
+        defer {
+            log.debug("Worker: cleaning up message", .{});
+            msg.deinit(std.heap.page_allocator);
+            log.debug("Worker: message cleanup complete", .{});
+        }
+
+        // Wrap everything in error handler to ensure we never propagate errors up
+        self.processInternal(msg) catch |err| {
+            log.err("Worker process error: {} - this should not happen", .{err});
+        };
+
+        log.debug("Worker: message processing complete", .{});
+    }
+
+    fn processInternal(self: TelegramWorkerHandler, msg: TelegramWorkerMessage) !void {
+        // Safety check: validate required pointers
+        if (msg.account_id.len == 0 or msg.sender.len == 0) {
+            log.warn("Skipping message with empty account_id or sender in worker", .{});
+            return;
+        }
+
+        const reply_to_id: ?i64 = if (msg.is_group or self.tg_ptr.reply_in_private) msg.message_id else null;
+
+        // Build session key
+        var key_buf: [256]u8 = undefined;
+        var routed_session_key: ?[]const u8 = null;
+        defer if (routed_session_key) |key| self.allocator.free(key);
+
+        const session_key = blk: {
+            const route = agent_routing.resolveRouteWithSession(self.allocator, .{
+                .channel = "telegram",
+                .account_id = msg.account_id,
+                .peer = .{ .kind = if (msg.is_group) .group else .direct, .id = msg.sender },
+            }, self.config.agent_bindings, self.config.agents, self.config.session) catch break :blk std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ msg.account_id, msg.sender }) catch msg.sender;
+            self.allocator.free(route.main_session_key);
+            routed_session_key = route.session_key;
+            break :blk route.session_key;
+        };
+
+        // Session serialization: only lock if config says to (default: false for full parallelism)
+        // Message deduplication already prevents spam, so ordering is optional
+        var session_lock: ?*Spinlock = null;
+        if (self.config.session.serialize_sessions) {
+            if (self.session_locks) |locks| {
+                session_lock = locks.acquire(session_key);
+            }
+        }
+        defer if (session_lock) |lock| self.session_locks.?.release(lock);
+
+        // Start typing indicator
+        self.tg_ptr.startTyping(msg.sender) catch {};
+        defer self.tg_ptr.stopTyping(msg.sender) catch {};
+
+        // Process message through agent
+        const reply = self.runtime.session_mgr.processMessage(session_key, msg.content, null) catch |err| {
+            log.err("Agent error: {}", .{err});
+            const err_msg: []const u8 = switch (err) {
+                error.CurlFailed, error.CurlReadError, error.CurlWaitError, error.CurlWriteError => "Network error. Please try again.",
+                error.ProviderDoesNotSupportVision => "The current provider does not support image input. Switch to a vision-capable provider or remove [IMAGE:] attachments.",
+                error.NoResponseContent => "Model returned an empty response. Please retry or /new for a fresh session.",
+                error.AllProvidersFailed => "All configured providers failed for this request. Check model/provider compatibility and credentials.",
+                error.OutOfMemory => "Out of memory.",
+                else => "An error occurred. Try again or /new for a fresh session.",
+            };
+            self.tg_ptr.sendMessageWithReply(msg.sender, err_msg, reply_to_id) catch |send_err| log.err("failed to send error reply: {}", .{send_err});
+            return;
+        };
+        defer self.allocator.free(reply);
+
+        // Send reply
+        self.tg_ptr.sendAssistantMessageWithReply(msg.sender, msg.sender_id, msg.is_group, reply, reply_to_id) catch |err| {
+            log.warn("Send error: {}", .{err});
+        };
+    }
+};
+
+const TelegramWorkerPool = worker_pool_mod.WorkerPool(TelegramWorkerMessage, TelegramWorkerHandler);
 
 fn extractTelegramBotId(bot_token: []const u8) ?[]const u8 {
     const colon_pos = std.mem.indexOfScalar(u8, bot_token, ':') orelse return null;
@@ -49,6 +285,118 @@ fn normalizeTelegramAccountId(allocator: std.mem.Allocator, account_id: []const 
         normalized[i] = if (std.ascii.isAlphanumeric(c) or c == '.' or c == '_' or c == '-') c else '_';
     }
     return normalized;
+}
+
+/// Check if a message is a duplicate (same user, same content within window)
+/// Also enforces command-specific cooldowns (e.g., /reset every 10 seconds)
+/// Returns true if message should be skipped, false if it should be processed
+fn shouldSkipDuplicateMessage(
+    loop_state: *TelegramLoopState,
+    allocator: std.mem.Allocator,
+    user_id: []const u8,
+    content: []const u8,
+) bool {
+    log.debug("shouldSkipDuplicateMessage: ENTER (user_id len={}, content len={})", .{ user_id.len, content.len });
+
+    const now = util.timestampUnix();
+    log.debug("shouldSkipDuplicateMessage: timestamp obtained", .{});
+
+    const trimmed = std.mem.trim(u8, content, " \t\r\n");
+    log.debug("shouldSkipDuplicateMessage: content trimmed (len={})", .{trimmed.len});
+
+    // Command-specific cooldowns
+    const cooldown_secs: i64 = if (std.mem.eql(u8, trimmed, "/reset") or std.mem.eql(u8, trimmed, "/new"))
+        10 // /reset and /new have 10 second cooldown
+    else
+        2; // Other commands have 2 second dedup window
+    log.debug("shouldSkipDuplicateMessage: cooldown_secs={}", .{cooldown_secs});
+
+    const content_hash = std.hash.Wyhash.hash(0, trimmed);
+    log.debug("shouldSkipDuplicateMessage: content_hash computed", .{});
+
+    log.debug("shouldSkipDuplicateMessage: acquiring spinlock", .{});
+    loop_state.cache_spinlock.lock();
+    log.debug("shouldSkipDuplicateMessage: spinlock acquired", .{});
+    defer loop_state.cache_spinlock.unlock();
+
+    // Clean up old entries (older than 30 seconds) to prevent memory buildup
+    // NOTE: Collect keys first, then remove (can't modify map during iteration)
+    const cleanup_threshold = now - 30;
+    log.debug("shouldSkipDuplicateMessage: cleanup_threshold={}", .{cleanup_threshold});
+
+    var keys_to_remove = std.ArrayList([]const u8).initCapacity(allocator, 32) catch {
+        log.warn("shouldSkipDuplicateMessage: failed to init keys_to_remove", .{});
+        return false;
+    };
+    defer keys_to_remove.deinit(allocator);
+    log.debug("shouldSkipDuplicateMessage: keys_to_remove initialized", .{});
+
+    log.debug("shouldSkipDuplicateMessage: iterating message_cache (count={})", .{loop_state.message_cache.count()});
+    var iter = loop_state.message_cache.iterator();
+    while (iter.next()) |entry| {
+        if (entry.value_ptr.timestamp < cleanup_threshold) {
+            keys_to_remove.append(allocator, entry.key_ptr.*) catch return false;
+        }
+    }
+    log.debug("shouldSkipDuplicateMessage: found {} entries to remove", .{keys_to_remove.items.len});
+
+    // Now safely remove collected keys (and free the key strings)
+    // IMPORTANT: Must remove from HashMap BEFORE freeing the key memory
+    // to avoid use-after-free when HashMap compares keys
+    for (keys_to_remove.items) |key| {
+        _ = loop_state.message_cache.remove(key);
+        allocator.free(key);
+    }
+    log.debug("shouldSkipDuplicateMessage: cleanup complete", .{});
+
+    // Check if this user sent the same command recently
+    log.debug("shouldSkipDuplicateMessage: calling getOrPut for user_id", .{});
+    const gop = loop_state.message_cache.getOrPut(allocator, user_id) catch {
+        log.warn("shouldSkipDuplicateMessage: getOrPut failed", .{});
+        return false;
+    };
+    log.debug("shouldSkipDuplicateMessage: getOrPut returned (found_existing={})", .{gop.found_existing});
+
+    if (!gop.found_existing) {
+        // First message from this user, store it
+        log.debug("shouldSkipDuplicateMessage: first message from user, duplicating user_id", .{});
+        gop.key_ptr.* = allocator.dupe(u8, user_id) catch {
+            // Clean up the empty entry on failure
+            log.warn("shouldSkipDuplicateMessage: failed to dupe user_id", .{});
+            _ = loop_state.message_cache.remove(user_id);
+            return false;
+        };
+        gop.value_ptr.* = .{ .content_hash = content_hash, .timestamp = now };
+        log.debug("shouldSkipDuplicateMessage: first message stored, returning false", .{});
+        return false; // Don't skip
+    }
+
+    // User has sent messages before, check if this is a duplicate or on cooldown
+    const entry = gop.value_ptr.*;
+    const time_diff = now - entry.timestamp;
+    log.debug("shouldSkipDuplicateMessage: checking existing entry (time_diff={})", .{time_diff});
+
+    // Check if same command (exact match)
+    if (entry.content_hash == content_hash) {
+        if (time_diff < cooldown_secs) {
+            log.debug("Skipping duplicate '{s}' from user={s} (cooldown: {d}/{d}s)", .{ trimmed, user_id, time_diff, cooldown_secs });
+            return true; // Skip duplicate
+        }
+    }
+
+    // For /reset specifically, also block different commands within cooldown window
+    // to prevent /reset -> /new spam
+    if (std.mem.eql(u8, trimmed, "/reset") or std.mem.eql(u8, trimmed, "/new")) {
+        if (time_diff < cooldown_secs) {
+            log.debug("Skipping '{s}' from user={s} (on cooldown from previous session reset: {d}/{d}s)", .{ trimmed, user_id, time_diff, cooldown_secs });
+            return true; // Skip due to cooldown
+        }
+    }
+
+    // Not a duplicate, update cache
+    gop.value_ptr.* = .{ .content_hash = content_hash, .timestamp = now };
+    log.debug("shouldSkipDuplicateMessage: cache updated, returning false", .{});
+    return false; // Don't skip
 }
 
 fn telegramUpdateOffsetPath(allocator: std.mem.Allocator, config: *const Config, account_id: []const u8) ![]u8 {
@@ -72,10 +420,12 @@ pub fn loadTelegramUpdateOffset(
     const path = telegramUpdateOffsetPath(allocator, config, account_id) catch return null;
     defer allocator.free(path);
 
-    const file = std.fs.openFileAbsolute(path, .{}) catch return null;
-    defer file.close();
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch return null;
+    defer file.close(std.Options.debug_io);
 
-    const content = file.readToEndAlloc(allocator, 16 * 1024) catch return null;
+    var read_buffer: [16 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited) catch return null;
     defer allocator.free(content);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return null;
@@ -114,20 +464,56 @@ pub fn saveTelegramUpdateOffset(
     defer allocator.free(path);
 
     if (std.fs.path.dirname(path)) |dir| {
-        std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
-            else => try std.fs.cwd().makePath(dir),
+            else => try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir),
         };
     }
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
 
+    // Custom writer for ArrayList (Zig 0.16: ArrayList.writer() removed)
+    const Writer = struct {
+        buffer: *std.ArrayList(u8),
+        alloc: std.mem.Allocator,
+
+        fn write(self: @This(), bytes: []const u8) !usize {
+            try self.buffer.appendSlice(self.alloc, bytes);
+            return bytes.len;
+        }
+
+        fn writeAll(self: @This(), bytes: []const u8) !void {
+            try self.buffer.appendSlice(self.alloc, bytes);
+        }
+
+        fn writeByte(self: @This(), byte: u8) !void {
+            try self.buffer.append(self.alloc, byte);
+        }
+
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            // Use bufPrint for formatted output
+            var stack_buf: [256]u8 = undefined;
+            if (std.fmt.bufPrint(&stack_buf, fmt, args)) |formatted| {
+                try self.buffer.appendSlice(self.alloc, formatted);
+            } else |_| {
+                // Only NoSpaceLeft can fail for bufPrint
+                // Fallback: allocPrint for larger output
+                const alloc_fmt = try std.fmt.allocPrint(self.alloc, fmt, args);
+                defer self.alloc.free(alloc_fmt);
+                try self.buffer.appendSlice(self.alloc, alloc_fmt);
+            }
+        }
+    };
+
+    const writer = Writer{ .buffer = &buf, .alloc = allocator };
+    const w = &writer;
+
     try buf.appendSlice(allocator, "{\n");
-    try std.fmt.format(buf.writer(allocator), "  \"version\": {d},\n", .{TELEGRAM_OFFSET_STORE_VERSION});
-    try std.fmt.format(buf.writer(allocator), "  \"last_update_id\": {d},\n", .{update_id});
+    try w.print("  \"version\": {d},\n", .{TELEGRAM_OFFSET_STORE_VERSION});
+    try w.print("  \"last_update_id\": {d},\n", .{update_id});
     if (extractTelegramBotId(bot_token)) |bot_id| {
-        try std.fmt.format(buf.writer(allocator), "  \"bot_id\": \"{s}\"\n", .{bot_id});
+        try w.print("  \"bot_id\": \"{s}\"\n", .{bot_id});
     } else {
         try buf.appendSlice(allocator, "  \"bot_id\": null\n");
     }
@@ -137,16 +523,16 @@ pub fn saveTelegramUpdateOffset(
     defer allocator.free(tmp_path);
 
     {
-        var tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
-        defer tmp_file.close();
-        try tmp_file.writeAll(buf.items);
+        var tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{});
+        defer tmp_file.close(std.Options.debug_io);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, buf.items);
     }
 
-    std.fs.renameAbsolute(tmp_path, path) catch {
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
-        const file = try std.fs.createFileAbsolute(path, .{});
-        defer file.close();
-        try file.writeAll(buf.items);
+    std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), path, std.Options.debug_io) catch {
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
+        const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
+        defer file.close(std.Options.debug_io);
+        try file.writeStreamingAll(std.Options.debug_io, buf.items);
     };
 }
 
@@ -186,6 +572,12 @@ fn matrixRoomPeerId(reply_target: ?[]const u8) []const u8 {
 // TelegramLoopState — shared state between supervisor and polling thread
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Per-user message cache entry for deduplication
+const MessageCacheEntry = struct {
+    content_hash: u64,
+    timestamp: i64,
+};
+
 pub const TelegramLoopState = struct {
     /// Updated after each pollUpdates() — epoch seconds.
     last_activity: Atomic(i64),
@@ -193,12 +585,54 @@ pub const TelegramLoopState = struct {
     stop_requested: Atomic(bool),
     /// Thread handle for join().
     thread: ?std.Thread = null,
+    /// Worker pool for parallel message processing (optional, nil = sequential mode)
+    worker_pool: ?*TelegramWorkerPool = null,
+    /// Session locks for per-session serialization
+    session_locks: ?*worker_pool_mod.SessionLockManager = null,
+    /// Config for worker count (default: 4)
+    worker_count: usize = 4,
+    /// Per-user message cache for deduplication (prevents command spam)
+    message_cache: std.StringHashMapUnmanaged(MessageCacheEntry) = .empty,
+    /// Spinlock for message cache (lightweight, no I/O context needed)
+    cache_spinlock: Spinlock = Spinlock.init(),
 
     pub fn init() TelegramLoopState {
         return .{
-            .last_activity = Atomic(i64).init(std.time.timestamp()),
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
+            .worker_count = 4,
         };
+    }
+
+    pub fn initWithWorkers(worker_count: usize) TelegramLoopState {
+        return .{
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
+            .stop_requested = Atomic(bool).init(false),
+            .worker_count = worker_count,
+        };
+    }
+
+    pub fn deinit(self: *TelegramLoopState, allocator: std.mem.Allocator) void {
+        self.cache_spinlock.lock();
+        defer self.cache_spinlock.unlock();
+
+        // Clean up message cache
+        var iter = self.message_cache.iterator();
+        while (iter.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+        }
+        self.message_cache.deinit(allocator);
+
+        if (self.worker_pool) |pool| {
+            pool.deinit();
+            allocator.destroy(pool);
+            self.worker_pool = null;
+        }
+        if (self.session_locks) |locks| {
+            locks.deinit();
+            allocator.destroy(locks);
+            self.session_locks = null;
+        }
     }
 };
 
@@ -222,7 +656,7 @@ pub const ChannelRuntime = struct {
     security_policy: *security.SecurityPolicy,
 
     /// Initialize the runtime from config — mirrors main.zig:702-786 setup.
-    pub fn init(allocator: std.mem.Allocator, config: *const Config) !*ChannelRuntime {
+    pub fn init(allocator: std.mem.Allocator, config: *const Config, io: std.Io) !*ChannelRuntime {
         var runtime_provider = try provider_runtime.RuntimeProviderBundle.init(allocator, config);
         errdefer runtime_provider.deinit();
 
@@ -231,7 +665,7 @@ pub const ChannelRuntime = struct {
 
         // MCP tools
         const mcp_tools: ?[]const tools_mod.Tool = if (config.mcp_servers.len > 0)
-            mcp.initMcpTools(allocator, config.mcp_servers) catch |err| blk: {
+            mcp.initMcpTools(allocator, io, config.mcp_servers) catch |err| blk: {
                 log.warn("MCP init failed: {}", .{err});
                 break :blk null;
             }
@@ -242,7 +676,7 @@ pub const ChannelRuntime = struct {
         const subagent_manager = allocator.create(subagent_mod.SubagentManager) catch null;
         errdefer if (subagent_manager) |mgr| allocator.destroy(mgr);
         if (subagent_manager) |mgr| {
-            mgr.* = subagent_mod.SubagentManager.init(allocator, config, null, .{});
+            mgr.* = subagent_mod.SubagentManager.init(allocator, io, config, null, .{});
             errdefer {
                 mgr.deinit();
             }
@@ -268,7 +702,7 @@ pub const ChannelRuntime = struct {
         };
 
         // Tools
-        const tools = tools_mod.allTools(allocator, config.workspace_dir, .{
+        const tools = tools_mod.allTools(allocator, config.workspace_dir, io, .{
             .http_enabled = config.http_request.enabled,
             .http_allowed_domains = config.http_request.allowed_domains,
             .http_max_response_size = config.http_request.max_response_size,
@@ -277,7 +711,7 @@ pub const ChannelRuntime = struct {
             .web_search_provider = config.http_request.search_provider,
             .web_search_fallback_providers = config.http_request.search_fallback_providers,
             .browser_enabled = config.browser.enabled,
-            .screenshot_enabled = true,
+            .screenshot_enabled = false,
             .mcp_tools = mcp_tools,
             .agents = config.agents,
             .fallback_api_key = resolved_key,
@@ -300,7 +734,7 @@ pub const ChannelRuntime = struct {
         const obs = noop_obs.observer();
 
         // Session manager
-        var session_mgr = session_mod.SessionManager.init(allocator, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+        var session_mgr = session_mod.SessionManager.init(allocator, io, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
         session_mgr.policy = security_policy;
 
         // Self — heap-allocated so pointers remain stable
@@ -356,6 +790,10 @@ pub const ChannelRuntime = struct {
 /// `tg_ptr` is the channel instance owned by the supervisor (ChannelManager).
 /// The polling loop uses it directly instead of creating a second
 /// TelegramChannel, so health checks and polling operate on the same object.
+///
+/// Uses worker pool for parallel message processing:
+///   - Poll thread: enqueue messages (non-blocking)
+///   - Worker threads: process messages (parallel, per-session locking)
 pub fn runTelegramLoop(
     allocator: std.mem.Allocator,
     config: *const Config,
@@ -402,19 +840,291 @@ pub fn runTelegramLoop(
         return;
     };
 
+    // Initialize worker pool if not already done
+    if (loop_state.worker_pool == null) {
+        // Create session lock manager only if serialization is enabled
+        var locks_ptr: ?*worker_pool_mod.SessionLockManager = null;
+        if (config.session.serialize_sessions) {
+            locks_ptr = allocator.create(worker_pool_mod.SessionLockManager) catch |err| {
+                log.warn("Failed to create session lock manager: {} - using sequential processing", .{err});
+                runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+                return;
+            };
+            locks_ptr.?.* = worker_pool_mod.SessionLockManager.init(allocator);
+        }
+
+        // Create worker pool with handler
+        const pool_ptr = allocator.create(TelegramWorkerPool) catch |err| {
+            log.warn("Failed to create worker pool: {} - using sequential processing", .{err});
+            if (locks_ptr) |l| allocator.destroy(l);
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+
+        const handler = TelegramWorkerHandler{
+            .tg_ptr = tg_ptr,
+            .runtime = runtime,
+            .config = config,
+            .session_locks = locks_ptr,
+            .allocator = allocator,
+        };
+
+        pool_ptr.* = TelegramWorkerPool.init(allocator, handler, loop_state.worker_count) catch |err| {
+            log.warn("Failed to initialize worker pool: {} - using sequential processing", .{err});
+            allocator.destroy(pool_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+
+        // Start worker threads (must be done after pool is at its final location)
+        pool_ptr.start() catch |err| {
+            log.warn("Failed to start worker pool: {} - using sequential processing", .{err});
+            pool_ptr.deinit();
+            allocator.destroy(pool_ptr);
+            if (locks_ptr) |l| allocator.destroy(l);
+            runTelegramLoopSequential(allocator, config, runtime, loop_state, tg_ptr, model);
+            return;
+        };
+
+        loop_state.worker_pool = pool_ptr;
+        loop_state.session_locks = locks_ptr;
+        if (config.session.serialize_sessions) {
+            log.info("Worker pool enabled with {} workers (session serialization ON)", .{loop_state.worker_count});
+        } else {
+            log.info("Worker pool enabled with {} workers (full parallelism)", .{loop_state.worker_count});
+        }
+    }
+
     // Update activity timestamp at start
-    loop_state.last_activity.store(std.time.timestamp(), .release);
+    loop_state.last_activity.store(util.timestampUnix(), .release);
+
+    while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
+        log.debug("Telegram polling loop: calling pollUpdates", .{});
+        const messages = tg_ptr.pollUpdates(allocator) catch |err| {
+            log.warn("Telegram poll error: {}", .{err});
+            loop_state.last_activity.store(util.timestampUnix(), .release);
+            continue;
+        };
+        log.debug("Telegram polling loop: pollUpdates returned {d} messages", .{messages.len});
+
+        // Update activity after each poll (even if no messages)
+        loop_state.last_activity.store(util.timestampUnix(), .release);
+
+        for (messages) |msg| {
+            log.debug("Telegram polling loop: processing message from sender={s} content_len={d}", .{ msg.sender, msg.content.len });
+
+            // Handle ALL commands immediately in poll thread (bypass worker pool for instant response)
+            // Commands are synchronous and don't make LLM calls, so they should never wait
+            log.debug("Telegram polling loop: trimming message content", .{});
+            const trimmed = std.mem.trim(u8, msg.content, " \t\r\n");
+            if (std.mem.startsWith(u8, trimmed, "/")) {
+                log.debug("Telegram polling loop: handling command immediately: {s}", .{trimmed});
+
+                // Build session key for command processing
+                var key_buf: [256]u8 = undefined;
+                const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ tg_ptr.account_id, msg.sender }) catch msg.sender;
+
+                // Calculate reply_to_id before error handling
+                const reply_to_id: ?i64 = if (msg.is_group or tg_ptr.reply_in_private) msg.message_id else null;
+
+                // Process command synchronously in poll thread (no worker pool)
+                const reply = runtime.session_mgr.processMessage(session_key, msg.content, null) catch |err| {
+                    log.err("Command processing error: {}", .{err});
+                    const error_msg = "Error processing command. Please try again.";
+                    tg_ptr.sendMessageWithReply(msg.sender, error_msg, reply_to_id) catch |send_err| {
+                        log.err("failed to send command error reply: {}", .{send_err});
+                    };
+                    msg.deinit(allocator);
+                    log.debug("Telegram polling loop: command handled with error, continuing", .{});
+                    continue;
+                };
+                defer allocator.free(reply);
+
+                // Send reply immediately
+                tg_ptr.sendMessageWithReply(msg.sender, reply, reply_to_id) catch |err| {
+                    log.err("failed to send command reply: {}", .{err});
+                };
+
+                msg.deinit(allocator);
+                log.debug("Telegram polling loop: command handled immediately, continuing", .{});
+                continue;
+            }
+
+            // Check for duplicate messages (prevent command spam)
+            log.debug("Telegram polling loop: checking for duplicate message", .{});
+            if (shouldSkipDuplicateMessage(loop_state, allocator, msg.sender, msg.content)) {
+                log.debug("Skipping duplicate /reset command from user={s}", .{msg.sender});
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // Classify message for hybrid processing
+            log.debug("Telegram polling loop: classifying message", .{});
+            const msg_class = classifyMessage(msg.content);
+            log.debug("Telegram polling loop: message classified as {s}", .{if (msg_class == .independent) "independent" else "conversational"});
+
+            // Clone message data for worker pool
+            // Safety: validate source data first
+            if (msg.sender.len == 0 or tg_ptr.account_id.len == 0) {
+                log.warn("Skipping message with empty sender or account_id", .{});
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // Use page_allocator for thread-safe cloning (shared allocator is not thread-safe)
+            // This prevents crashes when multiple threads access the shared allocator simultaneously
+            log.debug("Telegram polling loop: cloning sender field (len={d}) ptr=0x{x}", .{ msg.sender.len, @intFromPtr(msg.sender.ptr) });
+            const sender_dupe = std.heap.page_allocator.dupe(u8, msg.sender) catch {
+                log.warn("Failed to clone sender, skipping message", .{});
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: sender cloned ptr=0x{x}", .{@intFromPtr(sender_dupe.ptr)});
+            log.debug("Telegram polling loop: cloning sender_first_name field (is_null={}, len={})", .{ msg.first_name == null, if (msg.first_name) |n| n.len else 0 });
+            const sender_first_name_dupe = blk: {
+                log.debug("Telegram polling loop: entering sender_first_name clone block", .{});
+                if (msg.first_name) |name| {
+                    log.debug("Telegram polling loop: sender_first_name present, len={}, ptr=0x{x}", .{ name.len, @intFromPtr(name.ptr) });
+                    if (name.len > 0 and name.len < 1024) {
+                        // Print first few chars to verify memory is valid
+                        const preview_len = @min(name.len, 20);
+                        log.debug("Telegram polling loop: sender_first_name preview: '{s}'", .{name[0..preview_len]});
+                        log.debug("Telegram polling loop: calling page_allocator.dupe for sender_first_name", .{});
+                        const duped = std.heap.page_allocator.dupe(u8, name) catch {
+                            log.warn("Telegram polling loop: OOM duplicating sender_first_name", .{});
+                            break :blk null;
+                        };
+                        log.debug("Telegram polling loop: sender_first_name cloned successfully", .{});
+                        break :blk duped;
+                    }
+                    log.debug("Telegram polling loop: sender_first_name length out of range, skipping", .{});
+                }
+                break :blk null;
+            };
+            log.debug("Telegram polling loop: sender_first_name_dupe = {}", .{if (sender_first_name_dupe) |d| d.len else 0});
+            log.debug("Telegram polling loop: cloning sender_id field (len={d}) ptr=0x{x}", .{ msg.id.len, @intFromPtr(msg.id.ptr) });
+            const sender_id_dupe = std.heap.page_allocator.dupe(u8, msg.id) catch {
+                log.warn("Failed to clone sender_id, skipping message", .{});
+                std.heap.page_allocator.free(sender_dupe);
+                if (sender_first_name_dupe) |n| std.heap.page_allocator.free(n);
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: sender_id cloned ptr=0x{x}", .{@intFromPtr(sender_id_dupe.ptr)});
+            log.debug("Telegram polling loop: cloning content field (len={d}) ptr=0x{x}", .{ msg.content.len, @intFromPtr(msg.content.ptr) });
+            const content_dupe = std.heap.page_allocator.dupe(u8, msg.content) catch {
+                log.warn("Failed to clone content, skipping message", .{});
+                std.heap.page_allocator.free(sender_dupe);
+                if (sender_first_name_dupe) |n| std.heap.page_allocator.free(n);
+                std.heap.page_allocator.free(sender_id_dupe);
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: content cloned ptr=0x{x}", .{@intFromPtr(content_dupe.ptr)});
+            log.debug("Telegram polling loop: cloning account_id field (len={d}) ptr=0x{x}", .{ tg_ptr.account_id.len, @intFromPtr(tg_ptr.account_id.ptr) });
+            const account_id_dupe = std.heap.page_allocator.dupe(u8, tg_ptr.account_id) catch {
+                log.warn("Failed to clone account_id, skipping message", .{});
+                std.heap.page_allocator.free(sender_dupe);
+                if (sender_first_name_dupe) |n| std.heap.page_allocator.free(n);
+                std.heap.page_allocator.free(sender_id_dupe);
+                std.heap.page_allocator.free(content_dupe);
+                msg.deinit(allocator);
+                continue;
+            };
+            log.debug("Telegram polling loop: account_id cloned ptr=0x{x}", .{@intFromPtr(account_id_dupe.ptr)});
+            log.debug("Telegram polling loop: all fields cloned successfully, creating worker_msg", .{});
+            const worker_msg = TelegramWorkerMessage{
+                .sender = sender_dupe,
+                .sender_first_name = sender_first_name_dupe,
+                .sender_id = sender_id_dupe,
+                .content = content_dupe,
+                .is_group = msg.is_group,
+                .message_id = msg.message_id,
+                .account_id = account_id_dupe,
+                .message_class = msg_class,
+            };
+            log.debug("Telegram polling loop: message fields cloned successfully", .{});
+
+            // Final validation: ensure cloned fields are valid
+            if (worker_msg.sender.len == 0 or worker_msg.account_id.len == 0) {
+                log.warn("Skipping message with empty cloned fields (sender={d}, account_id={d})", .{ worker_msg.sender.len, worker_msg.account_id.len });
+                worker_msg.deinit(std.heap.page_allocator);
+                msg.deinit(allocator);
+                continue;
+            }
+
+            // Enqueue for worker pool processing
+            log.debug("Telegram polling loop: enqueuing message from sender={s}", .{worker_msg.sender});
+            if (loop_state.worker_pool) |pool| {
+                log.debug("Telegram polling loop: submitting message to worker pool", .{});
+                pool.submit(worker_msg) catch |err| {
+                    log.err("Telegram polling loop: failed to enqueue message: {}", .{err});
+                    log.err("Failed to enqueue message: {}", .{err});
+                    worker_msg.deinit(std.heap.page_allocator);
+                    msg.deinit(allocator);
+                    continue;
+                };
+                log.debug("Telegram polling loop: message submitted to worker pool successfully", .{});
+            }
+
+            // Free original message (worker owns the clones)
+            log.debug("Telegram polling loop: freeing original message (worker owns clones)", .{});
+            msg.deinit(allocator);
+            log.debug("Telegram polling loop: original message freed, iteration complete", .{});
+        }
+
+        if (messages.len > 0) {
+            allocator.free(messages);
+        }
+        log.debug("Telegram polling loop: iteration complete, waiting for next poll", .{});
+
+        if (tg_ptr.persistableUpdateOffset()) |persistable_update_id| {
+            persistTelegramUpdateOffsetIfAdvanced(
+                allocator,
+                config,
+                tg_ptr.account_id,
+                tg_ptr.bot_token,
+                &persisted_update_id,
+                persistable_update_id,
+            );
+        }
+
+        // Periodic session eviction
+        evict_counter += 1;
+        if (evict_counter >= 100) {
+            evict_counter = 0;
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
+        }
+
+        health.markComponentOk("telegram");
+    }
+}
+
+/// Sequential processing fallback (original behavior)
+fn runTelegramLoopSequential(
+    allocator: std.mem.Allocator,
+    config: *const Config,
+    runtime: *ChannelRuntime,
+    loop_state: *TelegramLoopState,
+    tg_ptr: *telegram.TelegramChannel,
+    model: []const u8,
+) void {
+    var persisted_update_id: i64 = tg_ptr.last_update_id;
+    var evict_counter: u32 = 0;
+
+    // Update activity timestamp at start
+    loop_state.last_activity.store(util.timestampUnix(), .release);
 
     while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
         const messages = tg_ptr.pollUpdates(allocator) catch |err| {
             log.warn("Telegram poll error: {}", .{err});
-            loop_state.last_activity.store(std.time.timestamp(), .release);
-            std.Thread.sleep(5 * std.time.ns_per_s);
+            loop_state.last_activity.store(util.timestampUnix(), .release);
             continue;
         };
 
         // Update activity after each poll (even if no messages)
-        loop_state.last_activity.store(std.time.timestamp(), .release);
+        loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
             // Handle /start command
@@ -424,6 +1134,12 @@ pub fn runTelegramLoop(
                 const name = msg.first_name orelse msg.id;
                 const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
                 tg_ptr.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
+                continue;
+            }
+
+            // Check for duplicate messages (prevent command spam)
+            if (shouldSkipDuplicateMessage(loop_state, allocator, msg.sender, msg.content)) {
+                log.debug("Skipping duplicate /reset command from user={s}", .{msg.sender});
                 continue;
             }
 
@@ -478,21 +1194,14 @@ pub fn runTelegramLoop(
         }
 
         if (tg_ptr.persistableUpdateOffset()) |persistable_update_id| {
-            persistTelegramUpdateOffsetIfAdvanced(
-                allocator,
-                config,
-                tg_ptr.account_id,
-                tg_ptr.bot_token,
-                &persisted_update_id,
-                persistable_update_id,
-            );
+            persistTelegramUpdateOffsetIfAdvanced(allocator, config, tg_ptr.account_id, tg_ptr.bot_token, &persisted_update_id, persistable_update_id);
         }
 
         // Periodic session eviction
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
 
         health.markComponentOk("telegram");
@@ -513,9 +1222,15 @@ pub const SignalLoopState = struct {
 
     pub fn init() SignalLoopState {
         return .{
-            .last_activity = Atomic(i64).init(std.time.timestamp()),
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
+    }
+
+    pub fn deinit(self: *SignalLoopState, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // No heap-allocated fields to free
     }
 };
 
@@ -535,20 +1250,19 @@ pub fn runSignalLoop(
     sg_ptr: *signal.SignalChannel,
 ) void {
     // Update activity timestamp at start
-    loop_state.last_activity.store(std.time.timestamp(), .release);
+    loop_state.last_activity.store(util.timestampUnix(), .release);
 
     var evict_counter: u32 = 0;
 
     while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
         const messages = sg_ptr.pollMessages(allocator) catch |err| {
             log.warn("Signal poll error: {}", .{err});
-            loop_state.last_activity.store(std.time.timestamp(), .release);
-            std.Thread.sleep(5 * std.time.ns_per_s);
+            loop_state.last_activity.store(util.timestampUnix(), .release);
             continue;
         };
 
         // Update activity after each poll (even if no messages)
-        loop_state.last_activity.store(std.time.timestamp(), .release);
+        loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
             // Session key — always resolve through agent routing (falls back on errors)
@@ -626,7 +1340,7 @@ pub fn runSignalLoop(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
 
         health.markComponentOk("signal");
@@ -647,9 +1361,15 @@ pub const MatrixLoopState = struct {
 
     pub fn init() MatrixLoopState {
         return .{
-            .last_activity = Atomic(i64).init(std.time.timestamp()),
+            .last_activity = Atomic(i64).init(util.timestampUnix()),
             .stop_requested = Atomic(bool).init(false),
         };
+    }
+
+    pub fn deinit(self: *MatrixLoopState, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // No heap-allocated fields to free
     }
 };
 
@@ -749,19 +1469,18 @@ pub fn runMatrixLoop(
     loop_state: *MatrixLoopState,
     mx_ptr: *matrix.MatrixChannel,
 ) void {
-    loop_state.last_activity.store(std.time.timestamp(), .release);
+    loop_state.last_activity.store(util.timestampUnix(), .release);
 
     var evict_counter: u32 = 0;
 
     while (!loop_state.stop_requested.load(.acquire) and !daemon.isShutdownRequested()) {
         const messages = mx_ptr.pollMessages(allocator) catch |err| {
             log.warn("Matrix poll error: {}", .{err});
-            loop_state.last_activity.store(std.time.timestamp(), .release);
-            std.Thread.sleep(5 * std.time.ns_per_s);
+            loop_state.last_activity.store(util.timestampUnix(), .release);
             continue;
         };
 
-        loop_state.last_activity.store(std.time.timestamp(), .release);
+        loop_state.last_activity.store(util.timestampUnix(), .release);
 
         for (messages) |msg| {
             var key_buf: [192]u8 = undefined;
@@ -821,7 +1540,7 @@ pub fn runMatrixLoop(
         evict_counter += 1;
         if (evict_counter >= 100) {
             evict_counter = 0;
-            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            _ = runtime.session_mgr.evictIdle(config.agent.session_idle_timeout_secs, std.Options.debug_io);
         }
 
         health.markComponentOk("matrix");
@@ -849,8 +1568,7 @@ test "TelegramLoopState stop_requested toggle" {
 test "TelegramLoopState last_activity update" {
     var state = TelegramLoopState.init();
     const before = state.last_activity.load(.acquire);
-    std.Thread.sleep(10 * std.time.ns_per_ms);
-    state.last_activity.store(std.time.timestamp(), .release);
+    state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
 }
@@ -872,7 +1590,7 @@ test "channel runtime wires security policy into session manager and shell tool"
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace);
     const config_path = try std.fs.path.join(allocator, &.{ workspace, "config.json" });
     defer allocator.free(config_path);
@@ -887,7 +1605,7 @@ test "channel runtime wires security policy into session manager and shell tool"
         },
     };
 
-    var runtime = try ChannelRuntime.init(allocator, &cfg);
+    var runtime = try ChannelRuntime.init(allocator, &cfg, std.testing.io);
     defer runtime.deinit();
 
     try std.testing.expect(runtime.session_mgr.policy != null);
@@ -925,8 +1643,7 @@ test "SignalLoopState stop_requested toggle" {
 test "SignalLoopState last_activity update" {
     var state = SignalLoopState.init();
     const before = state.last_activity.load(.acquire);
-    std.Thread.sleep(10 * std.time.ns_per_ms);
-    state.last_activity.store(std.time.timestamp(), .release);
+    state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
 }
@@ -948,8 +1665,7 @@ test "MatrixLoopState stop_requested toggle" {
 test "MatrixLoopState last_activity update" {
     var state = MatrixLoopState.init();
     const before = state.last_activity.load(.acquire);
-    std.Thread.sleep(10 * std.time.ns_per_ms);
-    state.last_activity.store(std.time.timestamp(), .release);
+    state.last_activity.store(util.timestampUnix(), .release);
     const after = state.last_activity.load(.acquire);
     try std.testing.expect(after >= before);
 }
@@ -976,9 +1692,9 @@ test "telegram update offset store roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -998,9 +1714,9 @@ test "telegram update offset store returns null for mismatched bot id" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -1020,9 +1736,9 @@ test "telegram update offset store treats legacy payload without bot_id as stale
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -1034,13 +1750,13 @@ test "telegram update offset store treats legacy payload without bot_id as stale
     const offset_path = try telegramUpdateOffsetPath(allocator, &cfg, "default");
     defer allocator.free(offset_path);
     const offset_dir = std.fs.path.dirname(offset_path).?;
-    std.fs.makeDirAbsolute(offset_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, offset_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
-        else => try std.fs.cwd().makePath(offset_dir),
+        else => try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, offset_dir),
     };
-    const file = try std.fs.createFileAbsolute(offset_path, .{});
-    defer file.close();
-    try file.writeAll(
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, offset_path, .{});
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io,
         \\{
         \\  "version": 1,
         \\  "last_update_id": 456
@@ -1058,9 +1774,9 @@ test "telegram offset persistence helper retries after write failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(base);
-    const config_path = try std.fs.path.join(allocator, &.{ base, "config.json" });
+    const config_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
     defer allocator.free(config_path);
 
     const cfg = Config{
@@ -1069,12 +1785,12 @@ test "telegram offset persistence helper retries after write failure" {
         .allocator = allocator,
     };
 
-    const blocked_state_path = try std.fs.path.join(allocator, &.{ base, "state" });
+    const blocked_state_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "state" });
     defer allocator.free(blocked_state_path);
 
     {
-        const blocked_state_file = try std.fs.createFileAbsolute(blocked_state_path, .{});
-        blocked_state_file.close();
+        const blocked_state_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, blocked_state_path, .{});
+        blocked_state_file.close(std.Options.debug_io);
     }
 
     var persisted_update_id: i64 = 100;
@@ -1089,7 +1805,7 @@ test "telegram offset persistence helper retries after write failure" {
     try std.testing.expectEqual(@as(i64, 100), persisted_update_id);
     try std.testing.expect(loadTelegramUpdateOffset(allocator, &cfg, "main", "12345:test-token") == null);
 
-    try std.fs.deleteFileAbsolute(blocked_state_path);
+    try std.Io.Dir.cwd().deleteFile(std.Options.debug_io, blocked_state_path);
 
     persistTelegramUpdateOffsetIfAdvanced(
         allocator,
@@ -1102,4 +1818,50 @@ test "telegram offset persistence helper retries after write failure" {
     try std.testing.expectEqual(@as(i64, 101), persisted_update_id);
     const restored = loadTelegramUpdateOffset(allocator, &cfg, "main", "12345:test-token");
     try std.testing.expectEqual(@as(?i64, 101), restored);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Message Classification Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+test "classifyMessage: commands are independent" {
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("/start"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("/status"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("/help"));
+}
+
+test "classifyMessage: price queries are independent" {
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("What's BTC price?"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("BTC?"));
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("How much is $100 in EUR?"));
+}
+
+test "classifyMessage: follow-ups are conversational" {
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("And tomorrow?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("What about that?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Continue"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Go on"));
+}
+
+test "classifyMessage: pronoun references are conversational" {
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("What is it?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Who is he?"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Explain that"));
+}
+
+test "classifyMessage: short messages are conversational" {
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Ok"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("Yes"));
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("No"));
+}
+
+test "classifyMessage: mixed patterns" {
+    // Has "and" at start → conversational
+    try std.testing.expectEqual(MessageClass.conversational, classifyMessage("And BTC price?"));
+
+    // Short question with currency → independent
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("Price?"));
+
+    // Normal question → independent
+    try std.testing.expectEqual(MessageClass.independent, classifyMessage("What is Bitcoin?"));
 }

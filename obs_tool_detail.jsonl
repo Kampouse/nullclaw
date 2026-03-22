@@ -1,0 +1,1 @@
+{"event":"tool_call","tool":"shell","duration_ms":7,"success":false,"detail":"exit code 1: \"permission denied\""}

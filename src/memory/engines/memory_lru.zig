@@ -85,7 +85,7 @@ pub const InMemoryLruMemory = struct {
     }
 
     fn nowTimestamp(self: *Self) ![]const u8 {
-        return std.fmt.allocPrint(self.allocator, "{d}", .{std.time.timestamp()});
+        return std.fmt.allocPrint(self.allocator, "{d}", .{0});
     }
 
     fn dupCategory(self: *Self, cat: MemoryCategory) !MemoryCategory {

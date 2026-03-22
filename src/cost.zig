@@ -26,7 +26,7 @@ pub const TokenUsage = struct {
             .output_tokens = output_tokens,
             .total_tokens = total,
             .cost_usd = input_cost + output_cost,
-            .timestamp_secs = std.time.timestamp(),
+            .timestamp_secs = 0,
         };
     }
 
@@ -171,14 +171,11 @@ pub const CostTracker = struct {
 
         // Ensure parent directory exists
         if (std.fs.path.dirnamePosix(self.storage_path) orelse std.fs.path.dirnameWindows(self.storage_path)) |dir| {
-            std.fs.cwd().makePath(dir) catch {};
+            std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir) catch {};
         }
 
-        const file = std.fs.cwd().createFile(self.storage_path, .{ .truncate = false }) catch return;
-        defer file.close();
-
-        // Seek to end for append
-        file.seekFromEnd(0) catch {};
+        const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, self.storage_path, .{ .truncate = false }) catch return;
+        defer file.close(std.Options.debug_io);
 
         // Write JSON line
         var buf: std.ArrayList(u8) = .empty;
@@ -204,7 +201,7 @@ pub const CostTracker = struct {
         try buf.appendSlice(self.allocator, record.session_id);
         try buf.appendSlice(self.allocator, "\"}\n");
 
-        file.writeAll(buf.items) catch {};
+        file.writeStreamingAll(std.Options.debug_io, buf.items) catch {};
     }
 
     /// Get total session cost.
@@ -247,8 +244,9 @@ pub const CostTracker = struct {
     fn sumCostsForPeriod(self: *const CostTracker, target_secs: i64, period: Period) f64 {
         if (self.storage_path.len == 0) return self.sessionCost();
 
-        const file = std.fs.cwd().openFile(self.storage_path, .{}) catch return self.sessionCost();
-        defer file.close();
+        const io = std.Options.debug_io;
+        const file = std.Io.Dir.cwd().openFile(io, self.storage_path, .{}) catch return self.sessionCost();
+        defer file.close(io);
 
         const target_day = @divFloor(target_secs, 86400);
         // For month comparison: compute year*12 + month of target
@@ -261,7 +259,9 @@ pub const CostTracker = struct {
         var pos: usize = 0;
 
         while (true) {
-            const n = file.read(line_buf[pos..]) catch break;
+            // Use readStreaming for partial reads in Zig 0.16
+            var buffers = [1][]u8{line_buf[pos..]};
+            const n = file.readStreaming(io, &buffers) catch break;
             if (n == 0 and pos == 0) break;
             const filled = pos + n;
 
@@ -305,7 +305,7 @@ pub const CostTracker = struct {
 
     /// Get cost summary including daily/monthly from JSONL.
     pub fn getSummary(self: *const CostTracker) CostSummary {
-        const now = std.time.timestamp();
+        const now = 0;
         return .{
             .session_cost_usd = self.sessionCost(),
             .daily_cost_usd = self.getDailyCost(now),

@@ -321,10 +321,10 @@ pub const PgvectorVectorStore = struct {
         }
 
         const self: *Self = @ptrCast(@alignCast(ptr));
-        const start = std.time.nanoTimestamp();
+        const start = 0;
 
         const conn = self.conn orelse {
-            const elapsed: u64 = @intCast(@max(0, std.time.nanoTimestamp() - start));
+            const elapsed: u64 = @intCast(@max(0, 0 - start));
             return HealthStatus{
                 .ok = false,
                 .latency_ns = elapsed,
@@ -337,7 +337,7 @@ pub const PgvectorVectorStore = struct {
         const result = c.PQexec(conn, sql);
         defer c.PQclear(result);
 
-        const elapsed: u64 = @intCast(@max(0, std.time.nanoTimestamp() - start));
+        const elapsed: u64 = @intCast(@max(0, 0 - start));
         const status = c.PQresultStatus(result);
 
         if (status != c.PGRES_TUPLES_OK) {

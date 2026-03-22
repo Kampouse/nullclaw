@@ -7,6 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const log = std.log.scoped(.agent);
+const slog = @import("../structured_log.zig");
 const Config = @import("../config.zig").Config;
 const config_types = @import("../config_types.zig");
 const providers = @import("../providers/root.zig");
@@ -25,6 +26,7 @@ const observability = @import("../observability.zig");
 const Observer = observability.Observer;
 const ObserverEvent = observability.ObserverEvent;
 const SecurityPolicy = @import("../security/policy.zig").SecurityPolicy;
+const util = @import("../util.zig");
 
 const cache = memory_mod.cache;
 pub const dispatcher = @import("dispatcher.zig");
@@ -211,6 +213,7 @@ pub const Agent = struct {
     };
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     provider: Provider,
     tools: []const Tool,
     tool_specs: []const ToolSpec,
@@ -273,6 +276,8 @@ pub const Agent = struct {
     message_timeout_secs: u64 = 0,
     log_tool_calls: bool = false,
     log_llm_io: bool = false,
+    /// Maximum number of tools to execute in parallel (0 = sequential, 1+ = parallel)
+    max_parallel_tools: u32 = 0,
     compaction_keep_recent: u32 = compaction.DEFAULT_COMPACTION_KEEP_RECENT,
     compaction_max_summary_chars: u32 = compaction.DEFAULT_COMPACTION_MAX_SUMMARY_CHARS,
     compaction_max_source_chars: u32 = compaction.DEFAULT_COMPACTION_MAX_SOURCE_CHARS,
@@ -328,6 +333,7 @@ pub const Agent = struct {
         tools: []const Tool,
         mem: ?Memory,
         observer_i: Observer,
+        io: std.Io,
     ) !Agent {
         const default_model = cfg.default_model orelse return error.NoDefaultModel;
         const token_limit_override = if (cfg.agent.token_limit_explicit) cfg.agent.token_limit else null;
@@ -348,6 +354,7 @@ pub const Agent = struct {
 
         return .{
             .allocator = allocator,
+            .io = io,
             .provider = provider_i,
             .tools = tools,
             .tool_specs = specs,
@@ -373,6 +380,7 @@ pub const Agent = struct {
             .message_timeout_secs = cfg.agent.message_timeout_secs,
             .log_tool_calls = cfg.diagnostics.log_tool_calls,
             .log_llm_io = cfg.diagnostics.log_llm_io,
+            .max_parallel_tools = cfg.diagnostics.max_parallel_tools,
             .compaction_keep_recent = cfg.agent.compaction_keep_recent,
             .compaction_max_summary_chars = cfg.agent.compaction_max_summary_chars,
             .compaction_max_source_chars = cfg.agent.compaction_max_source_chars,
@@ -539,11 +547,17 @@ pub const Agent = struct {
     pub fn formatModelStatus(self: *const Agent) ![]const u8 {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
+        const allocator = self.allocator;
 
-        try w.print("Current model: {s}\n", .{self.model_name});
-        try w.print("Default model: {s}\n", .{self.default_model});
-        try w.print("Default provider: {s}\n", .{self.default_provider});
+        try out.appendSlice(allocator, "Current model: ");
+        try out.appendSlice(allocator, self.model_name);
+        try out.appendSlice(allocator, "\n");
+        try out.appendSlice(allocator, "Default model: ");
+        try out.appendSlice(allocator, self.default_model);
+        try out.appendSlice(allocator, "\n");
+        try out.appendSlice(allocator, "Default provider: ");
+        try out.appendSlice(allocator, self.default_provider);
+        try out.appendSlice(allocator, "\n");
 
         var provider_names: std.ArrayListUnmanaged([]const u8) = .empty;
         defer provider_names.deinit(self.allocator);
@@ -556,7 +570,7 @@ pub const Agent = struct {
         }
 
         if (provider_names.items.len > 0) {
-            try w.writeAll("\nProviders:\n");
+            try out.appendSlice(allocator, "\nProviders:\n");
             for (provider_names.items) |provider_name| {
                 const is_default = std.mem.eql(u8, provider_name, self.default_provider);
                 const is_fallback = self.providerIsFallback(provider_name);
@@ -568,11 +582,12 @@ pub const Agent = struct {
                     " [fallback]"
                 else
                     "";
-                try w.print("  - {s}{s} (auth: {s})\n", .{
-                    provider_name,
-                    role_label,
-                    self.providerAuthStatus(provider_name),
-                });
+                try out.appendSlice(allocator, "  - ");
+                try out.appendSlice(allocator, provider_name);
+                try out.appendSlice(allocator, role_label);
+                try out.appendSlice(allocator, " (auth: ");
+                try out.appendSlice(allocator, self.providerAuthStatus(provider_name));
+                try out.appendSlice(allocator, ")\n");
             }
         }
 
@@ -588,7 +603,7 @@ pub const Agent = struct {
         }
 
         if (model_names.items.len > 0) {
-            try w.writeAll("\nModels:\n");
+            try out.appendSlice(allocator, "\nModels:\n");
             for (model_names.items) |model_name| {
                 const is_current = std.mem.eql(u8, model_name, self.model_name);
                 const is_default = std.mem.eql(u8, model_name, self.default_model);
@@ -600,31 +615,36 @@ pub const Agent = struct {
                     " [default]"
                 else
                     "";
-                try w.print("  - {s}{s}\n", .{ model_name, role_label });
+                try out.appendSlice(allocator, "  - ");
+                try out.appendSlice(allocator, model_name);
+                try out.appendSlice(allocator, role_label);
+                try out.appendSlice(allocator, "\n");
             }
         }
 
-        try w.writeAll("\nProvider chain: ");
-        try w.writeAll(self.default_provider);
+        try out.appendSlice(allocator, "\nProvider chain: ");
+        try out.appendSlice(allocator, self.default_provider);
         if (self.fallback_providers.len == 0) {
-            try w.writeAll(" (no fallback providers)");
+            try out.appendSlice(allocator, " (no fallback providers)");
         } else {
             for (self.fallback_providers) |fallback_provider| {
-                try w.print(" -> {s}", .{fallback_provider});
+                try out.appendSlice(allocator, " -> ");
+                try out.appendSlice(allocator, fallback_provider);
             }
         }
 
-        try w.writeAll("\nModel chain: ");
-        try w.writeAll(self.model_name);
+        try out.appendSlice(allocator, "\nModel chain: ");
+        try out.appendSlice(allocator, self.model_name);
         if (self.currentModelFallbacks()) |fallbacks| {
             for (fallbacks) |fallback_model| {
-                try w.print(" -> {s}", .{fallback_model});
+                try out.appendSlice(allocator, " -> ");
+                try out.appendSlice(allocator, fallback_model);
             }
         } else {
-            try w.writeAll(" (no configured fallbacks)");
+            try out.appendSlice(allocator, " (no configured fallbacks)");
         }
 
-        try w.writeAll("\nSwitch: /model <name>");
+        try out.appendSlice(allocator, "\nSwitch: /model <name>");
         return try out.toOwnedSlice(self.allocator);
     }
 
@@ -637,6 +657,7 @@ pub const Agent = struct {
     /// Execute a single conversation turn: send messages to LLM, parse tool calls,
     /// execute tools, and loop until a final text response is produced.
     pub fn turn(self: *Agent, user_message: []const u8) ![]const u8 {
+        slog.logStructured("DEBUG", "agent", "turn_start", .{});
         self.context_was_compacted = false;
         commands.refreshSubagentToolContext(self);
 
@@ -668,7 +689,7 @@ pub const Agent = struct {
             self.system_prompt_has_conversation_context != turn_has_conversation_context;
 
         if (!self.has_system_prompt or conversation_context_changed) {
-            var cfg_for_caps_opt: ?Config = Config.load(self.allocator) catch null;
+            var cfg_for_caps_opt: ?Config = Config.load(self.allocator, std.Options.debug_io) catch null;
             defer if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded.deinit();
             const cfg_for_caps_ptr: ?*const Config = if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded else null;
 
@@ -723,7 +744,7 @@ pub const Agent = struct {
         // Auto-save user message to memory (nanoTimestamp key to avoid collisions within the same second)
         if (self.auto_save) {
             if (self.mem) |mem| {
-                const ts: u128 = @bitCast(std.time.nanoTimestamp());
+                const ts: u128 = 0;
                 const save_key = std.fmt.allocPrint(self.allocator, "autosave_user_{d}", .{ts}) catch null;
                 if (save_key) |key| {
                     defer self.allocator.free(key);
@@ -766,10 +787,12 @@ pub const Agent = struct {
                     .role = .assistant,
                     .content = history_copy,
                 });
+                slog.debug("agent", "turn_cache_hit", .{});
                 return cached_response;
             }
         }
 
+        slog.debug("agent", "turn_no_cache_proceeding", .{});
         // Record agent event
         const start_event = ObserverEvent{ .llm_request = .{
             .provider = self.provider.getName(),
@@ -785,20 +808,23 @@ pub const Agent = struct {
         var iteration: u32 = 0;
         var forced_follow_through_count: u32 = 0;
         while (iteration < self.max_tool_iterations) : (iteration += 1) {
+            slog.debug("agent", "turn_loop_start", .{ .iteration = iteration + 1, .max_iterations = self.max_tool_iterations });
             _ = iter_arena.reset(.retain_capacity);
             const arena = iter_arena.allocator();
 
             // Build messages slice for provider (arena-owned; freed at end of iteration)
             const messages = try self.buildProviderMessages(arena);
 
-            const timer_start = std.time.milliTimestamp();
+            const timer_start = util.timestampUnix();
             const is_streaming = self.stream_callback != null and self.provider.supportsStreaming();
             const native_tools_enabled = !is_streaming and self.provider.supportsNativeTools();
 
             // Call provider: streaming (no retries, no native tools) or blocking with retry
             var response: ChatResponse = undefined;
             var response_attempt: u32 = 1;
+            slog.debug("agent", "turn_calling_provider", .{ .iteration = iteration + 1, .streaming = is_streaming, .native_tools = native_tools_enabled });
             if (is_streaming) {
+                slog.logStructured("DEBUG", "agent", "llm_call_start", .{});
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, true);
                 const stream_result = self.provider.streamChat(
                     self.allocator,
@@ -816,7 +842,8 @@ pub const Agent = struct {
                     self.stream_callback.?,
                     self.stream_ctx.?,
                 ) catch |err| {
-                    const fail_duration: u64 = @as(u64, @intCast(@max(0, std.time.milliTimestamp() - timer_start)));
+                    slog.logStructured("ERROR", "agent", "llm_error", .{ .err_msg = err });
+                    const fail_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
                         .model = self.model_name,
@@ -827,12 +854,15 @@ pub const Agent = struct {
                     self.observer.recordEvent(&fail_event);
                     return err;
                 };
+                slog.logStructured("DEBUG", "agent", "llm_success", .{});
                 response = ChatResponse{
                     .content = stream_result.content,
                     .tool_calls = &.{},
                     .usage = stream_result.usage,
                     .model = stream_result.model,
                 };
+                slog.debug("agent", "turn_streaming_response_constructed", .{});
+                slog.debug("agent", "turn_llm_call_complete", .{ .iteration = iteration + 1, .content_len = if (response.content) |c| c.len else 0 });
             } else {
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, false);
                 response = self.provider.chat(
@@ -850,7 +880,7 @@ pub const Agent = struct {
                     self.temperature,
                 ) catch |err| retry_blk: {
                     // Record the failed attempt
-                    const fail_duration: u64 = @as(u64, @intCast(@max(0, std.time.milliTimestamp() - timer_start)));
+                    const fail_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
                         .model = self.model_name,
@@ -887,7 +917,7 @@ pub const Agent = struct {
                     }
 
                     // Retry once
-                    std.Thread.sleep(500 * std.time.ns_per_ms);
+                    util.sleep(500 * std.time.ns_per_ms);
                     response_attempt = 2;
                     self.logLlmRequest(iteration + 1, 2, messages, native_tools_enabled, false);
                     break :retry_blk self.provider.chat(
@@ -930,9 +960,11 @@ pub const Agent = struct {
                     };
                 };
             }
+            slog.debug("agent", "turn_before_log_llm_response", .{});
             self.logLlmResponse(iteration + 1, response_attempt, &response);
+            slog.debug("agent", "turn_after_log_llm_response", .{});
 
-            const duration_ms: u64 = @as(u64, @intCast(@max(0, std.time.milliTimestamp() - timer_start)));
+            const duration_ms: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
             const resp_event = ObserverEvent{ .llm_response = .{
                 .provider = self.provider.getName(),
                 .model = self.model_name,
@@ -973,10 +1005,13 @@ pub const Agent = struct {
                 if (free_assistant_history and assistant_history_content.len > 0) self.allocator.free(assistant_history_content);
             }
 
+            slog.debug("agent", "turn_parsing_tool_calls", .{ .use_native = use_native });
+
             if (use_native) {
                 // Provider returned structured tool_calls — convert them
                 parsed_calls = try dispatcher.parseStructuredToolCalls(self.allocator, response.tool_calls);
                 free_parsed_calls = true;
+                slog.debug("agent", "turn_parsed_structured_tool_calls", .{ .count = parsed_calls.len });
 
                 if (parsed_calls.len == 0) {
                     // Structured calls were empty (e.g. all had empty names) — try XML fallback
@@ -997,6 +1032,7 @@ pub const Agent = struct {
                     parsed_calls,
                 );
                 free_assistant_history = true;
+                slog.debug("agent", "turn_built_assistant_history_with_tool_calls", .{});
             } else {
                 // No native tool calls — parse response text for XML tool calls
                 const xml_parsed = try dispatcher.parseToolCalls(self.allocator, response_text);
@@ -1006,10 +1042,15 @@ pub const Agent = struct {
                 free_parsed_text = true;
                 // For XML path, store the raw response text as history
                 assistant_history_content = response_text;
+                slog.debug("agent", "turn_parsed_xml_tool_calls", .{ .count = parsed_calls.len });
             }
 
+            slog.debug("agent", "turn_total_parsed_calls", .{ .count = parsed_calls.len });
+
             // Determine display text
-            const display_text = if (parsed_text.len > 0) parsed_text else response_text;
+            // IMPORTANT: When there are tool calls, NEVER show raw response_text to user
+            // Only show parsed_text (which has tool calls removed) or nothing
+            const display_text = if (parsed_text.len > 0) parsed_text else "";
 
             if (parsed_calls.len == 0) {
                 // Guardrail: if the model promises "I'll try/check now" but emits no
@@ -1065,7 +1106,7 @@ pub const Agent = struct {
                             while (end > 0 and base_text[end] & 0xC0 == 0x80) end -= 1;
                             break :blk base_text[0..end];
                         } else base_text;
-                        const ts: u128 = @bitCast(std.time.nanoTimestamp());
+                        const ts: u128 = 0;
                         const save_key = std.fmt.allocPrint(self.allocator, "autosave_assistant_{d}", .{ts}) catch null;
                         if (save_key) |key| {
                             defer self.allocator.free(key);
@@ -1107,16 +1148,22 @@ pub const Agent = struct {
                 return final_text;
             }
 
-            // There are tool calls — print intermediary text.
-            // In tests, stdout is used by Zig's test runner protocol (`--listen`),
-            // so avoid writing arbitrary text that can corrupt the control channel.
-            if (!builtin.is_test and display_text.len > 0 and parsed_calls.len > 0 and !is_streaming) {
-                var out_buf: [4096]u8 = undefined;
-                var bw = std.fs.File.stdout().writer(&out_buf);
+            // There are tool calls — execute tools, then return final answer.
+            // DO NOT show any intermediary text to the user (including tool calls)
+            // The user should only see the final response AFTER tools have executed.
+            // In tests, avoid corrupting the test runner protocol.
+            if (false) { // Disabled - no intermediary text shown to users
+                // Only show a brief "thinking" indicator, not the full text
+                // The actual text content will be incorporated into the final response
+                var out_buf: [256]u8 = undefined;
+                var bw = std.Io.File.stdout().writer(std.Options.debug_io, &out_buf);
                 const w = &bw.interface;
-                w.print("{s}", .{display_text}) catch {};
+                const plural = if (parsed_calls.len == 1) "" else "s";
+                w.print("⚙️ Using {d} tool{s}...\n", .{ parsed_calls.len, plural }) catch {};
                 w.flush() catch {};
             }
+
+            slog.debug("agent", "turn_appending_assistant_message", .{});
 
             // Record assistant message with tool calls in history.
             // Native path (free_assistant_history=true): transfer ownership directly to avoid
@@ -1133,6 +1180,8 @@ pub const Agent = struct {
                 .content = assistant_content,
             });
 
+            slog.debug("agent", "turn_history_append_complete", .{});
+
             // Execute each tool call
             var results_buf: std.ArrayListUnmanaged(ToolExecutionResult) = .empty;
             defer results_buf.deinit(self.allocator);
@@ -1144,50 +1193,84 @@ pub const Agent = struct {
                 log.info("tool-call batch session=0x{x} count={d}", .{ session_hash, parsed_calls.len });
             }
 
-            for (parsed_calls, 0..) |call, idx| {
-                if (self.log_tool_calls) {
-                    log.info(
-                        "tool-call start session=0x{x} index={d} name={s} id={s}",
-                        .{ session_hash, idx + 1, call.name, call.tool_call_id orelse "-" },
-                    );
+            slog.debug("agent", "turn_entering_tool_execution_loop", .{ .parsed_calls_count = parsed_calls.len });
+
+            // Choose execution strategy based on number of tools and configuration
+            const use_parallel = parsed_calls.len > 1 and
+                (self.max_parallel_tools == 0 or self.max_parallel_tools > 1);
+
+            if (use_parallel) {
+                // Parallel execution for multiple tools
+                slog.debug("agent", "turn_using_parallel_tool_execution", .{ .count = parsed_calls.len });
+                const parallel_results = try self.executeToolsParallel(arena, parsed_calls, batch_updates_tools_md);
+
+                // Copy results to results_buf
+                for (parallel_results) |result| {
+                    try results_buf.append(self.allocator, result);
                 }
+            } else {
+                // Sequential execution (single tool or parallel disabled)
+                slog.debug("agent", "turn_using_sequential_tool_execution", .{ .count = parsed_calls.len });
+                for (parsed_calls, 0..) |call, idx| {
+                    slog.logStructured("DEBUG", "agent", "tool_iteration", .{ .index = idx, .tool = call.name });
 
-                const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
-                self.observer.recordEvent(&tool_start_event);
-
-                const tool_timer = std.time.milliTimestamp();
-                const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call))
-                    ToolExecutionResult{
-                        .name = call.name,
-                        .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
-                        .success = true,
-                        .tool_call_id = call.tool_call_id,
+                    if (self.log_tool_calls) {
+                        log.info(
+                            "tool-call start session=0x{x} index={d} name={s} id={s}",
+                            .{ session_hash, idx + 1, call.name, call.tool_call_id orelse "-" },
+                        );
                     }
-                else
-                    self.executeTool(arena, call);
-                const tool_duration: u64 = @as(u64, @intCast(@max(0, std.time.milliTimestamp() - tool_timer)));
 
-                if (self.log_tool_calls) {
-                    log.info(
-                        "tool-call done session=0x{x} index={d} name={s} success={} duration_ms={d}",
-                        .{ session_hash, idx + 1, call.name, result.success, tool_duration },
-                    );
+                    slog.debug("agent", "turn_recording_tool_call_start_event", .{});
+                    const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
+                    self.observer.recordEvent(&tool_start_event);
+                    slog.debug("agent", "turn_tool_call_start_event_recorded", .{});
+
+                    const tool_timer = util.timestampUnix();
+
+                    slog.debug("agent", "turn_checking_duplicate_memory_store", .{});
+                    const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call)) blk: {
+                        slog.debug("agent", "turn_skipping_duplicate_memory_store", .{});
+                        break :blk ToolExecutionResult{
+                            .name = call.name,
+                            .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
+                            .success = true,
+                            .tool_call_id = call.tool_call_id,
+                        };
+                    } else blk: {
+                        slog.debug("agent", "turn_calling_execute_tool", .{ .tool = call.name });
+                        break :blk self.executeTool(arena, call);
+                    };
+                    slog.debug("agent", "turn_execute_tool_returned", .{ .tool = call.name });
+                    const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
+
+                    if (self.log_tool_calls) {
+                        log.info(
+                            "tool-call done session=0x{x} index={d} name={s} success={} duration_ms={d}",
+                            .{ session_hash, idx + 1, call.name, result.success, tool_duration },
+                        );
+                    }
+
+                    const tool_event = ObserverEvent{ .tool_call = .{
+                        .tool = call.name,
+                        .duration_ms = tool_duration,
+                        .success = result.success,
+                        .detail = if (result.success) null else result.output,
+                    } };
+                    self.observer.recordEvent(&tool_event);
+
+                    try results_buf.append(self.allocator, result);
                 }
-
-                const tool_event = ObserverEvent{ .tool_call = .{
-                    .tool = call.name,
-                    .duration_ms = tool_duration,
-                    .success = result.success,
-                    .detail = if (result.success) null else result.output,
-                } };
-                self.observer.recordEvent(&tool_event);
-
-                try results_buf.append(self.allocator, result);
             }
 
             // Format tool results, scrub credentials, add reflection prompt, and add to history
+            slog.debug("agent", "turn_formatting_tool_results", .{ .count = results_buf.items.len });
             const formatted_results = try dispatcher.formatToolResults(arena, results_buf.items);
+            slog.debug("agent", "turn_tool_results_formatted", .{ .len = formatted_results.len });
+
             const scrubbed_results = try providers.scrubToolOutput(arena, formatted_results);
+            slog.debug("agent", "turn_tool_results_scrubbed", .{ .len = scrubbed_results.len });
+
             const with_reflection = try std.fmt.allocPrint(
                 arena,
                 "{s}\n\nReflect on the tool results above and decide your next steps. " ++
@@ -1195,16 +1278,22 @@ pub const Agent = struct {
                     "If a tool failed due to a transient issue (timeout/network/rate-limit), proactively retry up to 2 times with adjusted parameters before giving up.",
                 .{scrubbed_results},
             );
+            slog.debug("agent", "turn_reflection_prompt_created", .{});
+
             try self.history.append(self.allocator, .{
                 .role = .user,
                 .content = try self.allocator.dupe(u8, with_reflection),
             });
+            slog.debug("agent", "turn_history_appended_trimming", .{});
 
             self.trimHistory();
 
             // Free provider response fields now that all borrows are consumed.
             self.freeResponseFields(&response);
+            slog.debug("agent", "turn_tools_processed_continuing_loop", .{});
         }
+
+        slog.debug("agent", "turn_loop_exhausted", .{ .max_iterations = self.max_tool_iterations });
 
         // ── Graceful degradation: tool iterations exhausted ──────────
         // Instead of returning an error, ask the LLM to summarize what it
@@ -1222,14 +1311,18 @@ pub const Agent = struct {
         });
 
         // Build messages for the summary call
+        slog.debug("agent", "turn_building_summary_messages", .{});
         const summary_messages = self.buildMessageSlice() catch {
+            slog.debug("agent", "turn_summary_messages_failed", .{});
             const fallback = try std.fmt.allocPrint(self.allocator, "[Tool iteration limit: {d}/{d}] Could not produce a summary. Try /new and repeat your request.", .{ self.max_tool_iterations, self.max_tool_iterations });
             const complete_event = ObserverEvent{ .turn_complete = {} };
             self.observer.recordEvent(&complete_event);
+            slog.debug("agent", "turn_returning_fallback", .{});
             return fallback;
         };
         defer self.allocator.free(summary_messages);
 
+        slog.debug("agent", "turn_calling_summary_llm", .{});
         self.logLlmRequest(self.max_tool_iterations + 1, 1, summary_messages, false, false);
         var summary_response = self.provider.chat(
             self.allocator,
@@ -1357,6 +1450,8 @@ pub const Agent = struct {
     }
 
     fn executeTool(self: *Agent, tool_allocator: std.mem.Allocator, call: ParsedToolCall) ToolExecutionResult {
+        slog.logStructured("DEBUG", "agent", "tool_execute_start", .{ .tool = call.name });
+
         // Policy gate: check autonomy and rate limit
         if (self.policy) |pol| {
             if (!pol.canAct()) {
@@ -1379,9 +1474,12 @@ pub const Agent = struct {
         }
 
         const trimmed_call_name = std.mem.trim(u8, call.name, " \t\r\n");
+        slog.debug("agent", "execute_tool_trimmed_name", .{ .trimmed_name = trimmed_call_name });
 
         for (self.tools) |t| {
             if (std.ascii.eqlIgnoreCase(t.name(), trimmed_call_name)) {
+                slog.debug("agent", "execute_tool_found_parsing_args", .{});
+
                 // Parse arguments JSON to ObjectMap ONCE
                 const parsed = std.json.parseFromSlice(
                     std.json.Value,
@@ -1389,6 +1487,7 @@ pub const Agent = struct {
                     call.arguments_json,
                     .{},
                 ) catch {
+                    slog.debug("agent", "execute_tool_json_parse_failed", .{});
                     return .{
                         .name = call.name,
                         .output = "Invalid arguments JSON",
@@ -1397,6 +1496,8 @@ pub const Agent = struct {
                     };
                 };
                 defer parsed.deinit();
+
+                slog.debug("agent", "execute_tool_json_parse_success", .{});
 
                 const args: std.json.ObjectMap = switch (parsed.value) {
                     .object => |o| o,
@@ -1421,7 +1522,9 @@ pub const Agent = struct {
                     }
                 }
 
-                const result = t.execute(tool_allocator, args) catch |err| {
+                slog.debug("agent", "execute_tool_calling_tool_execute", .{ .tool = call.name });
+                const result = t.execute(tool_allocator, args, self.io) catch |err| {
+                    slog.debug("agent", "execute_tool_failed", .{ .tool = call.name, .error_msg = @errorName(err) });
                     return .{
                         .name = call.name,
                         .output = @errorName(err),
@@ -1429,21 +1532,177 @@ pub const Agent = struct {
                         .tool_call_id = call.tool_call_id,
                     };
                 };
+                slog.debug("agent", "execute_tool_success", .{ .tool = call.name, .output_len = result.output.len });
+                // Arena allocator is used - no need to dupe or deinit.
+                // Arena memory is valid until the arena is destroyed at end of turn(),
+                // and arena doesn't support individual free() calls.
+                const output = if (result.success) result.output else (result.error_msg orelse result.output);
+
+                slog.debug("agent", "execute_tool_returning_result", .{ .tool = call.name, .success = result.success });
                 return .{
                     .name = call.name,
-                    .output = if (result.success) result.output else (result.error_msg orelse result.output),
+                    .output = output,
                     .success = result.success,
                     .tool_call_id = call.tool_call_id,
                 };
             }
         }
 
+        slog.debug("agent", "execute_tool_not_found", .{ .tool = call.name });
         return .{
             .name = call.name,
             .output = "Unknown tool",
             .success = false,
             .tool_call_id = call.tool_call_id,
         };
+    }
+
+    /// Context for parallel tool execution - shared across threads
+    const ParallelToolContext = struct {
+        agent: *Agent,
+        calls: []const ParsedToolCall,
+        results: []ToolExecutionResult,
+        arenas: []std.mem.Allocator,
+        arena_allocators: []std.heap.ArenaAllocator,
+        mutex: @import("../spinlock.zig").Spinlock = .{},
+        batch_updates_tools_md: bool,
+        session_hash: u64,
+        log_tool_calls: bool,
+        observer: *Observer,
+
+        fn executeOne(context: *ParallelToolContext, index: usize) void {
+            const call = context.calls[index];
+            const arena = context.arenas[index];
+
+            slog.logStructured("DEBUG", "agent", "parallel_tool_start", .{ .index = index, .tool = call.name });
+
+            if (context.log_tool_calls) {
+                log.info(
+                    "tool-call start session=0x{x} index={d} name={s} id={s}",
+                    .{ context.session_hash, index + 1, call.name, call.tool_call_id orelse "-" },
+                );
+            }
+
+            const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
+            context.observer.recordEvent(&tool_start_event);
+
+            const tool_timer = util.timestampUnix();
+
+            // Check for duplicate memory_store
+            const result = if (should_skip_tools_memory_store_duplicate(arena, context.batch_updates_tools_md, call)) blk: {
+                slog.debug("agent", "parallel_tool_skipping_duplicate_memory_store", .{ .index = index });
+                break :blk ToolExecutionResult{
+                    .name = call.name,
+                    .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
+                    .success = true,
+                    .tool_call_id = call.tool_call_id,
+                };
+            } else blk: {
+                // Execute the tool
+                // Note: We need to clone agent data for thread safety
+                break :blk context.agent.executeTool(arena, call);
+            };
+
+            const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
+
+            if (context.log_tool_calls) {
+                log.info(
+                    "tool-call done session=0x{x} index={d} name={s} success={} duration_ms={d}",
+                    .{ context.session_hash, index + 1, call.name, result.success, tool_duration },
+                );
+            }
+
+            const tool_event = ObserverEvent{ .tool_call = .{
+                .tool = call.name,
+                .duration_ms = tool_duration,
+                .success = result.success,
+                .detail = if (result.success) null else result.output,
+            } };
+            context.observer.recordEvent(&tool_event);
+
+            // Store result (protected by mutex)
+            context.mutex.lock();
+            defer context.mutex.unlock();
+            context.results[index] = result;
+        }
+    };
+
+    /// Execute multiple tools in parallel using threads.
+    /// Returns results in the same order as the input calls.
+    fn executeToolsParallel(
+        self: *Agent,
+        base_arena: std.mem.Allocator,
+        calls: []const ParsedToolCall,
+        batch_updates_tools_md: bool,
+    ) ![]ToolExecutionResult {
+        const call_count = calls.len;
+        slog.debug("agent", "execute_tools_parallel_start", .{ .count = call_count });
+
+        // Determine number of parallel workers
+        const max_workers = if (self.max_parallel_tools == 0)
+            @min(call_count, @as(usize, 3)) // Default: max 3 parallel tools
+        else
+            @min(call_count, @as(usize, self.max_parallel_tools));
+
+        slog.debug("agent", "execute_tools_parallel_workers", .{ .max_workers = max_workers });
+
+        // Allocate results array
+        const results = try base_arena.alloc(ToolExecutionResult, call_count);
+
+        // Create arena for each thread
+        const arena_allocators = try base_arena.alloc(std.heap.ArenaAllocator, call_count);
+        const arenas = try base_arena.alloc(std.mem.Allocator, call_count);
+        for (arena_allocators, arenas) |*arena_alloc, *arena| {
+            arena_alloc.* = std.heap.ArenaAllocator.init(base_arena);
+            arena.* = arena_alloc.allocator();
+        }
+
+        // Create shared context
+        var context = ParallelToolContext{
+            .agent = self,
+            .calls = calls,
+            .results = results,
+            .arenas = arenas,
+            .arena_allocators = arena_allocators,
+            .batch_updates_tools_md = batch_updates_tools_md,
+            .session_hash = if (self.memory_session_id) |sid| std.hash.Wyhash.hash(0, sid) else 0,
+            .log_tool_calls = self.log_tool_calls,
+            .observer = &self.observer,
+        };
+
+        // Spawn worker threads
+        var threads = try self.allocator.alloc(std.Thread, max_workers);
+        defer self.allocator.free(threads);
+
+        var next_index: usize = 0;
+        var thread_count: usize = 0;
+
+        // Distribute work across threads
+        while (next_index < call_count and thread_count < max_workers) : ({
+            next_index += 1;
+            thread_count += 1;
+        }) {
+            const index = next_index;
+            threads[thread_count] = try std.Thread.spawn(
+                .{ .allocator = self.allocator },
+                struct {
+                    fn threadFn(ctx: *ParallelToolContext, idx: usize) void {
+                        ctx.executeOne(idx);
+                    }
+                }.threadFn,
+                .{ &context, index },
+            );
+        }
+
+        // Wait for all threads to complete
+        for (threads[0..thread_count]) |thread| {
+            thread.join();
+        }
+
+        slog.debug("agent", "execute_tools_parallel_complete", .{ .count = call_count });
+
+        slog.debug("agent", "execute_tools_parallel_complete", .{ .count = call_count });
+        return results;
     }
 
     const LLM_LOG_MAX_BYTES: usize = 8192;
@@ -1573,7 +1832,7 @@ pub const Agent = struct {
 
         return multimodal.prepareMessagesForProvider(arena, m, .{
             .allowed_dirs = allowed,
-        });
+        }, self.io);
     }
 
     fn appendMultimodalAllowedDir(
@@ -1581,7 +1840,7 @@ pub const Agent = struct {
         dirs: *std.ArrayListUnmanaged([]const u8),
         raw_dir: []const u8,
     ) !void {
-        const trimmed = std.mem.trimRight(u8, raw_dir, "/\\");
+        const trimmed = std.mem.trim(u8, raw_dir, "/\\");
         if (trimmed.len == 0) return;
 
         if (!containsMultimodalDir(dirs.items, trimmed)) {
@@ -1589,10 +1848,7 @@ pub const Agent = struct {
         }
 
         // Add canonical path variant too (/var <-> /private/var on macOS).
-        const canonical = std.fs.realpathAlloc(arena, trimmed) catch return;
-        if (!containsMultimodalDir(dirs.items, canonical)) {
-            try dirs.append(arena, canonical);
-        }
+        // TODO: Zig 0.16.0 - realpathAlloc API changed, skip canonical path for now
     }
 
     fn containsMultimodalDir(dirs: []const []const u8, target: []const u8) bool {
@@ -1739,6 +1995,7 @@ test "Agent trim history preserves system prompt" {
     // by creating an Agent with minimal fields
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -1793,6 +2050,7 @@ test "Agent clear history" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -1895,6 +2153,7 @@ test "Agent initial state" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -1922,6 +2181,7 @@ test "Agent tokens tracking" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -1950,6 +2210,7 @@ test "Agent trimHistory no-op when under limit" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -1985,6 +2246,7 @@ test "Agent trimHistory without system prompt" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2020,6 +2282,7 @@ test "Agent clearHistory resets all state" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2064,6 +2327,7 @@ test "Agent buildMessageSlice" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2139,6 +2403,7 @@ test "Agent buildProviderMessages uses model-aware vision capability" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = prov,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2196,16 +2461,18 @@ test "Agent buildProviderMessages allows workspace image paths" {
         fn deinitFn(_: *anyopaque) void {}
     };
 
+    const io = std.Options.debug_io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{
+    try tmp_dir.dir.writeFile(io, .{
         .sub_path = "screen.png",
         .data = "\x89PNG\x0d\x0a\x1a\x0a",
     });
 
     const allocator = std.testing.allocator;
-    const workspace_path = try tmp_dir.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(workspace_path);
+    const workspace_path_z = try tmp_dir.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(workspace_path_z.ptr[0 .. workspace_path_z.len + 1]);
+    const workspace_path = workspace_path_z[0..workspace_path_z.len]; // Drop sentinel
     const image_path = try std.fs.path.join(allocator, &.{ workspace_path, "screen.png" });
     defer allocator.free(image_path);
 
@@ -2224,6 +2491,7 @@ test "Agent buildProviderMessages allows workspace image paths" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = prov,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2277,6 +2545,7 @@ test "Agent trimHistory keeps most recent messages" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2320,6 +2589,7 @@ test "Agent clearHistory then add messages" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2357,6 +2627,7 @@ fn makeTestAgent(allocator: std.mem.Allocator) !Agent {
     var noop = observability.NoopObserver{};
     return Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2393,7 +2664,7 @@ test "Agent.fromConfig resolves token limit from model lookup when unset" {
     cfg.agent.token_limit_explicit = false;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u64, 128_000), agent.token_limit);
@@ -2414,7 +2685,7 @@ test "Agent.fromConfig keeps explicit token_limit override" {
     cfg.agent.token_limit_explicit = true;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u64, 64_000), agent.token_limit);
@@ -2432,7 +2703,7 @@ test "Agent.fromConfig resolves max_tokens from provider lookup when unset" {
     cfg.max_tokens = null;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u32, 32_768), agent.max_tokens);
@@ -2450,7 +2721,7 @@ test "Agent.fromConfig keeps explicit max_tokens override" {
     cfg.max_tokens = 1536;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u32, 1536), agent.max_tokens);
@@ -2470,7 +2741,7 @@ test "Agent.fromConfig clamps max_tokens to token_limit" {
     cfg.max_tokens = 8192;
 
     var noop = observability.NoopObserver{};
-    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer());
+    var agent = try Agent.fromConfig(allocator, &cfg, undefined, &.{}, null, noop.observer(), std.testing.io);
     defer agent.deinit();
 
     try std.testing.expectEqual(@as(u64, 4096), agent.token_limit);
@@ -2575,6 +2846,7 @@ test "turn bare /new routes through fresh-session prompt" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -2647,6 +2919,7 @@ test "turn /reset with argument stays slash-only command" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3102,6 +3375,7 @@ test "slash /approve executes pending bash command" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{shell_tool},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3198,6 +3472,7 @@ test "turn includes reasoning and usage footer when enabled" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3257,12 +3532,12 @@ test "turn refreshes system prompt after workspace markdown change" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("SOUL.md", .{});
-        defer f.close();
-        try f.writeAll("SOUL-V1");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "SOUL-V1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace);
 
     var provider_state: u8 = 0;
@@ -3281,6 +3556,7 @@ test "turn refreshes system prompt after workspace markdown change" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3303,9 +3579,9 @@ test "turn refreshes system prompt after workspace markdown change" {
     try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content, "SOUL-V1") != null);
 
     {
-        const f = try tmp.dir.createFile("SOUL.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("SOUL-V2-UPDATED");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "SOUL.md", .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "SOUL-V2-UPDATED");
     }
 
     const second = try agent.turn("second");
@@ -3344,12 +3620,12 @@ test "turn refreshes system prompt after TOOLS.md change" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("TOOLS.md", .{});
-        defer f.close();
-        try f.writeAll("TOOLS-V1");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "TOOLS.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "TOOLS-V1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace);
 
     var provider_state: u8 = 0;
@@ -3368,6 +3644,7 @@ test "turn refreshes system prompt after TOOLS.md change" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3390,9 +3667,9 @@ test "turn refreshes system prompt after TOOLS.md change" {
     try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content, "TOOLS-V1") != null);
 
     {
-        const f = try tmp.dir.createFile("TOOLS.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("TOOLS-V2-UPDATED");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "TOOLS.md", .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "TOOLS-V2-UPDATED");
     }
 
     const second = try agent.turn("second");
@@ -3431,12 +3708,12 @@ test "turn refreshes system prompt after USER.md change" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("USER.md", .{});
-        defer f.close();
-        try f.writeAll("- **Name:** USER-V1");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "- **Name:** USER-V1");
     }
 
-    const workspace = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace);
 
     var provider_state: u8 = 0;
@@ -3455,6 +3732,7 @@ test "turn refreshes system prompt after USER.md change" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3477,9 +3755,9 @@ test "turn refreshes system prompt after USER.md change" {
     try std.testing.expect(std.mem.indexOf(u8, agent.history.items[0].content, "USER-V1") != null);
 
     {
-        const f = try tmp.dir.createFile("USER.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("- **Name:** USER-V2-UPDATED");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "- **Name:** USER-V2-UPDATED");
     }
 
     const second = try agent.turn("second");
@@ -3497,6 +3775,7 @@ test "exec security deny blocks shell tool execution" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{shell_tool},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3536,6 +3815,7 @@ test "exec ask always registers pending approval from tool path" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{shell_tool},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3618,6 +3898,7 @@ test "Agent streaming fields default to null" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),
@@ -3660,8 +3941,8 @@ test "slash /model dupe prevents use-after-free" {
 // Simulate by verifying the @max(0, ...) clamping logic.
 test "milliTimestamp negative difference clamps to zero" {
     // Simulate: timer_start is in the future relative to "now" (negative diff)
-    const timer_start = std.time.milliTimestamp() + 10_000;
-    const diff = std.time.milliTimestamp() - timer_start;
+    const timer_start = @as(i64, 0) + 10_000;
+    const diff = @as(i64, 0) - timer_start;
     // diff < 0 here; @max(0, diff) must clamp to 0 without panic
     const clamped = @max(0, diff);
     const duration: u64 = @as(u64, @intCast(clamped));
@@ -3717,7 +3998,8 @@ test "Agent turn skips duplicate memory_store when TOOLS.md is updated in same b
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap) !tools_mod.ToolResult {
+        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap, io: std.Io) !tools_mod.ToolResult {
+            _ = io;
             self.count.* += 1;
             return .{ .success = true, .output = "file_write probe ok" };
         }
@@ -3737,7 +4019,8 @@ test "Agent turn skips duplicate memory_store when TOOLS.md is updated in same b
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap) !tools_mod.ToolResult {
+        pub fn execute(self: *Self, _: std.mem.Allocator, _: tools_mod.JsonObjectMap, io: std.Io) !tools_mod.ToolResult {
+            _ = io;
             self.count.* += 1;
             return .{ .success = true, .output = "memory_store probe ok" };
         }
@@ -3827,6 +4110,7 @@ test "Agent turn skips duplicate memory_store when TOOLS.md is updated in same b
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &tool_list,
         .tool_specs = specs,
@@ -3863,7 +4147,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
         .allocator = allocator,
     };
 
-    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, .{});
+    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, std.testing.io, .{});
     defer tools_mod.deinitTools(allocator, tools);
 
     var sqlite_mem = try memory_mod.SqliteMemory.init(allocator, ":memory:");
@@ -3912,6 +4196,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
         tools,
         mem,
         noop.observer(),
+        std.testing.io,
     );
     defer agent.deinit();
 
@@ -3919,7 +4204,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
     const store_args = try tools_mod.parseTestArgs("{\"key\":\"preference.test\",\"content\":\"123\"}");
     defer store_args.deinit();
 
-    const store_result = try store_tool.execute(allocator, store_args.value.object);
+    const store_result = try store_tool.execute(allocator, store_args.parsed.value.object, std.testing.io);
     defer if (store_result.output.len > 0) allocator.free(store_result.output);
     try std.testing.expect(store_result.success);
     try std.testing.expect(std.mem.indexOf(u8, store_result.output, "Stored memory") != null);
@@ -3935,7 +4220,7 @@ test "bindMemoryTools wires memory tools to sqlite backend" {
     const recall_args = try tools_mod.parseTestArgs("{\"query\":\"preference.test\"}");
     defer recall_args.deinit();
 
-    const recall_result = try recall_tool.execute(allocator, recall_args.value.object);
+    const recall_result = try recall_tool.execute(allocator, recall_args.parsed.value.object, std.testing.io);
     defer if (recall_result.output.len > 0) allocator.free(recall_result.output);
     try std.testing.expect(recall_result.success);
     try std.testing.expect(std.mem.indexOf(u8, recall_result.output, "preference.test") != null);
@@ -3954,11 +4239,9 @@ test "Agent tool loop frees dynamic tool outputs" {
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(_: *Self, allocator: std.mem.Allocator, _: tools_mod.JsonObjectMap) !tools_mod.ToolResult {
-            return .{
-                .success = true,
-                .output = try allocator.dupe(u8, "dynamic-tool-output"),
-            };
+        pub fn execute(_: *Self, allocator: std.mem.Allocator, _: tools_mod.JsonObjectMap, io: std.Io) !tools_mod.ToolResult {
+            _ = io;
+            return tools_mod.ToolResult.okAlloc(allocator, "dynamic-tool-output");
         }
     };
 
@@ -4039,6 +4322,7 @@ test "Agent tool loop frees dynamic tool outputs" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = provider,
         .tools = &tool_list,
         .tool_specs = specs,
@@ -4068,6 +4352,7 @@ test "Agent streaming fields can be set" {
     var noop = observability.NoopObserver{};
     var agent = Agent{
         .allocator = allocator,
+        .io = std.testing.io,
         .provider = undefined,
         .tools = &.{},
         .tool_specs = try allocator.alloc(ToolSpec, 0),

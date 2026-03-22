@@ -20,6 +20,7 @@ const TokenUsage = root.TokenUsage;
 pub const OpenRouterProvider = struct {
     api_key: ?[]const u8,
     allocator: std.mem.Allocator,
+    http_client: std.http.Client,
 
     const BASE_URL = "https://openrouter.ai/api/v1/chat/completions";
     const WARMUP_URL = "https://openrouter.ai/api/v1/auth/key";
@@ -27,9 +28,11 @@ pub const OpenRouterProvider = struct {
     const TITLE = "nullclaw";
 
     pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) OpenRouterProvider {
+        const io = @import("../http_util.zig").getThreadedIo();
         return .{
             .api_key = api_key,
             .allocator = allocator,
+            .http_client = .{ .allocator = allocator, .io = io },
         };
     }
 
@@ -264,7 +267,7 @@ pub const OpenRouterProvider = struct {
         var title_hdr_buf: [128]u8 = undefined;
         const title_hdr = std.fmt.bufPrint(&title_hdr_buf, "X-Title: {s}", .{TITLE}) catch return error.OpenRouterApiError;
 
-        const resp_body = root.curlPost(allocator, BASE_URL, body, &.{ auth_hdr, referer_hdr, title_hdr }) catch return error.OpenRouterApiError;
+        const resp_body = self.httpPost(allocator, BASE_URL, body, &.{ auth_hdr, referer_hdr, title_hdr }, 0) catch return error.OpenRouterApiError;
         defer allocator.free(resp_body);
 
         return parseTextResponse(allocator, resp_body);
@@ -288,7 +291,13 @@ pub const OpenRouterProvider = struct {
         .warmup = warmupImpl,
         .stream_chat = streamChatImpl,
         .supports_streaming = supportsStreamingImpl,
+        .resetConnections = resetConnectionsImpl,
     };
+
+    fn resetConnectionsImpl(ptr: *anyopaque) void {
+        const self: *OpenRouterProvider = @ptrCast(@alignCast(ptr));
+        self.resetConnections();
+    }
 
     fn warmupImpl(ptr: *anyopaque) void {
         const self: *OpenRouterProvider = @ptrCast(@alignCast(ptr));
@@ -318,7 +327,7 @@ pub const OpenRouterProvider = struct {
         var title_hdr_buf: [128]u8 = undefined;
         const title_hdr = std.fmt.bufPrint(&title_hdr_buf, "X-Title: {s}", .{TITLE}) catch return error.OpenRouterApiError;
 
-        const resp_body = root.curlPost(allocator, BASE_URL, body, &.{ auth_hdr, referer_hdr, title_hdr }) catch return error.OpenRouterApiError;
+        const resp_body = self.httpPost(allocator, BASE_URL, body, &.{ auth_hdr, referer_hdr, title_hdr }, 0) catch return error.OpenRouterApiError;
         defer allocator.free(resp_body);
 
         return parseTextResponse(allocator, resp_body);
@@ -346,7 +355,7 @@ pub const OpenRouterProvider = struct {
         var title_hdr_buf: [128]u8 = undefined;
         const title_hdr = std.fmt.bufPrint(&title_hdr_buf, "X-Title: {s}", .{TITLE}) catch return error.OpenRouterApiError;
 
-        const resp_body = root.curlPostTimed(allocator, BASE_URL, body, &.{ auth_hdr, referer_hdr, title_hdr }, request.timeout_secs) catch return error.OpenRouterApiError;
+        const resp_body = self.httpPost(allocator, BASE_URL, body, &.{ auth_hdr, referer_hdr, title_hdr }, request.timeout_secs) catch return error.OpenRouterApiError;
         defer allocator.free(resp_body);
 
         return parseNativeResponse(allocator, resp_body);
@@ -395,7 +404,84 @@ pub const OpenRouterProvider = struct {
         return true;
     }
 
-    fn deinitImpl(_: *anyopaque) void {}
+    fn deinitImpl(ptr: *anyopaque) void {
+        const self: *OpenRouterProvider = @ptrCast(@alignCast(ptr));
+        self.deinit();
+    }
+
+    pub fn deinit(self: *OpenRouterProvider) void {
+        self.http_client.deinit();
+    }
+
+    /// Reset HTTP client connections (recreate client to clear stale connections)
+    pub fn resetConnections(self: *OpenRouterProvider) void {
+        self.http_client.deinit();
+        const io = @import("../http_util.zig").getThreadedIo();
+        self.http_client = .{ .allocator = self.allocator, .io = io };
+    }
+
+    /// Persistent HTTP POST using the provider's HTTP client (connection reuse).
+    pub fn httpPost(self: *OpenRouterProvider, allocator: std.mem.Allocator, url: []const u8, body: []const u8, headers: []const []const u8, timeout_secs: u64) ![]u8 {
+        _ = timeout_secs; // TODO: Add timeout support
+
+        const uri = try std.Uri.parse(url);
+
+        // Build headers array
+        var header_buf: [32]std.http.Header = undefined;
+        var n_headers: usize = 0;
+        header_buf[n_headers] = .{ .name = "content-type", .value = "application/json" };
+        n_headers += 1;
+        for (headers) |header| {
+            if (n_headers >= header_buf.len) break;
+            const colon_idx = std.mem.indexOfScalar(u8, header, ':') orelse continue;
+            const name = header[0..colon_idx];
+            const value = std.mem.trim(u8, header[colon_idx + 1 ..], " \t\r\n");
+            header_buf[n_headers] = .{ .name = name, .value = value };
+            n_headers += 1;
+        }
+        const extra_headers = header_buf[0..n_headers];
+
+        var req = try self.http_client.request(.POST, uri, .{
+            .extra_headers = extra_headers,
+        });
+        defer req.deinit();
+
+        const body_dup = try allocator.dupe(u8, body);
+        defer allocator.free(body_dup);
+        try req.sendBodyComplete(body_dup);
+
+        var redirect_buf: [4096]u8 = undefined;
+        var response = try req.receiveHead(&redirect_buf);
+
+        // Read response body
+        var transfer_buf: [16384]u8 = undefined;
+        const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+        var response_body = std.ArrayListUnmanaged(u8){};
+        errdefer response_body.deinit(allocator);
+
+        while (true) {
+            body_reader.fill(4096) catch |err| {
+                if (err == error.EndOfStream) {
+                    const buffered = body_reader.bufferedLen();
+                    if (buffered == 0) break;
+                    const data = try body_reader.take(buffered);
+                    try response_body.appendSlice(allocator, data);
+                    break;
+                }
+                return err;
+            };
+
+            const buffered = body_reader.bufferedLen();
+            if (buffered == 0) break;
+
+            const data = try body_reader.take(buffered);
+            if (data.len == 0) break;
+            try response_body.appendSlice(allocator, data);
+        }
+
+        return response_body.toOwnedSlice(allocator);
+    }
 
     /// Build a full chat request JSON body from a ChatRequest.
     fn buildChatRequestBody(
@@ -484,29 +570,56 @@ pub const OpenRouterProvider = struct {
 
 /// HTTP GET via curl subprocess with auth header.
 fn curlGet(allocator: std.mem.Allocator, url: []const u8, auth_hdr: []const u8) ![]u8 {
-    var child = std.process.Child.init(&.{
-        "curl", "-s", "-H", auth_hdr, url,
-    }, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    var argv = std.ArrayListUnmanaged([]const u8){};
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{
+        "curl", "-s",
+        "-H",   auth_hdr,
+        url,
+    });
 
-    try child.spawn();
+    const io = std.Options.debug_io;
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
 
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 1024 * 1024) catch return error.CurlReadError;
+    // Close stdin
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
 
-    const term = child.wait() catch return error.CurlWaitError;
+    const stdout_file = child.stdout orelse return error.CurlFailed;
+    var read_buf: [4096]u8 = undefined;
+    var reader = stdout_file.reader(io, &read_buf);
+    const output = reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024)) catch return error.CurlFailed;
+
+    const term = child.wait(io) catch {
+        allocator.free(output);
+        return error.CurlFailed;
+    };
+
     switch (term) {
-        .Exited => |code| if (code != 0) {
-            allocator.free(stdout);
-            return error.CurlFailed;
+        .exited => |code| {
+            if (code != 0) {
+                allocator.free(output);
+                return error.CurlFailed;
+            }
         },
         else => {
-            allocator.free(stdout);
+            allocator.free(output);
             return error.CurlFailed;
         },
     }
 
-    return stdout;
+    return output;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

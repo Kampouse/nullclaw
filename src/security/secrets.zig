@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("../util.zig");
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const log = std.log.scoped(.secrets);
@@ -129,7 +130,7 @@ pub const SecretStore = struct {
 
         // Generate random nonce
         var nonce: [NONCE_LEN]u8 = undefined;
-        std.crypto.random.bytes(&nonce);
+        util.randomBytes(&nonce);
 
         // Encrypt
         const ct_len = plaintext.len + TAG_LEN;
@@ -203,43 +204,61 @@ pub const SecretStore = struct {
         const path = self.keyPath();
 
         // Try to read existing key
-        if (std.fs.cwd().openFile(path, .{})) |file| {
-            defer file.close();
-            var hex_buf: [KEY_LEN * 2 + 16]u8 = undefined; // some slack for whitespace
-            const bytes_read = file.readAll(&hex_buf) catch return error.KeyReadFailed;
-            const hex_str = std.mem.trim(u8, hex_buf[0..bytes_read], " \t\r\n");
-            var key: [KEY_LEN]u8 = undefined;
-            _ = hexDecode(hex_str, &key) catch return error.KeyCorrupt;
-            return key;
-        } else |_| {
-            // Generate new key
-            var key: [KEY_LEN]u8 = undefined;
-            std.crypto.random.bytes(&key);
-
-            // Write hex-encoded key
-            var hex_buf: [KEY_LEN * 2]u8 = undefined;
-            _ = hexEncode(&key, &hex_buf);
-
-            // Ensure parent dir exists
-            if (std.fs.path.dirname(path)) |parent| {
-                std.fs.cwd().makePath(parent) catch |err| {
-                    log.err("failed to create parent dir {s}: {}", .{ parent, err });
-                };
+        const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| {
+            // If file doesn't exist, create a new key
+            if (err == error.FileNotFound) {
+                return self.createNewKey(path);
             }
+            return err;
+        };
+        defer file.close(std.Options.debug_io);
 
-            const file = std.fs.cwd().createFile(path, .{}) catch return error.KeyWriteFailed;
-            defer file.close();
-            file.writeAll(&hex_buf) catch return error.KeyWriteFailed;
+        // Read hex-encoded key using reader
+        var hex_buf: [KEY_LEN * 2]u8 = undefined;
+        var read_buffer: [256]u8 = undefined;
+        var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+        const bytes_read = std.Io.Reader.take(&file_reader.interface, hex_buf.len) catch return error.KeyReadFailed;
+        if (bytes_read.len != hex_buf.len) return error.KeyReadFailed;
+        @memcpy(hex_buf[0..bytes_read.len], bytes_read);
 
-            // Set restrictive permissions (Unix: 0600, owner-only)
-            if (@import("builtin").os.tag != .windows) {
-                file.chmod(0o600) catch |err| {
-                    log.err("failed to set 0600 permissions on {s}: {}", .{ path, err });
-                };
-            }
+        // Decode hex to bytes
+        var key: [KEY_LEN]u8 = undefined;
+        _ = hexDecode(&hex_buf, &key) catch return error.KeyReadFailed;
 
-            return key;
+        return key;
+    }
+
+    /// Create a new encryption key and save it to disk.
+    fn createNewKey(self: *const SecretStore, path: []const u8) ![KEY_LEN]u8 {
+        _ = self;
+
+        // Generate new key
+        var key: [KEY_LEN]u8 = undefined;
+        util.randomBytes(&key);
+
+        // Write hex-encoded key
+        var hex_buf: [KEY_LEN * 2]u8 = undefined;
+        _ = hexEncode(&key, &hex_buf);
+
+        // Ensure parent dir exists
+        if (std.fs.path.dirname(path)) |parent| {
+            std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch |err| {
+                log.err("failed to create parent dir {s}: {}", .{ parent, err });
+            };
         }
+
+        const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{}) catch return error.KeyWriteFailed;
+        defer file.close(std.Options.debug_io);
+        file.writeStreamingAll(std.Options.debug_io, &hex_buf) catch return error.KeyWriteFailed;
+
+        // Set restrictive permissions (Unix: 0600, owner-only)
+        if (@import("builtin").os.tag != .windows) {
+            file.setPermissions(std.Options.debug_io, @enumFromInt(0o600)) catch |err| {
+                log.err("failed to set 0600 permissions on {s}: {}", .{ path, err });
+            };
+        }
+
+        return key;
     }
 };
 
@@ -288,8 +307,9 @@ test "hex decode invalid chars fails" {
 test "secret store encrypt decrypt roundtrip" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const secret = "sk-my-secret-api-key-12345";
@@ -309,8 +329,9 @@ test "secret store encrypt decrypt roundtrip" {
 test "secret store encrypt empty returns empty" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const result = try store.encryptSecret(std.testing.allocator, "");
@@ -321,8 +342,9 @@ test "secret store encrypt empty returns empty" {
 test "secret store decrypt plaintext passthrough" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const result = try store.decryptSecret(std.testing.allocator, "sk-plaintext-key");
@@ -333,8 +355,9 @@ test "secret store decrypt plaintext passthrough" {
 test "secret store disabled returns plaintext" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, false);
     const result = try store.encryptSecret(std.testing.allocator, "sk-secret");
@@ -351,8 +374,9 @@ test "secret store is encrypted detects prefix" {
 test "secret store encrypting same value produces different ciphertext" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const e1 = try store.encryptSecret(std.testing.allocator, "secret");
@@ -374,13 +398,13 @@ test "secret store encrypting same value produces different ciphertext" {
 test "secret store different dirs cannot decrypt each other" {
     var tmp1 = std.testing.tmpDir(.{});
     defer tmp1.cleanup();
-    const path1 = try tmp1.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(path1);
+    const path1 = try tmp1.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(path1.ptr[0 .. path1.len + 1]);
 
     var tmp2 = std.testing.tmpDir(.{});
     defer tmp2.cleanup();
-    const path2 = try tmp2.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(path2);
+    const path2 = try tmp2.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(path2.ptr[0 .. path2.len + 1]);
 
     const store1 = SecretStore.init(path1, true);
     const store2 = SecretStore.init(path2, true);
@@ -395,8 +419,9 @@ test "secret store different dirs cannot decrypt each other" {
 test "secret store same dir interop" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store1 = SecretStore.init(tmp_path, true);
     const store2 = SecretStore.init(tmp_path, true);
@@ -414,8 +439,9 @@ test "secret store same dir interop" {
 test "secret store unicode roundtrip" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const secret = "sk-\xc3\xa9mojis-\xf0\x9f\xa6\x80-test";
@@ -431,8 +457,9 @@ test "secret store unicode roundtrip" {
 test "secret store key file created on first encrypt" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
 
@@ -441,19 +468,24 @@ test "secret store key file created on first encrypt" {
 
     // Key file should exist now
     const key_path = store.keyPath();
-    const file = try std.fs.cwd().openFile(key_path, .{});
-    defer file.close();
-    var buf: [128]u8 = undefined;
-    const bytes_read = try file.readAll(&buf);
+    const io = std.Options.debug_io;
+    const file = try std.Io.Dir.cwd().openFile(io, key_path, .{});
+    defer file.close(io);
+    var reader_buf: [128]u8 = undefined;
+    var reader = file.reader(io, &reader_buf);
     // Key is hex-encoded 32 bytes = 64 hex chars
+    const data = try reader.interface.readAlloc(std.testing.allocator, KEY_LEN * 2);
+    defer std.testing.allocator.free(data);
+    const bytes_read = data.len;
     try std.testing.expectEqual(@as(usize, KEY_LEN * 2), bytes_read);
 }
 
 test "secret store tampered ciphertext detected" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     const encrypted = try store.encryptSecret(std.testing.allocator, "sensitive-data");
@@ -489,8 +521,9 @@ test "secret store tampered ciphertext detected" {
 test "secret store truncated ciphertext returns error" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     // Trigger key creation first
@@ -505,8 +538,9 @@ test "secret store truncated ciphertext returns error" {
 test "secret store corrupt hex returns error" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
     // Trigger key creation
@@ -635,8 +669,9 @@ test "secret store is encrypted short strings" {
 test "secret store encrypt decrypt multiple values same store" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const store = SecretStore.init(tmp_path, true);
 

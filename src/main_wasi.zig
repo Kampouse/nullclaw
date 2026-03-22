@@ -76,14 +76,14 @@ fn parse_command(arg: []const u8) ?Command {
 
 fn print_out(comptime fmt: []const u8, args: anytype) !void {
     var buf: [2048]u8 = undefined;
-    var out = std.fs.File.stdout().writer(&buf);
+    var out = std.Io.File.stdout().writer(&buf);
     try out.interface.print(fmt, args);
     try out.interface.flush();
 }
 
 fn print_err(comptime fmt: []const u8, args: anytype) !void {
     var buf: [2048]u8 = undefined;
-    var out = std.fs.File.stderr().writer(&buf);
+    var out = std.Io.File.stderr().writer(&buf);
     try out.interface.print(fmt, args);
     try out.interface.flush();
 }
@@ -138,7 +138,7 @@ fn join_path(allocator: std.mem.Allocator, a: []const u8, b: []const u8) ![]u8 {
 fn ensure_parent_dir(path: []const u8) !void {
     const maybe_parent = std.fs.path.dirname(path);
     if (maybe_parent) |parent| {
-        std.fs.cwd().makePath(parent) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -146,69 +146,77 @@ fn ensure_parent_dir(path: []const u8) !void {
 }
 
 fn file_exists(path: []const u8) bool {
-    const file = std.fs.cwd().openFile(path, .{}) catch return false;
-    file.close();
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch return false;
+    file.close(std.Options.debug_io);
     return true;
 }
 
 fn read_file_if_present(allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
-    defer file.close();
-    return try file.readToEndAlloc(allocator, MAX_READ_BYTES);
+    defer file.close(std.Options.debug_io);
+
+    var read_buf: [8192]u8 = undefined;
+    var reader = file.reader(std.Options.debug_io, &read_buf);
+    return try reader.interface.readAlloc(allocator, std.math.maxInt(usize));
 }
 
 fn write_file_truncate(path: []const u8, content: []const u8) !void {
     try ensure_parent_dir(path);
-    const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(content);
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{ .truncate = true });
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, content);
 }
 
 fn write_if_missing(path: []const u8, content: []const u8) !bool {
     if (file_exists(path)) return false;
     try ensure_parent_dir(path);
-    const file = try std.fs.cwd().createFile(path, .{ .exclusive = true });
-    defer file.close();
-    try file.writeAll(content);
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{ .exclusive = true });
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, content);
     return true;
 }
 
 fn append_line(path: []const u8, line: []const u8, allocator: std.mem.Allocator) !void {
     try ensure_parent_dir(path);
-    const file = try std.fs.cwd().createFile(path, .{ .truncate = false, .read = true });
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{ .truncate = false, .read = true });
+    defer file.close(std.Options.debug_io);
 
-    const stat = try file.stat();
+    const stat = try file.stat(std.Options.debug_io);
     const size = stat.size;
-    try file.seekTo(size);
+    try file.seekTo(std.Options.debug_io, size);
 
     if (size > 0) {
-        try file.seekTo(size - 1);
+        try file.seekTo(std.Options.debug_io, size - 1);
         var last_byte: [1]u8 = undefined;
-        const n = try file.read(&last_byte);
+        var read_buf: [1]u8 = undefined;
+        var reader = file.reader(std.Options.debug_io, &read_buf);
+        const n = reader.interface.readSliceShort(&last_byte) catch |err| switch (err) {
+            error.EndOfStream => return error.ReadFailed,
+            else => return err,
+        };
         if (n == 1 and last_byte[0] != '\n') {
-            try file.seekTo(size);
-            try file.writeAll("\n");
+            try file.seekTo(std.Options.debug_io, size);
+            try file.writeStreamingAll(std.Options.debug_io, "\n");
         } else {
-            try file.seekTo(size);
+            try file.seekTo(std.Options.debug_io, size);
         }
     }
 
     const line_with_newline = try std.fmt.allocPrint(allocator, "{s}\n", .{line});
-    try file.writeAll(line_with_newline);
+    try file.writeStreamingAll(std.Options.debug_io, line_with_newline);
 }
 
 fn scaffold_workspace(allocator: std.mem.Allocator, workspace: []const u8) !usize {
-    std.fs.cwd().makePath(workspace) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, workspace) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
     const memory_dir = try join_path(allocator, workspace, "memory");
-    std.fs.cwd().makePath(memory_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, memory_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -310,7 +318,7 @@ fn to_single_line(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
 }
 
 fn daily_log_path(allocator: std.mem.Allocator, workspace: []const u8) ![]u8 {
-    const now = std.time.timestamp();
+    const now = 0;
     const epoch_secs: u64 = if (now <= 0) 0 else @intCast(now);
     const epoch = std.time.epoch.EpochSeconds{ .secs = epoch_secs };
     const yd = epoch.getEpochDay().calculateYearDay();

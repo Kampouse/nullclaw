@@ -24,14 +24,14 @@ pub const CronRemoveTool = struct {
         };
     }
 
-    pub fn execute(_: *CronRemoveTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronRemoveTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const job_id = root.getString(args, "job_id") orelse
             return ToolResult.fail("Missing required parameter: job_id");
 
         if (job_id.len == 0)
             return ToolResult.fail("Missing required parameter: job_id");
 
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             return ToolResult.fail("Failed to load scheduler state");
         };
         defer scheduler.deinit();
@@ -39,11 +39,11 @@ pub const CronRemoveTool = struct {
         if (scheduler.removeJob(job_id)) {
             cron.saveJobs(&scheduler) catch {};
             const msg = try std.fmt.allocPrint(allocator, "Removed cron job {s}", .{job_id});
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 };
 
@@ -54,7 +54,7 @@ test "cron_remove_requires_job_id" {
     const tool_iface = t.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }
@@ -64,15 +64,15 @@ test "cron_remove_not_found" {
     const tool_iface = t.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-999\"}");
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }
 
 test "cron_remove_success" {
     // First, create a job via the scheduler directly
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
     const job_id = try std.testing.allocator.dupe(u8, job.id);
@@ -86,8 +86,8 @@ test "cron_remove_success" {
     defer std.testing.allocator.free(args);
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "Removed") != null);
 }
@@ -110,7 +110,7 @@ test "cron_remove empty job_id" {
     const tool_iface = t.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"\"}");
     defer parsed.deinit();
-    const result = try tool_iface.execute(std.testing.allocator, parsed.value.object);
+    const result = try tool_iface.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }

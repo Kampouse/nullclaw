@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Options.debug_io;
 
 /// Standalone action tracker for rate limiting.
 /// This is a convenience wrapper that can be used independently of SecurityPolicy.
@@ -36,8 +37,9 @@ pub const RateTracker = struct {
     /// Record an action. Returns true if the action is allowed (within limit),
     /// false if rate-limited.
     pub fn recordAction(self: *RateTracker) !bool {
+        const now = std.Io.Clock.real.now(io).nanoseconds;
         self.prune();
-        try self.timestamps.append(self.allocator, std.time.nanoTimestamp());
+        try self.timestamps.append(self.allocator, now);
         return self.timestamps.items.len <= self.max_actions;
     }
 
@@ -66,7 +68,7 @@ pub const RateTracker = struct {
     }
 
     fn prune(self: *RateTracker) void {
-        const now = std.time.nanoTimestamp();
+        const now = std.Io.Clock.real.now(io).nanoseconds;
         const cutoff = now - self.window_ns;
         var write_idx: usize = 0;
         for (self.timestamps.items) |ts| {

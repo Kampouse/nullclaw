@@ -30,7 +30,7 @@ pub const HttpRequestTool = struct {
         };
     }
 
-    pub fn execute(self: *HttpRequestTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *HttpRequestTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const url = root.getString(args, "url") orelse
             return ToolResult.fail("Missing 'url' parameter");
 
@@ -68,7 +68,7 @@ pub const HttpRequestTool = struct {
         // Validate method
         const method = validateMethod(method_str) orelse {
             const msg = try std.fmt.allocPrint(allocator, "Unsupported HTTP method: {s}", .{method_str});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         // Parse custom headers from ObjectMap
@@ -105,38 +105,33 @@ pub const HttpRequestTool = struct {
             header_list.deinit(allocator);
         }
 
-        // Execute request using std.http.Client (Zig 0.15 API)
-        var client: std.http.Client = .{ .allocator = allocator };
+        // Execute request using std.http.Client (Zig 0.16.0 API)
+        var client: std.http.Client = .{ .allocator = allocator, .io = io };
         defer client.deinit();
-
-        const protocol: std.http.Client.Protocol = if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) .tls else .plain;
-        const authority_host = stripHostBrackets(host);
-        const connection = client.connectTcpOptions(.{
-            .host = connect_host,
-            .port = resolved_port,
-            .protocol = protocol,
-            .proxied_host = authority_host,
-            .proxied_port = resolved_port,
-        }) catch |err| {
-            log.err("HTTP request connection failed for {s}: {}", .{ url, err });
-            const msg = try std.fmt.allocPrint(allocator, "HTTP request failed: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        };
 
         const body: ?[]const u8 = root.getString(args, "body");
 
-        // Build extra headers
+        // Build extra headers from custom headers
         var extra_headers_buf: [32]std.http.Header = undefined;
         var extra_count: usize = 0;
+
+        // Add default User-Agent header to avoid API blocking
+        if (extra_count < extra_headers_buf.len) {
+            extra_headers_buf[extra_count] = .{ .name = "User-Agent", .value = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" };
+            extra_count += 1;
+        }
+
         for (custom_headers) |h| {
             if (extra_count >= extra_headers_buf.len) break;
             extra_headers_buf[extra_count] = .{ .name = h[0], .value = h[1] };
             extra_count += 1;
         }
+        const extra_headers = extra_headers_buf[0..extra_count];
 
-        var req = client.request(method, uri, buildRequestOptions(extra_headers_buf[0..extra_count], connection)) catch |err| {
+        // Create request with custom headers
+        var req = client.request(method, uri, .{ .extra_headers = extra_headers }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "HTTP request failed: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer req.deinit();
 
@@ -146,12 +141,12 @@ pub const HttpRequestTool = struct {
             defer allocator.free(body_dup);
             req.sendBodyComplete(body_dup) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to send body: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
         } else {
             req.sendBodiless() catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to send request: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
         }
 
@@ -159,7 +154,7 @@ pub const HttpRequestTool = struct {
         var redirect_buf: [4096]u8 = undefined;
         var response = req.receiveHead(&redirect_buf) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to receive response: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         const status_code = @intFromEnum(response.head.status);
@@ -170,7 +165,7 @@ pub const HttpRequestTool = struct {
         const reader = response.reader(&transfer_buf);
         const response_body = reader.readAlloc(allocator, @intCast(self.max_response_size)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read response body: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(response_body);
 
@@ -192,7 +187,7 @@ pub const HttpRequestTool = struct {
             );
 
         if (success) {
-            return ToolResult{ .success = true, .output = output };
+            return ToolResult{ .success = true, .output = output, .owns_output = true };
         } else {
             const err_msg = try std.fmt.allocPrint(allocator, "HTTP {d}", .{status_code});
             return ToolResult{ .success = false, .output = output, .error_msg = err_msg };
@@ -431,7 +426,7 @@ test "execute rejects missing url parameter" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "url") != null);
 }
@@ -441,7 +436,7 @@ test "execute rejects non-http scheme" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"ftp://example.com\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "http") != null);
 }
@@ -451,7 +446,7 @@ test "execute rejects localhost SSRF" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://127.0.0.1:8080/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -461,7 +456,7 @@ test "execute rejects localhost SSRF with URL userinfo" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://user:pass@127.0.0.1:8080/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -471,7 +466,7 @@ test "execute rejects localhost SSRF with unbracketed ipv6 authority" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://::1:8080/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -481,7 +476,7 @@ test "execute rejects private IP SSRF" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://192.168.1.1/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -490,7 +485,7 @@ test "execute rejects 10.x private range" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://10.0.0.1/secret\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -499,7 +494,7 @@ test "execute rejects loopback decimal alias SSRF" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://2130706433/admin\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "local") != null);
 }
@@ -509,7 +504,7 @@ test "execute rejects unsupported method" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://example.com\", \"method\": \"INVALID\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer {
         // Clean up allocated error message from line 70-71
         if (result.error_msg) |err| {
@@ -528,7 +523,7 @@ test "execute rejects invalid URL format" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"http://\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }
 
@@ -538,7 +533,7 @@ test "execute rejects non-allowlisted domain" {
     const t = ht.tool();
     const parsed = try root.parseTestArgs("{\"url\": \"https://evil.com/path\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "allowed_domains") != null);
 }

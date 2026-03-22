@@ -103,7 +103,7 @@ pub const VoyageEmbedding = struct {
         const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{self_.api_key});
         defer allocator.free(auth_header);
 
-        var client = std.http.Client{ .allocator = allocator };
+        var client = std.http.Client{ .allocator = allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         var aw: std.Io.Writer.Allocating = .init(allocator);

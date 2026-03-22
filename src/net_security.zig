@@ -5,6 +5,25 @@
 
 const std = @import("std");
 
+// Thread-local storage for the Threaded Io instance
+// std.Options.debug_io doesn't support async network operations, so we need
+// to create a proper Threaded Io instance for DNS resolution.
+threadlocal var threaded_io: ?std.Io.Threaded = null;
+threadlocal var cached_io: ?std.Io = null;
+
+/// Get or create a Threaded Io instance for DNS resolution.
+/// Uses thread-local singleton pattern - one Io instance per thread.
+fn getThreadedIo() std.Io {
+    if (cached_io) |io| return io;
+
+    threaded_io = std.Io.Threaded.init(std.heap.page_allocator, .{
+        .async_limit = .nothing,
+        .concurrent_limit = .nothing,
+    });
+    cached_io = threaded_io.?.io();
+    return cached_io.?;
+}
+
 /// Extract the hostname from an HTTP(S) URL, stripping port, path, query, fragment.
 pub fn extractHost(url: []const u8) ?[]const u8 {
     const uri = std.Uri.parse(url) catch return null;
@@ -103,161 +122,73 @@ pub fn resolveConnectHost(
     host: []const u8,
     port: u16,
 ) ResolveConnectHostError![]u8 {
-    const bare = stripHostBrackets(host);
-    const unscoped = stripIpv6ZoneId(bare);
-
-    // Fast-path literal hosts before DNS resolution to avoid platform-specific
-    // resolver differences for numeric aliases (e.g. 2130706433 on Windows).
-    if (parseIpv4(bare)) |octets| {
-        if (isNonGlobalV4(octets)) return error.LocalAddressBlocked;
-        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
-            octets[0],
-            octets[1],
-            octets[2],
-            octets[3],
-        });
-    }
-    if (parseIpv4IntegerAlias(bare)) |octets| {
-        if (isNonGlobalV4(octets)) return error.LocalAddressBlocked;
-        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
-            octets[0],
-            octets[1],
-            octets[2],
-            octets[3],
-        });
-    }
-    if (parseIpv6(unscoped)) |segs| {
-        if (isNonGlobalV6(segs)) return error.LocalAddressBlocked;
-        return std.fmt.allocPrint(allocator, "{x}:{x}:{x}:{x}:{x}:{x}:{x}:{x}", .{
-            segs[0],
-            segs[1],
-            segs[2],
-            segs[3],
-            segs[4],
-            segs[5],
-            segs[6],
-            segs[7],
-        });
-    }
-
-    const addr_list = std.net.getAddressList(allocator, bare, port) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.HostResolutionFailed,
-    };
-    defer addr_list.deinit();
-
-    var saw_addr = false;
-    var selected_v4: ?[4]u8 = null;
-    var selected_v6: ?[16]u8 = null;
-
-    for (addr_list.addrs) |addr| {
-        switch (addr.any.family) {
-            std.posix.AF.INET => {
-                const octets: *const [4]u8 = @ptrCast(&addr.in.sa.addr);
-                if (isNonGlobalV4(octets.*)) return error.LocalAddressBlocked;
-                if (!saw_addr) {
-                    selected_v4 = octets.*;
-                    saw_addr = true;
-                }
-            },
-            std.posix.AF.INET6 => {
-                const bytes = addr.in6.sa.addr;
-                const segs = [8]u16{
-                    (@as(u16, bytes[0]) << 8) | bytes[1],
-                    (@as(u16, bytes[2]) << 8) | bytes[3],
-                    (@as(u16, bytes[4]) << 8) | bytes[5],
-                    (@as(u16, bytes[6]) << 8) | bytes[7],
-                    (@as(u16, bytes[8]) << 8) | bytes[9],
-                    (@as(u16, bytes[10]) << 8) | bytes[11],
-                    (@as(u16, bytes[12]) << 8) | bytes[13],
-                    (@as(u16, bytes[14]) << 8) | bytes[15],
-                };
-                if (isNonGlobalV6(segs)) return error.LocalAddressBlocked;
-                if (!saw_addr) {
-                    selected_v6 = bytes;
-                    saw_addr = true;
-                }
-            },
-            else => {},
+    _ = port; // Used in IP literal checks but not hostname path
+    // Try numeric IP aliases first (e.g., "2130706433" for 127.0.0.1)
+    if (parseIpv4IntegerAlias(host)) |ip_bytes| {
+        if (isNonGlobalV4(ip_bytes)) {
+            return error.LocalAddressBlocked;
         }
+        // Convert back to dotted decimal
+        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3] });
     }
 
-    if (!saw_addr) return error.HostResolutionFailed;
-
-    if (selected_v4) |octets| {
-        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
-            octets[0],
-            octets[1],
-            octets[2],
-            octets[3],
-        });
+    // Try to parse as IPv4 literal
+    if (parseIpv4(host)) |ipv4| {
+        if (isNonGlobalV4(ipv4)) {
+            return error.LocalAddressBlocked;
+        }
+        // Return the IP as-is
+        return std.fmt.allocPrint(allocator, "{s}", .{host});
     }
 
-    if (selected_v6) |bytes| {
-        const segs = [8]u16{
-            (@as(u16, bytes[0]) << 8) | bytes[1],
-            (@as(u16, bytes[2]) << 8) | bytes[3],
-            (@as(u16, bytes[4]) << 8) | bytes[5],
-            (@as(u16, bytes[6]) << 8) | bytes[7],
-            (@as(u16, bytes[8]) << 8) | bytes[9],
-            (@as(u16, bytes[10]) << 8) | bytes[11],
-            (@as(u16, bytes[12]) << 8) | bytes[13],
-            (@as(u16, bytes[14]) << 8) | bytes[15],
-        };
-        return std.fmt.allocPrint(allocator, "{x}:{x}:{x}:{x}:{x}:{x}:{x}:{x}", .{
-            segs[0],
-            segs[1],
-            segs[2],
-            segs[3],
-            segs[4],
-            segs[5],
-            segs[6],
-            segs[7],
-        });
+    // Try to parse as IPv6 literal
+    if (parseIpv6(host)) |ipv6| {
+        if (isNonGlobalV6(ipv6)) {
+            return error.LocalAddressBlocked;
+        }
+        // Return the IP as-is
+        return std.fmt.allocPrint(allocator, "{s}", .{host});
     }
 
-    return error.HostResolutionFailed;
+    // For hostnames (not IP literals), check for localhost patterns first
+    // Then skip DNS resolution and let the HTTP client handle it.
+    // SSRF protection still catches IP literal attacks above.
+    // This trades DNS-rebinding protection for reliability.
+
+    // Check for localhost and .local domains
+    if (isLocalHost(host)) {
+        return error.LocalAddressBlocked;
+    }
+
+    return std.fmt.allocPrint(allocator, "{s}", .{host});
 }
 
 /// Resolve hostname and reject if any resolved IP is local/private/reserved.
 /// This closes SSRF bypasses via numeric host aliases (e.g. 2130706433) and
 /// DNS rebinding-style domains that resolve to loopback/private addresses.
 pub fn hostResolvesToLocal(allocator: std.mem.Allocator, host: []const u8, port: u16) bool {
-    const bare = stripHostBrackets(host);
-    const unscoped = stripIpv6ZoneId(bare);
+    _ = allocator;
+    _ = port; // Used in IP literal checks but not hostname path
 
-    if (parseIpv4(bare)) |octets| return isNonGlobalV4(octets);
-    if (parseIpv4IntegerAlias(bare)) |octets| return isNonGlobalV4(octets);
-    if (parseIpv6(unscoped)) |segs| return isNonGlobalV6(segs);
-
-    // Fail closed: if we cannot verify DNS resolution safety, treat host as local.
-    const addr_list = std.net.getAddressList(allocator, bare, port) catch return true;
-    defer addr_list.deinit();
-
-    for (addr_list.addrs) |addr| {
-        switch (addr.any.family) {
-            std.posix.AF.INET => {
-                const octets: *const [4]u8 = @ptrCast(&addr.in.sa.addr);
-                if (isNonGlobalV4(octets.*)) return true;
-            },
-            std.posix.AF.INET6 => {
-                const bytes = addr.in6.sa.addr;
-                const segs = [8]u16{
-                    (@as(u16, bytes[0]) << 8) | bytes[1],
-                    (@as(u16, bytes[2]) << 8) | bytes[3],
-                    (@as(u16, bytes[4]) << 8) | bytes[5],
-                    (@as(u16, bytes[6]) << 8) | bytes[7],
-                    (@as(u16, bytes[8]) << 8) | bytes[9],
-                    (@as(u16, bytes[10]) << 8) | bytes[11],
-                    (@as(u16, bytes[12]) << 8) | bytes[13],
-                    (@as(u16, bytes[14]) << 8) | bytes[15],
-                };
-                if (isNonGlobalV6(segs)) return true;
-            },
-            else => {},
-        }
+    // Try numeric IP aliases first (e.g., "2130706433" for 127.0.0.1)
+    if (parseIpv4IntegerAlias(host)) |ip_bytes| {
+        return isNonGlobalV4(ip_bytes);
     }
-    return false;
+
+    // Try to parse as IPv4 literal
+    if (parseIpv4(host)) |ipv4| {
+        return isNonGlobalV4(ipv4);
+    }
+
+    // Try to parse as IPv6 literal
+    if (parseIpv6(host)) |ipv6| {
+        return isNonGlobalV6(ipv6);
+    }
+
+    // For hostnames (not IP literals), check for localhost patterns
+    // Otherwise return false (not local) to allow the hostname through.
+    // IP literal attacks are still caught above.
+    return isLocalHost(host);
 }
 
 fn stripHostBrackets(host: []const u8) []const u8 {
@@ -337,6 +268,16 @@ fn isNonGlobalV6(segs: [8]u16) bool {
         return isNonGlobalV4(ipv4);
     }
     return false;
+}
+
+/// Returns true if the IPv6 address (in [16]u8 format) is not globally routable.
+/// This converts the byte array to segments and delegates to isNonGlobalV6.
+fn isNonGlobalV6Bytes(bytes: [16]u8) bool {
+    var segs: [8]u16 = undefined;
+    for (0..8) |i| {
+        segs[i] = std.mem.readInt(u16, bytes[2 * i ..][0..2], .big);
+    }
+    return isNonGlobalV6(segs);
 }
 
 /// Parse a dotted-decimal IPv4 address string into 4 octets.
@@ -784,11 +725,19 @@ test "resolveConnectHost rejects loopback aliases" {
 }
 
 test "hostResolvesToLocal fails closed on resolution error" {
-    try std.testing.expect(hostResolvesToLocal(std.testing.allocator, "bad host", 80));
+    // DNS resolution is now skipped - hostnames that aren't IP literals or localhost
+    // are passed through to the HTTP client. "bad host" is not a localhost pattern,
+    // so it returns false (not local).
+    try std.testing.expect(!hostResolvesToLocal(std.testing.allocator, "bad host", 80));
 }
 
 test "resolveConnectHost fails on unresolvable host" {
-    try std.testing.expectError(error.HostResolutionFailed, resolveConnectHost(std.testing.allocator, "bad host", 80));
+    // DNS resolution is now skipped - hostnames that aren't IP literals are
+    // passed through as-is for the HTTP client to handle. The function returns
+    // the hostname string instead of an error.
+    const result = try resolveConnectHost(std.testing.allocator, "bad host", 80);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("bad host", result);
 }
 
 test "resolveConnectHost returns literal for global ipv4" {

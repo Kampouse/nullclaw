@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
@@ -227,16 +228,18 @@ pub const WhatsAppChannel = struct {
         defer allocator.free(media_resp);
 
         // Step 3: Write to tmp file
-        var rand = std.crypto.random;
+        var rand_bytes: [8]u8 = undefined;
+        std.Io.random(std.Options.debug_io, &rand_bytes);
+        const rand_id = std.mem.readInt(u64, &rand_bytes, .little);
         var path_buf: [1024]u8 = undefined;
-        const local_path = std.fmt.bufPrint(&path_buf, "/tmp/whatsapp_{x}.dat", .{rand.int(u64)}) catch return null;
+        const local_path = std.fmt.bufPrint(&path_buf, "/tmp/whatsapp_{x}.dat", .{rand_id}) catch return null;
 
-        if (std.fs.createFileAbsolute(local_path, .{ .read = false })) |file| {
-            file.writeAll(media_resp) catch {
-                file.close();
+        if (std.Io.Dir.cwd().createFile(std.Options.debug_io, local_path, .{.read = false })) |file| {
+            file.writeStreamingAll(std.Options.debug_io, media_resp) catch {
+                file.close(std.Options.debug_io);
                 return null;
             };
-            file.close();
+            file.close(std.Options.debug_io);
 
             // Format as [IMAGE:path]
             var out_buf: std.ArrayListUnmanaged(u8) = .empty;
@@ -260,7 +263,7 @@ pub const WhatsAppChannel = struct {
     pub fn sendMessage(self: *WhatsAppChannel, recipient: []const u8, text: []const u8) !void {
         // Build URL
         var url_buf: [256]u8 = undefined;
-        var url_fbs = std.io.fixedBufferStream(&url_buf);
+        var url_fbs = util.fixedBufferStream(&url_buf);
         try url_fbs.writer().print("https://graph.facebook.com/{s}/{s}/messages", .{ API_VERSION, self.phone_number_id });
         const url = url_fbs.getWritten();
 
@@ -270,21 +273,20 @@ pub const WhatsAppChannel = struct {
         // Build JSON body dynamically
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const w = body_list.writer(self.allocator);
-        try w.writeAll("{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"");
-        try w.writeAll(to);
-        try w.writeAll("\",\"type\":\"text\",\"text\":{\"preview_url\":false,\"body\":");
-        try root.appendJsonStringW(w, text);
-        try w.writeAll("}}");
+        try body_list.appendSlice(self.allocator, "{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"");
+        try body_list.appendSlice(self.allocator, to);
+        try body_list.appendSlice(self.allocator, "\",\"type\":\"text\",\"text\":{\"preview_url\":false,\"body\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, text);
+        try body_list.appendSlice(self.allocator, "}}");
         const body = body_list.items;
 
         // Build auth header
         var auth_buf: [512]u8 = undefined;
-        var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+        var auth_fbs = util.fixedBufferStream(&auth_buf);
         try auth_fbs.writer().print("Bearer {s}", .{self.access_token});
         const auth_value = auth_fbs.getWritten();
 
-        var client = std.http.Client{ .allocator = self.allocator };
+        var client = std.http.Client{ .allocator = self.allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         const result = client.fetch(.{
@@ -324,6 +326,20 @@ pub const WhatsAppChannel = struct {
     fn vtableHealthCheck(ptr: *anyopaque) bool {
         const self: *WhatsAppChannel = @ptrCast(@alignCast(ptr));
         return self.healthCheck();
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     pub const vtable = root.Channel.VTable{

@@ -1,9 +1,12 @@
 const std = @import("std");
+const io = std.Options.debug_io;
 const json_util = @import("../json_util.zig");
 const http_util = @import("../http_util.zig");
 const config_types = @import("../config_types.zig");
 const root = @import("root.zig");
 const ToolSpec = root.ToolSpec;
+const profiling = @import("../profiling.zig");
+const util = @import("../util.zig");
 
 /// Extract api_key from a config-like struct (supports both Config.defaultProviderKey() and plain .api_key field).
 fn resolveApiKeyFromCfg(cfg: anytype) ?[]const u8 {
@@ -20,21 +23,29 @@ fn resolveApiKeyFromCfg(cfg: anytype) ?[]const u8 {
 /// High-level complete function that routes to the right provider via HTTP.
 /// Used by agent.zig for backward compatibility.
 pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) ![]const u8 {
+    const zone = profiling.zoneNamed(@src(), "provider_complete");
+    defer zone.end();
+
     const api_key = resolveApiKeyFromCfg(cfg) orelse return error.NoApiKey;
     const url = providerUrl(cfg.default_provider);
     const model = cfg.default_model orelse return error.NoDefaultModel;
+
+    // Track provider in Tracy
+    zone.text("provider:{s}", .{cfg.default_provider});
+
     const body_str = try buildRequestBody(allocator, model, prompt, cfg.temperature, cfg.max_tokens orelse config_types.DEFAULT_MODEL_MAX_TOKENS);
     defer allocator.free(body_str);
 
     var auth_buf: [512]u8 = undefined;
     const auth_val = std.fmt.bufPrint(&auth_buf, "Bearer {s}", .{api_key}) catch return error.NoApiKey;
 
-    var client: std.http.Client = .{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
 
+    const start_time = util.nanoTimestamp();
     const result = try client.fetch(.{
         .location = .{ .url = url },
         .method = .POST,
@@ -45,6 +56,10 @@ pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) 
         },
         .response_writer = &aw.writer,
     });
+    const elapsed = util.nanoTimestamp() - start_time;
+
+    // Plot provider latency (Tracy only supports up to 63-bit signed)
+    profiling.plot("provider_latency_ns", @as(i64, @intCast(elapsed)));
 
     if (result.status != .ok) return error.ProviderError;
 
@@ -54,9 +69,16 @@ pub fn complete(allocator: std.mem.Allocator, cfg: anytype, prompt: []const u8) 
 
 /// Like complete() but prepends a system prompt. OpenAI-compatible format.
 pub fn completeWithSystem(allocator: std.mem.Allocator, cfg: anytype, system_prompt: []const u8, prompt: []const u8) ![]const u8 {
+    const zone = profiling.zoneNamed(@src(), "provider_complete_with_system");
+    defer zone.end();
+
     const api_key = resolveApiKeyFromCfg(cfg) orelse return error.NoApiKey;
     const url = providerUrl(cfg.default_provider);
     const model = cfg.default_model orelse return error.NoDefaultModel;
+
+    // Track provider in Tracy
+    zone.text("provider:{s}", .{cfg.default_provider});
+
     const max_tok: u32 = if (cfg.max_tokens) |mt| @intCast(@min(mt, std.math.maxInt(u32))) else config_types.DEFAULT_MODEL_MAX_TOKENS;
     const body_str = try buildRequestBodyWithSystem(allocator, model, system_prompt, prompt, cfg.temperature, max_tok);
     defer allocator.free(body_str);
@@ -64,12 +86,13 @@ pub fn completeWithSystem(allocator: std.mem.Allocator, cfg: anytype, system_pro
     var auth_buf: [512]u8 = undefined;
     const auth_val = std.fmt.bufPrint(&auth_buf, "Bearer {s}", .{api_key}) catch return error.NoApiKey;
 
-    var client: std.http.Client = .{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator, .io = std.Options.debug_io };
     defer client.deinit();
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
 
+    const start_time = util.nanoTimestamp();
     const result = try client.fetch(.{
         .location = .{ .url = url },
         .method = .POST,
@@ -80,6 +103,10 @@ pub fn completeWithSystem(allocator: std.mem.Allocator, cfg: anytype, system_pro
         },
         .response_writer = &aw.writer,
     });
+    const elapsed = util.nanoTimestamp() - start_time;
+
+    // Plot provider latency (Tracy only supports up to 63-bit signed)
+    profiling.plot("provider_latency_ns", @as(i64, @intCast(elapsed)));
 
     if (result.status != .ok) return error.ProviderError;
 
@@ -103,12 +130,19 @@ pub fn providerUrl(provider_name: []const u8) []const u8 {
 pub fn buildRequestBody(allocator: std.mem.Allocator, model: []const u8, prompt: []const u8, temperature: f64, max_tokens: u32) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeAll("{\"model\":");
+    try buf.appendSlice(allocator, "{\"model\":");
     try json_util.appendJsonString(&buf, allocator, model);
-    try w.writeAll(",\"messages\":[{\"role\":\"user\",\"content\":");
+    try buf.appendSlice(allocator, ",\"messages\":[{\"role\":\"user\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, prompt);
-    try std.fmt.format(w, "}}],\"temperature\":{d:.1},\"max_tokens\":{d}}}", .{ temperature, max_tokens });
+    try buf.appendSlice(allocator, "}],\"temperature\":");
+    var temp_buf: [32]u8 = undefined;
+    const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.1}", .{temperature}) catch unreachable;
+    try buf.appendSlice(allocator, temp_str);
+    try buf.appendSlice(allocator, ",\"max_tokens\":");
+    var tokens_buf: [16]u8 = undefined;
+    const tokens_str = std.fmt.bufPrint(&tokens_buf, "{d}", .{max_tokens}) catch unreachable;
+    try buf.appendSlice(allocator, tokens_str);
+    try buf.appendSlice(allocator, "}");
     return try buf.toOwnedSlice(allocator);
 }
 
@@ -116,14 +150,21 @@ pub fn buildRequestBody(allocator: std.mem.Allocator, model: []const u8, prompt:
 pub fn buildRequestBodyWithSystem(allocator: std.mem.Allocator, model: []const u8, system: []const u8, prompt: []const u8, temperature: f64, max_tokens: u32) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeAll("{\"model\":\"");
-    try w.writeAll(model);
-    try w.writeAll("\",\"messages\":[{\"role\":\"system\",\"content\":");
+    try buf.appendSlice(allocator, "{\"model\":");
+    try json_util.appendJsonString(&buf, allocator, model);
+    try buf.appendSlice(allocator, ",\"messages\":[{\"role\":\"system\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, system);
-    try w.writeAll("},{\"role\":\"user\",\"content\":");
+    try buf.appendSlice(allocator, "},{\"role\":\"user\",\"content\":");
     try json_util.appendJsonString(&buf, allocator, prompt);
-    try std.fmt.format(w, "}}],\"temperature\":{d:.1},\"max_tokens\":{d}}}", .{ temperature, max_tokens });
+    try buf.appendSlice(allocator, "}],\"temperature\":");
+    var temp_buf: [32]u8 = undefined;
+    const temp_str = std.fmt.bufPrint(&temp_buf, "{d:.1}", .{temperature}) catch unreachable;
+    try buf.appendSlice(allocator, temp_str);
+    try buf.appendSlice(allocator, ",\"max_tokens\":");
+    var tokens_buf: [16]u8 = undefined;
+    const tokens_str = std.fmt.bufPrint(&tokens_buf, "{d}", .{max_tokens}) catch unreachable;
+    try buf.appendSlice(allocator, tokens_str);
+    try buf.appendSlice(allocator, "}");
     return try buf.toOwnedSlice(allocator);
 }
 
@@ -295,6 +336,22 @@ pub fn curlPostTimed(allocator: std.mem.Allocator, url: []const u8, body: []cons
     return http_util.curlPost(allocator, url, body, headers);
 }
 
+/// HTTP POST with streaming - calls callback with each chunk as it arrives.
+/// This is useful for LLM APIs to display responses token-by-token.
+/// The callback receives chunks that are only valid during the callback invocation.
+pub fn curlPostTimedStream(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    body: []const u8,
+    headers: []const []const u8,
+    timeout_secs: u64,
+    callback: http_util.StreamCallback,
+    callback_ctx: *anyopaque,
+) !void {
+    _ = timeout_secs; // TODO: Add timeout support to streaming
+    try http_util.curlPostStream(allocator, url, body, headers, callback, callback_ctx);
+}
+
 /// Extract text content from a provider JSON response.
 pub fn extractContent(allocator: std.mem.Allocator, body: []const u8) ![]const u8 {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
@@ -445,42 +502,46 @@ test "extractContent parses Anthropic format" {
 }
 
 test "buildRequestBody escapes double quotes in prompt" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBody(allocator, "gpt-4o", "say \"hello\"", 0.7, 100);
-    defer allocator.free(body);
     // Raw quote would break JSON; escaped form must be present
     try std.testing.expect(std.mem.indexOf(u8, body, "\\\"hello\\\"") != null);
     // Verify it's valid JSON
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "buildRequestBody escapes newlines in prompt" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBody(allocator, "gpt-4o", "line1\nline2", 0.7, 100);
-    defer allocator.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\n") != null);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "buildRequestBody escapes backslash in prompt" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBody(allocator, "gpt-4o", "path\\to\\file", 0.7, 100);
-    defer allocator.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\\\") != null);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "buildRequestBodyWithSystem escapes special chars in both fields" {
-    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const body = try buildRequestBodyWithSystem(allocator, "gpt-4o", "sys \"role\"", "user\nprompt", 0.7, 100);
-    defer allocator.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\\"role\\\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "\\n") != null);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    parsed.deinit();
+    _ = parsed;
 }
 
 test "serializeMessageContent plain text" {

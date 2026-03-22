@@ -2,6 +2,9 @@ const std = @import("std");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
 const bus = @import("../bus.zig");
+const util = @import("../util.zig");
+
+const io = std.Options.debug_io;
 
 const log = std.log.scoped(.maixcam);
 
@@ -20,12 +23,12 @@ pub const MaixCamChannel = struct {
     event_bus: ?*bus.Bus = null,
     running: bool = false,
     clients: std.ArrayListUnmanaged(Client) = .empty,
-    clients_mu: std.Thread.Mutex = .{},
+    clients_mu: std.Io.Mutex = std.Io.Mutex.init,
     listener_thread: ?std.Thread = null,
     outbound_thread: ?std.Thread = null,
 
     pub const Client = struct {
-        stream: std.net.Stream,
+        stream: std.Io.net.Stream,
         device_id: ?[]const u8 = null,
     };
 
@@ -59,8 +62,8 @@ pub const MaixCamChannel = struct {
 
     /// Return the number of currently connected clients.
     pub fn clientCount(self: *MaixCamChannel) usize {
-        self.clients_mu.lock();
-        defer self.clients_mu.unlock();
+        self.clients_mu.lock(std.Options.debug_io) catch {};
+        defer self.clients_mu.unlock(std.Options.debug_io);
         return self.clients.items.len;
     }
 
@@ -165,14 +168,14 @@ pub const MaixCamChannel = struct {
 
     /// Format a device event into a human-readable content string for the bus.
     pub fn formatEventContent(buf: []u8, event: DeviceEvent) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
 
         if (std.mem.eql(u8, event.event_type, "person_detected")) {
             if (event.confidence) |conf| {
                 try w.print("[Vision] Person detected (confidence: {d:.2})", .{conf});
             } else {
-                try w.writeAll("[Vision] Person detected");
+                try w.writeStreamingAll(std.Options.debug_io, "[Vision] Person detected");
             }
         } else if (std.mem.eql(u8, event.event_type, "object_detected")) {
             if (event.text) |label| {
@@ -182,13 +185,13 @@ pub const MaixCamChannel = struct {
                     try w.print("[Vision] Object detected: {s}", .{label});
                 }
             } else {
-                try w.writeAll("[Vision] Object detected");
+                try w.writeStreamingAll(std.Options.debug_io, "[Vision] Object detected");
             }
         } else if (std.mem.eql(u8, event.event_type, "message")) {
             if (event.text) |text| {
-                try w.writeAll(text);
+                try w.writeStreamingAll(std.Options.debug_io, text);
             } else {
-                try w.writeAll("[MaixCam] (empty message)");
+                try w.writeStreamingAll(std.Options.debug_io, "[MaixCam] (empty message)");
             }
         } else {
             try w.print("[MaixCam] {s}", .{event.event_type});
@@ -201,26 +204,28 @@ pub const MaixCamChannel = struct {
 
     /// Build an outbound JSON message to send to devices.
     pub fn buildOutboundJson(buf: []u8, content: []const u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const w = fbs.writer();
-        try w.writeAll("{\"type\":\"response\",\"text\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"type\":\"response\",\"text\":");
         try root.appendJsonStringW(w, content);
-        try w.writeAll("}\n");
+        try w.writeStreamingAll(std.Options.debug_io, "}\n");
         return fbs.getWritten();
     }
 
     /// Send a message to all connected clients.
     pub fn broadcast(self: *MaixCamChannel, data: []const u8) void {
-        self.clients_mu.lock();
-        defer self.clients_mu.unlock();
+        self.clients_mu.lock(std.Options.debug_io) catch {};
+        defer self.clients_mu.unlock(std.Options.debug_io);
 
         var i: usize = 0;
         while (i < self.clients.items.len) {
             const client = &self.clients.items[i];
-            client.stream.writeAll(data) catch {
+            var write_buf: [4096]u8 = undefined;
+            var writer = std.Io.net.Stream.writer(client.stream, std.Options.debug_io, &write_buf);
+            writer.interface.writeAll(data) catch {
                 log.warn("client disconnected during broadcast, removing", .{});
                 if (client.device_id) |did| self.allocator.free(did);
-                client.stream.close();
+                client.stream.close(std.Options.debug_io);
                 _ = self.clients.swapRemove(i);
                 continue;
             };
@@ -241,13 +246,15 @@ pub const MaixCamChannel = struct {
     }
 
     fn sendToDevice(self: *MaixCamChannel, device_id: []const u8, data: []const u8) void {
-        self.clients_mu.lock();
-        defer self.clients_mu.unlock();
+        self.clients_mu.lock(std.Options.debug_io) catch {};
+        defer self.clients_mu.unlock(std.Options.debug_io);
 
         for (self.clients.items) |*client| {
             if (client.device_id) |did| {
                 if (std.mem.eql(u8, did, device_id)) {
-                    client.stream.writeAll(data) catch {
+                    var write_buf: [4096]u8 = undefined;
+                    var writer = std.Io.net.Stream.writer(client.stream, std.Options.debug_io, &write_buf);
+                    writer.interface.writeAll(data) catch {
                         log.warn("send to device {s} failed", .{device_id});
                     };
                     return;
@@ -258,11 +265,11 @@ pub const MaixCamChannel = struct {
     }
 
     fn closeAllClients(self: *MaixCamChannel) void {
-        self.clients_mu.lock();
-        defer self.clients_mu.unlock();
+        self.clients_mu.lock(std.Options.debug_io) catch {};
+        defer self.clients_mu.unlock(std.Options.debug_io);
         for (self.clients.items) |*client| {
             if (client.device_id) |did| self.allocator.free(did);
-            client.stream.close();
+            client.stream.close(std.Options.debug_io);
         }
         self.clients.clearRetainingCapacity();
     }
@@ -334,16 +341,16 @@ pub const MaixCamChannel = struct {
 
         // Build session key
         var sk_buf: [256]u8 = undefined;
-        var sk_fbs = std.io.fixedBufferStream(&sk_buf);
+        var sk_fbs = util.fixedBufferStream(&sk_buf);
         sk_fbs.writer().print("maixcam:{s}", .{event.device_id}) catch return;
         const session_key = sk_fbs.getWritten();
 
         // Publish to bus
         if (self.event_bus) |b| {
             var meta_buf: [128]u8 = undefined;
-            var meta_fbs = std.io.fixedBufferStream(&meta_buf);
+            var meta_fbs = util.fixedBufferStream(&meta_buf);
             const mw = meta_fbs.writer();
-            mw.writeAll("{\"account_id\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, "{\"account_id\":") catch return;
             root.appendJsonStringW(mw, self.config.account_id) catch return;
             mw.writeByte('}') catch return;
             const metadata = meta_fbs.getWritten();
@@ -369,8 +376,8 @@ pub const MaixCamChannel = struct {
     }
 
     fn updateClientDeviceId(self: *MaixCamChannel, stream: std.net.Stream, device_id: []const u8) void {
-        self.clients_mu.lock();
-        defer self.clients_mu.unlock();
+        self.clients_mu.lock(std.Options.debug_io) catch {};
+        defer self.clients_mu.unlock(std.Options.debug_io);
         for (self.clients.items) |*client| {
             if (client.stream.handle == stream.handle) {
                 if (client.device_id == null) {
@@ -382,8 +389,8 @@ pub const MaixCamChannel = struct {
     }
 
     fn removeClient(self: *MaixCamChannel, stream: std.net.Stream) void {
-        self.clients_mu.lock();
-        defer self.clients_mu.unlock();
+        self.clients_mu.lock(std.Options.debug_io) catch {};
+        defer self.clients_mu.unlock(std.Options.debug_io);
         for (self.clients.items, 0..) |*client, i| {
             if (client.stream.handle == stream.handle) {
                 if (client.device_id) |did| self.allocator.free(did);
@@ -394,8 +401,8 @@ pub const MaixCamChannel = struct {
     }
 
     fn addClient(self: *MaixCamChannel, stream: std.net.Stream) !void {
-        self.clients_mu.lock();
-        defer self.clients_mu.unlock();
+        self.clients_mu.lock(std.Options.debug_io) catch {};
+        defer self.clients_mu.unlock(std.Options.debug_io);
         try self.clients.append(self.allocator, .{ .stream = stream });
     }
 

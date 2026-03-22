@@ -1,6 +1,7 @@
 const std = @import("std");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
+const util = @import("../util.zig");
 
 /// DingTalk channel — connects via Stream Mode WebSocket for real-time messages.
 /// Replies are sent through per-message session webhook URLs.
@@ -54,14 +55,14 @@ pub const DingTalkChannel = struct {
     pub fn sendMessage(self: *DingTalkChannel, webhook_url: []const u8, text: []const u8) !void {
         // Build JSON body: {"msgtype":"markdown","markdown":{"title":"nullclaw","text":"..."}}
         var body_buf: [8192]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&body_buf);
+        var fbs = util.fixedBufferStream(&body_buf);
         const w = fbs.writer();
-        try w.writeAll("{\"msgtype\":\"markdown\",\"markdown\":{\"title\":\"nullclaw\",\"text\":");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"msgtype\":\"markdown\",\"markdown\":{\"title\":\"nullclaw\",\"text\":");
         try root.appendJsonStringW(w, text);
-        try w.writeAll("}}");
+        try w.writeStreamingAll(std.Options.debug_io, "}}");
         const body = fbs.getWritten();
 
-        var client = std.http.Client{ .allocator = self.allocator };
+        var client = std.http.Client{ .allocator = self.allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         const result = client.fetch(.{

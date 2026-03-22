@@ -1,0 +1,8 @@
+unrecognized argument: '-30'
+  access the help menu with 'zig build -h'
+unrecognized argument: '-30'
+  access the help menu with 'zig build -h'
+error: the following build command failed with exit code 1:
+.zig-cache/o/46799455abce25e57855ce273e743172/build /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib /Users/asil/.openclaw/workspace/nullclaw .zig-cache /Users/asil/.cache/zig --seed 0xb31a5c63 -Z85ee64f172fe55ed -30
+error: the following build command failed with exit code 1:
+.zig-cache/o/46799455abce25e57855ce273e743172/build /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/zig /Users/asil/.local/share/zigup/0.16.0-dev.2694+74f361a5c/files/lib /Users/asil/.openclaw/workspace/nullclaw .zig-cache /Users/asil/.cache/zig --seed 0xb31a5c63 -Z85ee64f172fe55ed -30

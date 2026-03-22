@@ -20,6 +20,8 @@ const root = @import("root.zig");
 const platform = @import("../platform.zig");
 const search_providers = @import("web_search_providers/root.zig");
 const search_common = search_providers.common;
+const profiling = @import("../profiling.zig");
+const util = @import("../util.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -72,7 +74,11 @@ pub const WebSearchTool = struct {
         };
     }
 
-    pub fn execute(self: *WebSearchTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *WebSearchTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zoneNamed(@src(), "tool_web_search");
+        defer zone.end();
+
+        _ = io;
         const query = root.getString(args, "query") orelse
             return ToolResult.fail("Missing required 'query' parameter");
 
@@ -100,7 +106,9 @@ pub const WebSearchTool = struct {
                 if (failures.items.len > 0) {
                     try failures.appendSlice(allocator, " | ");
                 }
-                try std.fmt.format(failures.writer(allocator), "{s}:{s}", .{ providerName(provider), @errorName(err) });
+                const fail_msg = try std.fmt.allocPrint(allocator, "{s}:{s}", .{ providerName(provider), @errorName(err) });
+                defer allocator.free(fail_msg);
+                try failures.appendSlice(allocator, fail_msg);
                 continue;
             };
             return result;
@@ -111,7 +119,7 @@ pub const WebSearchTool = struct {
         }
 
         const msg = try std.fmt.allocPrint(allocator, "All web_search providers failed: {s}", .{failures.items});
-        return ToolResult{ .success = false, .output = "", .error_msg = msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
     }
 };
 
@@ -302,7 +310,7 @@ test "WebSearchTool missing query fails" {
     var wst = WebSearchTool{};
     const parsed = try root.parseTestArgs("{\"count\":5}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing required 'query' parameter", result.error_msg.?);
 }
@@ -311,7 +319,7 @@ test "WebSearchTool empty query fails" {
     var wst = WebSearchTool{};
     const parsed = try root.parseTestArgs("{\"query\":\"  \"}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("'query' must not be empty", result.error_msg.?);
 }
@@ -320,7 +328,7 @@ test "WebSearchTool without working provider chain returns aggregate error" {
     var wst = WebSearchTool{};
     const parsed = try root.parseTestArgs("{\"query\":\"zig programming\"}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.error_msg) |e| testing.allocator.free(e);
     try testing.expect(!result.success);
     try testing.expect(std.mem.indexOf(u8, result.error_msg.?, "All web_search providers failed") != null);
@@ -330,7 +338,7 @@ test "WebSearchTool invalid searxng URL reports config error" {
     var wst = WebSearchTool{ .searxng_base_url = "https://searx.example.com?bad=1", .provider = "searxng" };
     const parsed = try root.parseTestArgs("{\"query\":\"zig\"}");
     defer parsed.deinit();
-    const result = try wst.execute(testing.allocator, parsed.value.object);
+    const result = try wst.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Invalid http_request.search_base_url") != null);
 }
@@ -366,22 +374,22 @@ test "buildProviderChain rejects invalid fallback provider" {
 test "parseCount defaults to 5" {
     const p1 = try root.parseTestArgs("{}");
     defer p1.deinit();
-    try testing.expectEqual(@as(usize, DEFAULT_COUNT), parseCount(p1.value.object));
+    try testing.expectEqual(@as(usize, DEFAULT_COUNT), parseCount(p1.parsed.value.object));
     const p2 = try root.parseTestArgs("{\"query\":\"test\"}");
     defer p2.deinit();
-    try testing.expectEqual(@as(usize, DEFAULT_COUNT), parseCount(p2.value.object));
+    try testing.expectEqual(@as(usize, DEFAULT_COUNT), parseCount(p2.parsed.value.object));
 }
 
 test "parseCount clamps to range" {
     const p1 = try root.parseTestArgs("{\"count\":0}");
     defer p1.deinit();
-    try testing.expectEqual(@as(usize, 1), parseCount(p1.value.object));
+    try testing.expectEqual(@as(usize, 1), parseCount(p1.parsed.value.object));
     const p2 = try root.parseTestArgs("{\"count\":100}");
     defer p2.deinit();
-    try testing.expectEqual(@as(usize, MAX_RESULTS), parseCount(p2.value.object));
+    try testing.expectEqual(@as(usize, MAX_RESULTS), parseCount(p2.parsed.value.object));
     const p3 = try root.parseTestArgs("{\"count\":3}");
     defer p3.deinit();
-    try testing.expectEqual(@as(usize, 3), parseCount(p3.value.object));
+    try testing.expectEqual(@as(usize, 3), parseCount(p3.parsed.value.object));
 }
 
 test "urlEncode basic" {

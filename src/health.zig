@@ -21,7 +21,7 @@ pub const HealthSnapshot = struct {
 };
 
 /// Global health registry — thread-safe singleton.
-var registry_mutex: std.Thread.Mutex = .{};
+var registry_mutex: std.Io.Mutex = .{ .state = .init(.unlocked) };
 var registry_components: std.StringHashMapUnmanaged(ComponentHealth) = .empty;
 var registry_started: bool = false;
 var registry_start_time: i64 = 0;
@@ -29,7 +29,7 @@ var pending_error_msg: ?[]const u8 = null;
 
 fn ensureInit() void {
     if (!registry_started) {
-        registry_start_time = std.time.timestamp();
+        registry_start_time = util.timestampUnix();
         registry_started = true;
     }
 }
@@ -40,8 +40,8 @@ fn nowTimestamp(buf: *[32]u8) usize {
 }
 
 fn upsertComponent(component: []const u8, update_fn: *const fn (*ComponentHealth, [32]u8, usize) void) void {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return;
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
     var ts_buf: [32]u8 = undefined;
@@ -82,8 +82,8 @@ pub fn markComponentOk(component: []const u8) void {
 
 /// Mark a component as errored.
 pub fn markComponentError(component: []const u8, err_msg: []const u8) void {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return;
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
     var ts_buf: [32]u8 = undefined;
@@ -110,11 +110,18 @@ pub fn bumpComponentRestart(component: []const u8) void {
 
 /// Get a snapshot of the current health state.
 pub fn snapshot() HealthSnapshot {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch {
+        var empty_map: std.StringHashMapUnmanaged(ComponentHealth) = .empty;
+        return .{
+            .pid = 0,
+            .uptime_seconds = 0,
+            .components = &empty_map,
+        };
+    };
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
-    const now = std.time.timestamp();
+    const now = util.timestampUnix();
     const uptime: u64 = if (now > registry_start_time) @intCast(now - registry_start_time) else 0;
 
     return .{
@@ -126,15 +133,15 @@ pub fn snapshot() HealthSnapshot {
 
 /// Get a specific component's health.
 pub fn getComponentHealth(component: []const u8) ?ComponentHealth {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return null;
+    defer registry_mutex.unlock(std.Options.debug_io);
     return registry_components.get(component);
 }
 
 /// Reset the health registry (for testing).
 pub fn reset() void {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return;
+    defer registry_mutex.unlock(std.Options.debug_io);
     registry_components = .empty;
     registry_started = false;
     registry_start_time = 0;
@@ -176,22 +183,27 @@ pub const ReadinessResult = struct {
     pub fn formatJson(self: ReadinessResult, allocator: std.mem.Allocator) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
 
         const status_str = if (self.status == .ready) "ready" else "not_ready";
-        try w.print("{{\"status\":\"{s}\",\"checks\":[", .{status_str});
+        const prefix = try std.fmt.allocPrint(allocator, "{{\"status\":\"{s}\",\"checks\":[", .{status_str});
+        defer allocator.free(prefix);
+        try buf.appendSlice(allocator, prefix);
 
         for (self.checks, 0..) |check, i| {
-            if (i > 0) try w.writeByte(',');
+            if (i > 0) try buf.append(allocator, ',');
             const healthy_str = if (check.healthy) "true" else "false";
-            try w.print("{{\"name\":\"{s}\",\"healthy\":{s}", .{ check.name, healthy_str });
+            const entry = try std.fmt.allocPrint(allocator, "{{\"name\":\"{s}\",\"healthy\":{s}", .{ check.name, healthy_str });
+            defer allocator.free(entry);
+            try buf.appendSlice(allocator, entry);
             if (check.message) |msg| {
-                try w.print(",\"message\":\"{s}\"", .{msg});
+                const msg_part = try std.fmt.allocPrint(allocator, ",\"message\":\"{s}\"", .{msg});
+                defer allocator.free(msg_part);
+                try buf.appendSlice(allocator, msg_part);
             }
-            try w.writeByte('}');
+            try buf.append(allocator, '}');
         }
 
-        try w.writeAll("]}");
+        try buf.appendSlice(allocator, "]}");
         return try allocator.dupe(u8, buf.items);
     }
 };
@@ -230,8 +242,8 @@ pub fn checkReadiness(components: []const ComponentHealth) ReadinessResult {
 /// named component checks. Uses provided allocator for the checks slice.
 /// Caller owns the returned checks slice.
 pub fn checkRegistryReadiness(allocator: std.mem.Allocator) !ReadinessResult {
-    registry_mutex.lock();
-    defer registry_mutex.unlock();
+    registry_mutex.lock(std.Options.debug_io) catch return error.Unknown;
+    defer registry_mutex.unlock(std.Options.debug_io);
     ensureInit();
 
     const count = registry_components.count();

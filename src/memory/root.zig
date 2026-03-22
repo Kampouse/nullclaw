@@ -62,6 +62,7 @@ pub const rollout = @import("lifecycle/rollout.zig");
 pub const migrate = @import("lifecycle/migrate.zig");
 pub const diagnostics = @import("lifecycle/diagnostics.zig");
 pub const summarizer = @import("lifecycle/summarizer.zig");
+pub const consolidation = @import("lifecycle/consolidation.zig");
 
 pub const SqliteMemory = sqlite.SqliteMemory;
 pub const MarkdownMemory = markdown.MarkdownMemory;
@@ -1300,7 +1301,11 @@ const TestWorkspace = struct {
 
     fn init(allocator: std.mem.Allocator) !TestWorkspace {
         var tmp = std.testing.tmpDir(.{});
-        const path = try tmp.dir.realpathAlloc(allocator, ".");
+        const path_z = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", allocator);
+        // path_z is [:0]u8 with allocation size len+1 (includes sentinel)
+        // Dupe the content without sentinel, then free the original
+        const path = try allocator.dupe(u8, path_z[0..path_z.len]);
+        allocator.free(path_z.ptr[0 .. path_z.len + 1]);
         return .{ .tmp = tmp, .path = path };
     }
 

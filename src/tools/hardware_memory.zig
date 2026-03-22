@@ -32,7 +32,8 @@ pub const HardwareMemoryTool = struct {
         };
     }
 
-    pub fn execute(self: *HardwareMemoryTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *HardwareMemoryTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         if (self.boards.len == 0) {
             return ToolResult.fail("No peripherals configured. Add boards to config.toml [peripherals.boards].");
         }
@@ -46,7 +47,7 @@ pub const HardwareMemoryTool = struct {
         // Validate board is a supported type
         const chip = chipForBoard(board) orelse {
             const msg = try std.fmt.allocPrint(allocator, "Memory operations only support nucleo-f401re, nucleo-f411re. Got: {s}", .{board});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         const address_str = root.getString(args, "address") orelse "0x20000000";
@@ -62,7 +63,7 @@ pub const HardwareMemoryTool = struct {
             return probeWrite(allocator, chip, address, value);
         } else {
             const msg = try std.fmt.allocPrint(allocator, "Unknown action '{s}'. Use 'read' or 'write'.", .{action});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
     }
 };
@@ -93,7 +94,7 @@ fn probeRead(allocator: std.mem.Allocator, chip: []const u8, address: u64, lengt
     defer allocator.free(result.stderr);
 
     if (result.success) {
-        if (result.stdout.len > 0) return ToolResult{ .success = true, .output = result.stdout };
+        if (result.stdout.len > 0) return ToolResult{ .success = true, .output = result.stdout, .owns_output = true };
         allocator.free(result.stdout);
         return ToolResult{ .success = true, .output = try allocator.dupe(u8, "(no output from probe-rs)") };
     }
@@ -104,9 +105,9 @@ fn probeRead(allocator: std.mem.Allocator, chip: []const u8, address: u64, lengt
             "probe-rs read failed (exit {d}): {s}",
             .{ code, if (result.stderr.len > 0) result.stderr else "unknown error" },
         );
-        return ToolResult{ .success = false, .output = "", .error_msg = err_msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
     }
-    return ToolResult{ .success = false, .output = "", .error_msg = "probe-rs read terminated by signal" };
+    return ToolResult{ .success = false, .output = "", .error_msg = "probe-rs read terminated by signal", .owns_error_msg = true };
 }
 
 /// Execute a probe-rs write command: `probe-rs write --chip CHIP ADDRESS VALUE`
@@ -130,7 +131,7 @@ fn probeWrite(allocator: std.mem.Allocator, chip: []const u8, address: u64, valu
             "Write OK: 0x{X:0>8} <- {s} ({s}){s}",
             .{ address, value, chip, if (result.stdout.len > 0) result.stdout else "" },
         );
-        return ToolResult{ .success = true, .output = out };
+        return ToolResult{ .success = true, .output = out, .owns_output = true };
     }
     defer allocator.free(result.stdout);
     if (result.exit_code) |code| {
@@ -139,9 +140,9 @@ fn probeWrite(allocator: std.mem.Allocator, chip: []const u8, address: u64, valu
             "probe-rs write failed (exit {d}): {s}",
             .{ code, if (result.stderr.len > 0) result.stderr else "unknown error" },
         );
-        return ToolResult{ .success = false, .output = "", .error_msg = err_msg };
+        return ToolResult{ .success = false, .output = "", .error_msg = err_msg, .owns_error_msg = true };
     }
-    return ToolResult{ .success = false, .output = "", .error_msg = "probe-rs write terminated by signal" };
+    return ToolResult{ .success = false, .output = "", .error_msg = "probe-rs write terminated by signal", .owns_error_msg = true };
 }
 
 fn chipForBoard(board: []const u8) ?[]const u8 {
@@ -179,7 +180,7 @@ test "hardware_memory no boards returns error" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "peripherals") != null);
 }
@@ -190,7 +191,7 @@ test "hardware_memory missing action returns error" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "action") != null);
 }
@@ -201,8 +202,8 @@ test "hardware_memory unsupported board" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\", \"board\": \"esp32\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "nucleo") != null);
 }
@@ -213,12 +214,12 @@ test "hardware_memory read without probe-rs" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"read\", \"address\": \"0x20000000\", \"length\": 64}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // Only free heap-allocated output/error_msg (probe-rs failure returns a
     // heap-allocated error when the command runs but fails, or allocPrint output
     // on success; ToolResult.fail() returns a string literal that must NOT be freed).
     const has_probe = probeRsAvailable(std.testing.allocator);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     defer if (has_probe) {
         if (result.error_msg) |e| std.testing.allocator.free(e);
     };
@@ -239,9 +240,9 @@ test "hardware_memory write without probe-rs" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"write\", \"address\": \"0x20000000\", \"value\": \"DEADBEEF\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     const has_probe = probeRsAvailable(std.testing.allocator);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    defer result.deinit(std.testing.allocator);
     defer if (has_probe) {
         if (result.error_msg) |e| std.testing.allocator.free(e);
     };
@@ -261,7 +262,7 @@ test "hardware_memory write missing value" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"write\", \"address\": \"0x20000000\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "value") != null);
 }
@@ -272,8 +273,8 @@ test "hardware_memory unknown action" {
     const t = hm.tool();
     const parsed = try root.parseTestArgs("{\"action\": \"delete\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
 }
 

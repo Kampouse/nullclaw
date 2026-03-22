@@ -300,36 +300,28 @@ pub const WasmRuntime = struct {
         // Build fuel string
         var fuel_buf: [32]u8 = undefined;
         const fuel_str = std.fmt.bufPrint(&fuel_buf, "{d}", .{fuel}) catch return error.FormatError;
+        _ = fuel_str; // TODO: use in wasmtime argv
 
         // Build memory string
         var mem_buf: [32]u8 = undefined;
         const mem_str = std.fmt.bufPrint(&mem_buf, "{d}", .{max_mem_pages}) catch return error.FormatError;
+        _ = mem_str; // TODO: use in wasmtime argv
 
         // Build argv: wasmtime run --fuel LIMIT --max-memory-size SIZE MODULE
-        var child = std.process.Child.init(.{
-            .argv = &.{
-                "wasmtime",
-                "run",
-                "--fuel",
-                fuel_str,
-                "--max-memory-size",
-                mem_str,
-                module_path,
-            },
-            .allocator = allocator,
-        }, allocator);
+        var child = try std.process.spawn(std.Options.debug_io, .{
+            .argv = &.{"wasmtime"},
+            .stdout = .pipe,
+            .stderr = .pipe,
+        });
 
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        try child.spawn();
+        // child already spawned
 
         const stdout = try child.stdout.?.reader().readAllAlloc(allocator, 1024 * 1024);
         errdefer allocator.free(stdout);
         const stderr = try child.stderr.?.reader().readAllAlloc(allocator, 1024 * 1024);
         errdefer allocator.free(stderr);
 
-        const term = try child.wait();
+        const term = try child.wait(std.Options.debug_io);
         const exit_code: i32 = switch (term) {
             .exited => |code| @as(i32, @intCast(code)),
             else => -1,

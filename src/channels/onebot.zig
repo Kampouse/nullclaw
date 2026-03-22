@@ -2,6 +2,7 @@ const std = @import("std");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
 const bus = @import("../bus.zig");
+const util = @import("../util.zig");
 
 const log = std.log.scoped(.onebot);
 
@@ -275,7 +276,7 @@ pub const OneBotChannel = struct {
             if (self.config.group_trigger_prefix) |prefix| {
                 if (std.mem.startsWith(u8, content, prefix)) {
                     // Strip prefix and leading whitespace
-                    content = std.mem.trimLeft(u8, content[prefix.len..], " ");
+                    content = std.mem.trim(u8, content[prefix.len..], " ");
                 } else if (!cq.is_mention) {
                     // Not prefixed and not a mention — skip
                     return;
@@ -292,17 +293,17 @@ pub const OneBotChannel = struct {
 
         // Build metadata JSON
         var meta_buf: [256]u8 = undefined;
-        var meta_fbs = std.io.fixedBufferStream(&meta_buf);
+        var meta_fbs = util.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
         mw.print("{{\"message_id\":{d},\"is_group\":{s}", .{
             message_id,
             if (is_group) "true" else "false",
         }) catch return;
-        mw.writeAll(",\"account_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":") catch return;
         root.appendJsonStringW(mw, self.config.account_id) catch return;
         if (cq.reply_id) |rid| {
-            mw.writeAll(",\"reply_to\":\"") catch return;
-            mw.writeAll(rid) catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"reply_to\":\"") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, rid) catch return;
             mw.writeByte('"') catch return;
         }
         mw.writeByte('}') catch return;
@@ -350,24 +351,25 @@ pub const OneBotChannel = struct {
         // Build API URL
         var url_buf: [512]u8 = undefined;
         const api_base = deriveHttpBase(self.config.url);
-        var url_fbs = std.io.fixedBufferStream(&url_buf);
+        var url_fbs = util.fixedBufferStream(&url_buf);
         try url_fbs.writer().print("{s}/send_msg", .{api_base});
         const url = url_fbs.getWritten();
 
         // Build JSON body dynamically
         var body_list: std.ArrayListUnmanaged(u8) = .empty;
         defer body_list.deinit(self.allocator);
-        const bw = body_list.writer(self.allocator);
-        try bw.writeAll("{\"action\":\"send_msg\",\"params\":{");
-        try bw.print("\"message_type\":\"{s}\",", .{msg_type});
+        try body_list.appendSlice(self.allocator, "{\"action\":\"send_msg\",\"params\":{");
+
+        var buf: [256]u8 = undefined;
+        try body_list.appendSlice(self.allocator, std.fmt.bufPrint(&buf, "\"message_type\":\"{s}\",", .{msg_type}) catch return error.OnebotSendError);
         if (std.mem.eql(u8, msg_type, "group")) {
-            try bw.print("\"group_id\":{s},", .{id_str});
+            try body_list.appendSlice(self.allocator, std.fmt.bufPrint(&buf, "\"group_id\":{s},", .{id_str}) catch return error.OnebotSendError);
         } else {
-            try bw.print("\"user_id\":{s},", .{id_str});
+            try body_list.appendSlice(self.allocator, std.fmt.bufPrint(&buf, "\"user_id\":{s},", .{id_str}) catch return error.OnebotSendError);
         }
-        try bw.writeAll("\"message\":");
-        try root.appendJsonStringW(bw, text);
-        try bw.writeAll("}}");
+        try body_list.appendSlice(self.allocator, "\"message\":");
+        try appendJsonStringArrayList(&body_list, self.allocator, text);
+        try body_list.appendSlice(self.allocator, "}}");
         const body = body_list.items;
 
         // Build headers
@@ -375,7 +377,7 @@ pub const OneBotChannel = struct {
         var header_storage: [512]u8 = undefined;
         var headers: []const []const u8 = &.{};
         if (self.config.access_token) |token| {
-            var hdr_fbs = std.io.fixedBufferStream(&header_storage);
+            var hdr_fbs = util.fixedBufferStream(&header_storage);
             try hdr_fbs.writer().print("Authorization: Bearer {s}", .{token});
             headers_buf[0] = hdr_fbs.getWritten();
             headers = &headers_buf;
@@ -415,6 +417,20 @@ pub const OneBotChannel = struct {
     fn vtableHealthCheck(ptr: *anyopaque) bool {
         const self: *OneBotChannel = @ptrCast(@alignCast(ptr));
         return self.healthCheck();
+    }
+
+    /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
+    fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| {
+            switch (c) {
+                '\\' => try buf.appendSlice(alloc, "\\\\"),
+                '"' => try buf.appendSlice(alloc, "\\\""),
+                '\n' => try buf.appendSlice(alloc, "\\n"),
+                '\r' => try buf.appendSlice(alloc, "\\r"),
+                '\t' => try buf.appendSlice(alloc, "\\t"),
+                else => try buf.append(alloc, c),
+            }
+        }
     }
 
     pub const vtable = root.Channel.VTable{

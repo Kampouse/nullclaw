@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const util = @import("util.zig");
 
 const log = std.log.scoped(.update);
 
@@ -107,7 +108,8 @@ pub fn run(allocator: std.mem.Allocator, opts: Options) !void {
 
     // Get executable path
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_path = try std.fs.selfExePath(&exe_buf);
+    const exe_len = try std.process.executablePath(std.Options.debug_io, &exe_buf);
+    const exe_path = exe_buf[0..exe_len];
 
     // Download and install
     try downloadAndInstall(allocator, download_url, exe_path, asset_name);
@@ -129,7 +131,8 @@ pub const InstallMethod = enum {
 
 pub fn detectInstallMethod() !InstallMethod {
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_path = try std.fs.selfExePath(&exe_buf);
+    const exe_len = try std.process.executablePath(std.Options.debug_io, &exe_buf);
+    const exe_path = exe_buf[0..exe_len];
 
     // Check for nix
     if (std.mem.indexOf(u8, exe_path, "/nix/store/") != null) {
@@ -195,10 +198,9 @@ pub fn getLatestRelease(allocator: std.mem.Allocator) !ReleaseInfo {
     const url = "https://api.github.com/repos/nullclaw/nullclaw/releases/latest";
 
     // Use curl subprocess approach (from http_util pattern)
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
+    const result = std.process.run(allocator, util.createProcessIo(), .{
         .argv = &.{ "curl", "-sf", "--max-time", "30", url },
-        .max_output_bytes = 10 * 1024 * 1024,
+        .stdout_limit = .limited(10 * 1024 * 1024),
     }) catch |err| {
         log.err("curl failed: {}", .{err});
         return error.CurlFailed;
@@ -308,15 +310,15 @@ fn downloadAndInstall(
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.partial", .{exe_path});
     defer allocator.free(tmp_path);
 
-    var tmp_file = try std.fs.createFileAbsolute(tmp_path, .{ .read = true });
+    var tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{.read = true });
     var tmp_closed = false;
-    defer if (!tmp_closed) tmp_file.close();
+    defer if (!tmp_closed) tmp_file.close(std.Options.debug_io);
     errdefer {
         if (!tmp_closed) {
-            tmp_file.close();
+            tmp_file.close(std.Options.debug_io);
             tmp_closed = true;
         }
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
     }
 
     // Download directly to file (streaming, no memory buffer limit)
@@ -333,13 +335,13 @@ fn downloadAndInstall(
 
     // Set executable permissions (Unix only)
     if (comptime builtin.os.tag != .windows) {
-        tmp_file.chmod(0o755) catch |err| {
+        tmp_file.setPermissions(std.Options.debug_io, @enumFromInt(0o755)) catch |err| {
             log.warn("Failed to set executable permissions: {}", .{err});
         };
     }
 
     // Close handle before rename/replacement (required on Windows).
-    tmp_file.close();
+    tmp_file.close(std.Options.debug_io);
     tmp_closed = true;
 
     // Atomic replacement
@@ -351,49 +353,51 @@ fn downloadAndInstall(
 /// Download a URL directly to a file using curl.
 /// Streams the data to avoid memory buffer limits.
 /// Returns the number of bytes downloaded.
-fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.fs.File) !usize {
+fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.Io.File) !usize {
+    _ = allocator; // TODO: use for buffer allocation
     const argv = &[_][]const u8{ "curl", "-sfL", "--max-time", "60", url };
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    child.spawn() catch |err| {
+    var child = std.process.spawn(std.Options.debug_io, .{
+        .argv = argv,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    }) catch |err| {
         log.err("curl spawn failed: {}", .{err});
         return error.CurlFailed;
     };
 
-    const stdout = child.stdout.?;
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout = child.stdout.?.reader(std.Options.debug_io, &stdout_buf);
 
     const BUF_SIZE = 64 * 1024;
     var buffer: [BUF_SIZE]u8 = undefined;
     var total_bytes: usize = 0;
 
     while (true) {
-        const bytes_read = stdout.read(&buffer) catch |err| {
+        const bytes_read = stdout.interface.readSliceShort(&buffer) catch |err| {
             log.err("curl read failed: {}", .{err});
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            child.kill(std.Options.debug_io);
+            _ = child.wait(std.Options.debug_io) catch {};
             return error.CurlFailed;
         };
 
         if (bytes_read == 0) break;
 
-        file.writeAll(buffer[0..bytes_read]) catch |err| {
+        file.writeStreamingAll(std.Options.debug_io, buffer[0..bytes_read]) catch |err| {
             log.err("download write failed: {}", .{err});
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            child.kill(std.Options.debug_io);
+            _ = child.wait(std.Options.debug_io) catch {};
             return err;
         };
         total_bytes += bytes_read;
     }
 
-    const term = child.wait() catch |err| {
+    const term = child.wait(std.Options.debug_io) catch |err| {
         log.err("curl wait failed: {}", .{err});
         return error.CurlFailed;
     };
 
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             log.err("curl exited with code: {}", .{code});
             return error.CurlFailed;
         },
@@ -409,33 +413,36 @@ fn atomicReplace(tmp_path: []const u8, exe_path: []const u8) !void {
         const old_path = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.old", .{exe_path});
         defer std.heap.page_allocator.free(old_path);
 
-        std.fs.deleteFileAbsolute(old_path) catch {};
-        std.fs.renameAbsolute(exe_path, old_path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, old_path) catch {};
+        try std.Io.Dir.cwd().rename(exe_path, std.Io.Dir.cwd(), old_path, std.Options.debug_io) catch {};
 
-        try std.fs.renameAbsolute(tmp_path, exe_path);
-        std.fs.deleteFileAbsolute(old_path) catch {};
+        try std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), exe_path, std.Options.debug_io);
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, old_path) catch {};
     } else {
         // Unix: atomic rename on same filesystem
-        try std.fs.renameAbsolute(tmp_path, exe_path);
+        try std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), exe_path, std.Options.debug_io);
     }
 }
 
 // ── User Input ────────────────────────────────────────────────────────
 
 fn readLine(allocator: std.mem.Allocator) ![]const u8 {
-    const stdin = std.fs.File.stdin();
+    const stdin = std.Io.File.stdin();
 
     var buffer: [256]u8 = undefined;
+    var read_buf: [256]u8 = undefined;
+    var reader = stdin.reader(std.Options.debug_io, &read_buf);
+
     var pos: usize = 0;
     while (pos < buffer.len) {
-        const n = try stdin.read(buffer[pos .. pos + 1]);
+        const n = try reader.interface.readSliceShort(buffer[pos..]);
         if (n == 0) return error.EndOfStream; // EOF
         if (buffer[pos] == '\n') break;
         pos += 1;
     }
 
     // Trim newline
-    const trimmed = std.mem.trimRight(u8, buffer[0..pos], "\r");
+    const trimmed = std.mem.trimEnd(u8, buffer[0..pos], "\r");
     return allocator.dupe(u8, trimmed);
 }
 
@@ -491,19 +498,19 @@ test "downloadToFile streams from local file URL" {
     const dst_name = "dst.bin";
     const payload = "hello-streaming-download";
 
-    var src_file = try tmp_dir.dir.createFile(src_name, .{});
-    defer src_file.close();
-    try src_file.writeAll(payload);
-    try src_file.sync();
+    var src_file = try tmp_dir.dir.createFile(std.Options.debug_io, src_name, .{});
+    defer src_file.close(std.Options.debug_io);
+    try src_file.writeStreamingAll(std.Options.debug_io, payload);
+    try src_file.sync(std.Options.debug_io);
 
-    const src_abs = try tmp_dir.dir.realpathAlloc(allocator, src_name);
-    defer allocator.free(src_abs);
+    const src_abs = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, src_name, allocator);
+    defer allocator.free(src_abs.ptr[0 .. src_abs.len + 1]);
 
     const file_url = try std.fmt.allocPrint(allocator, "file://{s}", .{src_abs});
     defer allocator.free(file_url);
 
-    var dst_file = try tmp_dir.dir.createFile(dst_name, .{ .read = true });
-    defer dst_file.close();
+    var dst_file = try tmp_dir.dir.createFile(std.Options.debug_io, dst_name, .{ .read = true });
+    defer dst_file.close(std.Options.debug_io);
 
     const bytes_downloaded = downloadToFile(
         allocator,
@@ -516,8 +523,14 @@ test "downloadToFile streams from local file URL" {
 
     try std.testing.expectEqual(payload.len, bytes_downloaded);
 
-    try dst_file.seekTo(0);
-    const content = try dst_file.readToEndAlloc(allocator, payload.len + 1);
+    // Since seekTo doesn't exist, close and reopen to read back
+    dst_file.close(std.Options.debug_io);
+    var verify_file = try tmp_dir.dir.openFile(std.Options.debug_io, dst_name, .{ .mode = .read_only });
+    defer verify_file.close(std.Options.debug_io);
+
+    var verify_buf: [4096]u8 = undefined;
+    var verify_reader = verify_file.reader(std.Options.debug_io, &verify_buf);
+    const content = try verify_reader.interface.readAlloc(allocator, payload.len + 1);
     defer allocator.free(content);
     try std.testing.expectEqualStrings(payload, content);
 }

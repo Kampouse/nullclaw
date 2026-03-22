@@ -8,8 +8,10 @@ const root = @import("root.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
-const isPathSafe = @import("path_security.zig").isPathSafe;
-const isResolvedPathAllowed = @import("path_security.zig").isResolvedPathAllowed;
+const path_security = @import("path_security.zig");
+const isPathSafe = path_security.isPathSafe;
+const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
+const resolvePathAlloc = path_security.resolvePathAlloc;
 
 /// Default maximum file size to read before appending (10MB).
 const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -35,7 +37,8 @@ pub const FileAppendTool = struct {
         };
     }
 
-    pub fn execute(self: *FileAppendTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *FileAppendTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 
@@ -57,13 +60,13 @@ pub const FileAppendTool = struct {
         defer allocator.free(full_path);
 
         // Resolve workspace path (may fail if workspace doesn't exist yet)
-        const ws_resolved: ?[]const u8 = std.fs.cwd().realpathAlloc(allocator, self.workspace_dir) catch null;
+        const ws_resolved: ?[]const u8 = resolvePathAlloc(allocator, self.workspace_dir) catch null;
         defer if (ws_resolved) |wr| allocator.free(wr);
         const ws_str = ws_resolved orelse "";
 
         // Try to read existing content
         const existing = blk: {
-            const resolved = std.fs.cwd().realpathAlloc(allocator, full_path) catch {
+            const resolved = resolvePathAlloc(allocator, full_path) catch {
                 break :blk @as(?[]const u8, null);
             };
             defer allocator.free(resolved);
@@ -72,16 +75,9 @@ pub const FileAppendTool = struct {
                 return ToolResult.fail("Path is outside allowed areas");
             }
 
-            const file = std.fs.openFileAbsolute(resolved, .{}) catch |err| {
-                const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            const data = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, resolved, allocator, .limited(self.max_file_size)) catch {
+                break :blk @as(?[]const u8, null);
             };
-            const data = file.readToEndAlloc(allocator, self.max_file_size) catch |err| {
-                file.close();
-                const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
-            };
-            file.close();
             break :blk @as(?[]const u8, data);
         };
         defer if (existing) |e| allocator.free(e);
@@ -94,32 +90,41 @@ pub const FileAppendTool = struct {
         defer allocator.free(new_contents);
 
         // Write back
-        const file_w = std.fs.cwd().createFile(full_path, .{ .truncate = true }) catch |err| {
+        const file_w = std.Io.Dir.cwd().createFile(std.Options.debug_io, full_path, .{ .truncate = true }) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to create/open file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
-        defer file_w.close();
+        defer file_w.close(std.Options.debug_io);
 
-        file_w.writeAll(new_contents) catch |err| {
+        // Write all contents to file
+        var buf: [4096]u8 = undefined;
+        var bw = file_w.writer(std.Options.debug_io, &buf);
+        const w = &bw.interface;
+
+        w.writeAll(new_contents) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to write file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+        };
+        w.flush() catch |err| {
+            const msg = try std.fmt.allocPrint(allocator, "Failed to flush file: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         // Verify newly created files are within allowed areas
         if (existing == null) {
-            const new_resolved = std.fs.cwd().realpathAlloc(allocator, full_path) catch {
-                std.fs.cwd().deleteFile(full_path) catch {};
+            const new_resolved = resolvePathAlloc(allocator, full_path) catch {
+                std.Io.Dir.cwd().deleteFile(std.Options.debug_io, full_path) catch {};
                 return ToolResult.fail("Failed to verify created file location");
             };
             defer allocator.free(new_resolved);
             if (!isResolvedPathAllowed(allocator, new_resolved, ws_str, self.allowed_paths)) {
-                std.fs.cwd().deleteFile(full_path) catch {};
+                std.Io.Dir.cwd().deleteFile(std.Options.debug_io, full_path) catch {};
                 return ToolResult.fail("Created file is outside allowed areas");
             }
         }
 
         const msg = try std.fmt.allocPrint(allocator, "Appended {d} bytes to {s}", .{ content.len, path });
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 };
 
@@ -139,7 +144,7 @@ test "FileAppendTool missing path" {
     var fat = FileAppendTool{ .workspace_dir = "/tmp" };
     const parsed = try root.parseTestArgs("{\"content\":\"hello\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing 'path' parameter", result.error_msg.?);
 }
@@ -148,7 +153,7 @@ test "FileAppendTool missing content" {
     var fat = FileAppendTool{ .workspace_dir = "/tmp" };
     const parsed = try root.parseTestArgs("{\"path\":\"test.txt\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expectEqualStrings("Missing 'content' parameter", result.error_msg.?);
 }
@@ -157,102 +162,106 @@ test "FileAppendTool blocks path traversal" {
     var fat = FileAppendTool{ .workspace_dir = "/tmp/workspace" };
     const parsed = try root.parseTestArgs("{\"path\":\"../../etc/evil\",\"content\":\"x\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     try testing.expect(!result.success);
     try testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not allowed") != null);
 }
 
 test "FileAppendTool appends to existing file" {
+    const io = std.Options.debug_io;
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "log.txt", .data = "line1" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "log.txt", .data = "line1" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var fat = FileAppendTool{ .workspace_dir = ws_path };
+    var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"log.txt\",\"content\":\"line2\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) testing.allocator.free(result.output);
     defer if (result.error_msg) |e| testing.allocator.free(e);
 
     try testing.expect(result.success);
     try testing.expect(std.mem.indexOf(u8, result.output, "Appended") != null);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "log.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "log.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("line1line2", actual);
 }
 
 test "FileAppendTool creates new file" {
+    const io = std.Options.debug_io;
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var fat = FileAppendTool{ .workspace_dir = ws_path };
+    var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"new.txt\",\"content\":\"hello\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) testing.allocator.free(result.output);
     defer if (result.error_msg) |e| testing.allocator.free(e);
 
     try testing.expect(result.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "new.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "new.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("hello", actual);
 }
 
 test "FileAppendTool appends to empty file" {
+    const io = std.Options.debug_io;
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "empty.txt", .data = "" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "empty.txt", .data = "" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var fat = FileAppendTool{ .workspace_dir = ws_path };
+    var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
     const parsed = try root.parseTestArgs("{\"path\":\"empty.txt\",\"content\":\"data\"}");
     defer parsed.deinit();
-    const result = try fat.execute(testing.allocator, parsed.value.object);
+    const result = try fat.execute(testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) testing.allocator.free(result.output);
     defer if (result.error_msg) |e| testing.allocator.free(e);
 
     try testing.expect(result.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "empty.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "empty.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("data", actual);
 }
 
 test "FileAppendTool multiple appends" {
+    const io = std.Options.debug_io;
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "multi.txt", .data = "A" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "multi.txt", .data = "A" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
-    var fat = FileAppendTool{ .workspace_dir = ws_path };
+    var fat = FileAppendTool{ .workspace_dir = ws_path[0..ws_path.len] };
 
     const p1 = try root.parseTestArgs("{\"path\":\"multi.txt\",\"content\":\"B\"}");
     defer p1.deinit();
-    const r1 = try fat.execute(testing.allocator, p1.value.object);
+    const r1 = try fat.execute(testing.allocator, p1.parsed.value.object, std.testing.io);
     defer if (r1.output.len > 0) testing.allocator.free(r1.output);
     defer if (r1.error_msg) |e| testing.allocator.free(e);
     try testing.expect(r1.success);
 
     const p2 = try root.parseTestArgs("{\"path\":\"multi.txt\",\"content\":\"C\"}");
     defer p2.deinit();
-    const r2 = try fat.execute(testing.allocator, p2.value.object);
+    const r2 = try fat.execute(testing.allocator, p2.parsed.value.object, std.testing.io);
     defer if (r2.output.len > 0) testing.allocator.free(r2.output);
     defer if (r2.error_msg) |e| testing.allocator.free(e);
     try testing.expect(r2.success);
 
-    const actual = try tmp_dir.dir.readFileAlloc(testing.allocator, "multi.txt", 4096);
+    const actual = try tmp_dir.dir.readFileAlloc(io, "multi.txt", testing.allocator, .limited(4096));
     defer testing.allocator.free(actual);
     try testing.expectEqualStrings("ABC", actual);
 }

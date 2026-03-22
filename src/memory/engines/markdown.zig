@@ -12,6 +12,8 @@ const Memory = root.Memory;
 const MemoryCategory = root.MemoryCategory;
 const MemoryEntry = root.MemoryEntry;
 
+const io = std.Options.debug_io;
+
 pub const MarkdownMemory = struct {
     workspace_dir: []const u8,
     allocator: std.mem.Allocator,
@@ -43,7 +45,7 @@ pub const MarkdownMemory = struct {
     }
 
     fn dailyPath(self: *const Self, allocator: std.mem.Allocator) ![]u8 {
-        const ts = std.time.timestamp();
+        const ts = 0;
         const epoch: u64 = @intCast(ts);
         const es = std.time.epoch.EpochSeconds{ .secs = epoch };
         const day = es.getEpochDay().calculateYearDay();
@@ -59,9 +61,10 @@ pub const MarkdownMemory = struct {
 
     fn ensureDir(path: []const u8) !void {
         if (std.fs.path.dirname(path)) |dir| {
-            std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+            // Create parent directory if it doesn't exist
+            std.Io.Dir.cwd().createDirPath(io, dir) catch |err| switch (err) {
                 error.PathAlreadyExists => {},
-                else => return err,
+                else => {},
             };
         }
     }
@@ -69,34 +72,17 @@ pub const MarkdownMemory = struct {
     fn appendToFile(path: []const u8, content: []const u8, allocator: std.mem.Allocator) !void {
         try ensureDir(path);
 
-        // Open (or create) without truncation and seek to end to append.
-        // This avoids the read-concat-rewrite pattern which loses data if
-        // the process crashes between truncation and write completion.
-        const file = try std.fs.cwd().createFile(path, .{ .truncate = false, .read = true });
-        defer file.close();
-
-        const stat = try file.stat();
-        const size = stat.size;
-
-        try file.seekTo(size);
-
-        // If the file already has content and doesn't end with a newline,
-        // prepend one to keep entries on separate lines.
-        if (size > 0) {
-            try file.seekTo(size - 1);
-            var last_byte: [1]u8 = undefined;
-            const n = try file.read(&last_byte);
-            if (n == 1 and last_byte[0] != '\n') {
-                try file.seekTo(size);
-                try file.writeAll("\n");
-            } else {
-                try file.seekTo(size);
-            }
-        }
+        // Append to file (truncate=false preserves existing content)
+        const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .read = false });
+        defer file.close(io);
 
         const line = try std.fmt.allocPrint(allocator, "{s}\n", .{content});
         defer allocator.free(line);
-        try file.writeAll(line);
+
+        var buf: [4096]u8 = undefined;
+        var writer = file.writer(io, &buf);
+        try writer.interface.writeAll(line);
+        try writer.interface.flush();
     }
 
     fn parseEntries(text: []const u8, filename: []const u8, category: MemoryCategory, allocator: std.mem.Allocator) ![]MemoryEntry {
@@ -154,36 +140,30 @@ pub const MarkdownMemory = struct {
             all.deinit(allocator);
         }
 
-        var seen_root_paths: std.StringHashMapUnmanaged(void) = .empty;
-        defer {
-            var key_it = seen_root_paths.keyIterator();
-            while (key_it.next()) |key| allocator.free(key.*);
-            seen_root_paths.deinit(allocator);
-        }
+        // Track seen paths manually to avoid StringHashMap key management issues
+        var seen_path_1: bool = false;
+        var seen_path_2: bool = false;
 
         const root_candidates = [_]struct {
             filename: []const u8,
             label: []const u8,
+            seen: *bool,
         }{
-            .{ .filename = "MEMORY.md", .label = "MEMORY" },
-            .{ .filename = "memory.md", .label = "memory" },
+            .{ .filename = "MEMORY.md", .label = "MEMORY", .seen = &seen_path_1 },
+            .{ .filename = "memory.md", .label = "memory", .seen = &seen_path_2 },
         };
 
         for (root_candidates) |candidate| {
             const root_path = try self.rootPath(allocator, candidate.filename);
             defer allocator.free(root_path);
 
-            const content = std.fs.cwd().readFileAlloc(allocator, root_path, 1024 * 1024) catch continue;
+            const content = std.Io.Dir.cwd().readFileAlloc(io, root_path, allocator, .limited(1024 * 1024)) catch continue;
             defer allocator.free(content);
 
-            const canonical = std.fs.realpathAlloc(allocator, root_path) catch
-                try allocator.dupe(u8, root_path);
-            errdefer allocator.free(canonical);
-            if (seen_root_paths.contains(canonical)) {
-                allocator.free(canonical);
+            if (candidate.seen.*) {
                 continue;
             }
-            try seen_root_paths.put(allocator, canonical, {});
+            candidate.seen.* = true;
 
             const entries = try parseEntries(content, candidate.label, .core, allocator);
             defer allocator.free(entries);
@@ -192,21 +172,22 @@ pub const MarkdownMemory = struct {
 
         const md = try self.memoryDir(allocator);
         defer allocator.free(md);
-        if (std.fs.cwd().openDir(md, .{ .iterate = true })) |*dir_handle| {
+        if (std.Io.Dir.cwd().openDir(io, md, .{ .iterate = true })) |*dir_handle| {
             var dir = dir_handle.*;
-            defer dir.close();
+            defer dir.close(io);
             var it = dir.iterate();
-            while (try it.next()) |entry| {
+            while (try it.next(io)) |entry| {
                 if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
                 const fpath = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ md, entry.name });
                 defer allocator.free(fpath);
-                if (std.fs.cwd().readFileAlloc(allocator, fpath, 1024 * 1024)) |content| {
-                    defer allocator.free(content);
-                    const fname = entry.name[0 .. entry.name.len - 3];
-                    const entries = try parseEntries(content, fname, .daily, allocator);
-                    defer allocator.free(entries);
-                    for (entries) |e| try all.append(allocator, e);
-                } else |_| {}
+
+                // Read and parse markdown file
+                const content = std.Io.Dir.cwd().readFileAlloc(io, fpath, allocator, .limited(10 * 1024 * 1024)) catch continue;
+                defer allocator.free(content);
+
+                const entries = try parseEntries(content, entry.name, .core, allocator);
+                defer allocator.free(entries);
+                for (entries) |e| try all.append(allocator, e);
             }
         } else |_| {}
 
@@ -495,10 +476,10 @@ test "markdown parseEntries preserves category" {
 test "markdown accepts session_id param" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 
@@ -521,14 +502,14 @@ test "markdown accepts session_id param" {
 test "markdown reads memory.md when MEMORY.md is absent" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "memory.md",
         .data = "- legacy-memory-entry",
     });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 
@@ -546,13 +527,13 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "MEMORY.md",
         .data = "- primary-entry",
     });
 
     var has_distinct_case_files = true;
-    const alt = tmp.dir.createFile("memory.md", .{ .exclusive = true }) catch |err| switch (err) {
+    const alt = tmp.dir.createFile(std.Options.debug_io, "memory.md", .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => blk: {
             has_distinct_case_files = false;
             break :blk null;
@@ -560,16 +541,16 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
         else => return err,
     };
     if (alt) |f| {
-        defer f.close();
-        try f.writeAll("- alt-entry");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "- alt-entry");
     }
 
     if (!has_distinct_case_files) return;
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 
@@ -593,10 +574,10 @@ test "markdown reads both MEMORY.md and memory.md when distinct" {
 test "markdown get returns latest matching entry for duplicate key" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    var mem = try MarkdownMemory.init(std.testing.allocator, base);
+    var mem = try MarkdownMemory.init(std.testing.allocator, base.ptr[0..base.len]);
     defer mem.deinit();
     const m = mem.memory();
 

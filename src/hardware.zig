@@ -89,12 +89,24 @@ fn parseHexFromLine(line: []const u8, prefix: []const u8) ?u16 {
 
 /// macOS discovery: spawn system_profiler and parse text output.
 fn discoverMacOS(allocator: std.mem.Allocator) ![]DiscoveredDevice {
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
+    var child = std.process.spawn(std.Options.debug_io, .{
         .argv = &.{ "system_profiler", "SPUSBDataType" },
+        .stdout = .pipe,
+        .stderr = .pipe,
     }) catch return &.{};
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
+    defer child.kill(std.Options.debug_io);
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stderr_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(std.Options.debug_io, &stdout_buf);
+    var stderr_reader = child.stderr.?.reader(std.Options.debug_io, &stderr_buf);
+
+    const stdout_data = stdout_reader.interface.allocRemaining(allocator, .unlimited) catch return &.{};
+    defer allocator.free(stdout_data);
+    const stderr_data = stderr_reader.interface.allocRemaining(allocator, .unlimited) catch return &.{};
+    defer allocator.free(stderr_data);
+
+    _ = child.wait(std.Options.debug_io) catch return &.{};
 
     var devices: std.ArrayListUnmanaged(DiscoveredDevice) = .empty;
     errdefer {
@@ -108,7 +120,7 @@ fn discoverMacOS(allocator: std.mem.Allocator) ![]DiscoveredDevice {
     // Parse line by line, looking for Vendor ID / Product ID pairs.
     // system_profiler outputs blocks per device; VID appears before PID.
     var current_vid: ?u16 = null;
-    var lines_iter = std.mem.splitScalar(u8, result.stdout, '\n');
+    var lines_iter = std.mem.splitScalar(u8, stdout_data, '\n');
     while (lines_iter.next()) |line| {
         if (parseHexFromLine(line, "Vendor ID:")) |vid| {
             current_vid = vid;
@@ -174,7 +186,7 @@ fn readSysfsHex(dir: std.fs.Dir, dev_name: []const u8, attr: []const u8) ?u16 {
     defer sub_dir.close();
     var buf: [16]u8 = undefined;
     const n = sub_dir.readAll(&buf) catch return null;
-    const content = std.mem.trimRight(u8, buf[0..n], &.{ '\n', '\r', ' ' });
+    const content = std.mem.trimEnd(u8, buf[0..n], &.{ '\n', '\r', ' ' });
     if (content.len == 0) return null;
     return std.fmt.parseInt(u16, content, 16) catch null;
 }
@@ -263,21 +275,42 @@ pub fn introspectDevice(allocator: std.mem.Allocator, path: []const u8) Introspe
 /// macOS introspection: parse system_profiler output to find VID/PID
 /// for the first USB device, then look up in known_boards.
 fn introspectMacOS(allocator: std.mem.Allocator, path: []const u8) IntrospectResult {
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
+    var child = std.process.spawn(std.Options.debug_io, .{
         .argv = &.{ "system_profiler", "SPUSBDataType" },
+        .stdout = .pipe,
+        .stderr = .pipe,
     }) catch return .{
         .path = path,
         .memory_map_note = "Failed to run system_profiler",
     };
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
+    defer child.kill(std.Options.debug_io);
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stderr_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(std.Options.debug_io, &stdout_buf);
+    var stderr_reader = child.stderr.?.reader(std.Options.debug_io, &stderr_buf);
+
+    const stdout_data = stdout_reader.interface.allocRemaining(allocator, .unlimited) catch return .{
+        .path = path,
+        .memory_map_note = "Failed to read stdout",
+    };
+    defer allocator.free(stdout_data);
+    const stderr_data = stderr_reader.interface.allocRemaining(allocator, .unlimited) catch return .{
+        .path = path,
+        .memory_map_note = "Failed to read stderr",
+    };
+    defer allocator.free(stderr_data);
+
+    _ = child.wait(std.Options.debug_io) catch return .{
+        .path = path,
+        .memory_map_note = "Failed to wait for process",
+    };
 
     // Parse output for VID/PID pairs and try to match a known board.
     // Since system_profiler doesn't directly map to /dev paths, we return
     // the first recognized board we find as a best-effort match.
     var current_vid: ?u16 = null;
-    var lines_iter = std.mem.splitScalar(u8, result.stdout, '\n');
+    var lines_iter = std.mem.splitScalar(u8, stdout_data, '\n');
     while (lines_iter.next()) |line| {
         if (parseHexFromLine(line, "Vendor ID:")) |vid| {
             current_vid = vid;
@@ -421,7 +454,7 @@ pub fn parseUdevLine(line: []const u8) ?DeviceEvent {
     var subsystem: []const u8 = "unknown";
 
     if (std.mem.lastIndexOf(u8, rest, "(")) |paren_start| {
-        device_path = std.mem.trimRight(u8, rest[0..paren_start], " ");
+        device_path = std.mem.trimEnd(u8, rest[0..paren_start], " ");
         const after_paren = rest[paren_start + 1 ..];
         if (std.mem.indexOf(u8, after_paren, ")")) |paren_end| {
             subsystem = after_paren[0..paren_end];
@@ -503,16 +536,14 @@ fn parseTimestampSecs(ts_str: []const u8) i64 {
 /// Linux monitor: spawn `udevadm monitor --udev --subsystem-match=usb --property`
 /// and parse header + property lines from its stdout.
 fn runLinuxMonitor(monitor: *HotplugMonitor) void {
-    var child = std.process.Child.init(
-        &.{ "udevadm", "monitor", "--udev", "--subsystem-match=usb", "--property" },
-        monitor.allocator,
-    );
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    child.spawn() catch return;
+    var child = std.process.spawn(std.Options.debug_io, .{
+        .argv = &.{ "udevadm", "monitor", "--udev", "--subsystem-match=usb", "--property" },
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch return;
     defer {
-        _ = child.kill() catch {};
-        _ = child.wait() catch {};
+        child.kill(std.Options.debug_io);
+        _ = child.wait(std.Options.debug_io) catch {};
     }
 
     const cb = monitor.callback orelse return;

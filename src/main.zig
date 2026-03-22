@@ -2,13 +2,35 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const yc = @import("nullclaw");
+const async_session = yc.async_session;
+
+// Zig 0.16.0 compatibility layer
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    _ = error_return_trace;
-    _ = ret_addr;
-    std.fs.File.stderr().writeAll("panic: ") catch {};
-    std.fs.File.stderr().writeAll(msg) catch {};
-    std.fs.File.stderr().writeAll("\n") catch {};
+    // Use debug_io for panic output in Zig 0.16.0
+    var buffer: [1024]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+
+    stderr.file_writer.interface.writeAll("\n💥 PANIC 💥\n") catch {};
+    stderr.file_writer.interface.writeAll("Message: ") catch {};
+    stderr.file_writer.interface.writeAll(msg) catch {};
+    stderr.file_writer.interface.writeAll("\n") catch {};
+
+    // Print return address if available
+    if (ret_addr) |addr| {
+        var addr_buf: [32]u8 = undefined;
+        const addr_str = std.fmt.bufPrint(&addr_buf, "Return address: 0x{x}\n", .{addr}) catch "";
+        stderr.file_writer.interface.writeAll(addr_str) catch {};
+    }
+
+    // Print stack trace if available (Zig 0.16.0 API)
+    if (error_return_trace) |trace| {
+        stderr.file_writer.interface.writeAll("\nStack trace available\n") catch {};
+        _ = trace; // TODO: dumpStackTrace API changed in Zig 0.16.0
+    }
+
+    stderr.file_writer.interface.writeAll("\n") catch {};
     std.process.exit(1);
 }
 
@@ -65,16 +87,53 @@ fn parseCommand(arg: []const u8) ?Command {
     return command_map.get(arg);
 }
 
-pub fn main() !void {
+pub fn main(minimal: std.process.Init.Minimal) !void {
     // Enable UTF-8 output on Windows console (fixes Cyrillic/Unicode garbling)
     if (comptime builtin.os.tag == .windows) {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
 
-    const allocator = std.heap.smp_allocator;
+    // Wrap system allocator with Tracy for memory profiling
+    var tracy_alloc = yc.profiling.alloc(std.heap.smp_allocator);
+    const allocator = tracy_alloc.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    // CRITICAL: Create proper I/O instance for production use
+    // std.Options.debug_io has a failing allocator (see Io/Threaded.zig:1622)
+    // which causes OutOfMemory when processes are spawned
+    var app_io = std.Io.Threaded{
+        .allocator = allocator,
+        .stack_size = std.Thread.SpawnConfig.default_stack_size,
+        .async_limit = .nothing,
+        .cpu_count_error = null,
+        .concurrent_limit = .nothing,
+        .old_sig_io = undefined,
+        .old_sig_pipe = undefined,
+        .have_signal_handler = false,
+        .argv0 = .empty,
+        .environ_initialized = true,
+        .environ = .empty,
+        .worker_threads = .init(null),
+        .disable_memory_mapping = false,
+    };
+    const io = app_io.ioBasic();
+
+    // Initialize tracing system FIRST
+    yc.trace_simple.init(allocator, .info);
+    defer yc.trace_simple.deinit();
+
+    yc.trace_simple.info(.daemon, "NullClaw starting", .{});
+
+    // Zig 0.16.0: Use Args from minimal parameter
+    var args_iter = std.process.Args.Iterator.init(minimal.args);
+
+    var args_list: std.ArrayList([:0]const u8) = .empty;
+    defer args_list.deinit(allocator);
+
+    while (args_iter.next()) |arg| {
+        try args_list.append(allocator, arg);
+    }
+    const args = try args_list.toOwnedSlice(allocator);
+    defer allocator.free(args);
 
     if (args.len < 2) {
         printUsage();
@@ -92,17 +151,17 @@ pub fn main() !void {
     switch (cmd) {
         .version => printVersion(),
         .status => try yc.status.run(allocator),
-        .agent => try yc.agent.run(allocator, sub_args),
+        .agent => try yc.agent.run(allocator, sub_args, io),
         .onboard => try runOnboard(allocator, sub_args),
-        .doctor => try yc.doctor.run(allocator),
+        .doctor => try yc.doctor.run(allocator, io),
         .help => printUsage(),
-        .gateway => try runGateway(allocator, sub_args),
+        .gateway => try runGateway(allocator, sub_args, io),
         .service => try runService(allocator, sub_args),
-        .cron => try runCron(allocator, sub_args),
-        .channel => try runChannel(allocator, sub_args),
+        .cron => try runCron(allocator, sub_args, io),
+        .channel => try runChannel(allocator, sub_args, io),
         .skills => try runSkills(allocator, sub_args),
         .hardware => try runHardware(allocator, sub_args),
-        .migrate => try runMigrate(allocator, sub_args),
+        .migrate => try runMigrate(std.Options.debug_io, allocator, sub_args),
         .memory => try runMemory(allocator, sub_args),
         .workspace => try runWorkspace(allocator, sub_args),
         .capabilities => try runCapabilities(allocator, sub_args),
@@ -113,10 +172,18 @@ pub fn main() !void {
 }
 
 fn printVersion() void {
-    var buf: [256]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&buf);
-    bw.interface.print("nullclaw {s}\n", .{yc.version.string}) catch return;
-    bw.interface.flush() catch return;
+    std.debug.print(
+        \\nullclaw {s}
+        \\  Branch:     {s}
+        \\  Commit:     {s}
+        \\  Built:      {s}
+        \\
+    , .{
+        yc.version.string,
+        yc.version.branch,
+        yc.version.commit,
+        yc.version.build_timestamp,
+    });
 }
 
 const GatewayDaemonOverrideError = error{InvalidPort};
@@ -142,8 +209,8 @@ fn applyGatewayDaemonOverrides(cfg: *yc.config.Config, sub_args: []const []const
 
 // ── Gateway ──────────────────────────────────────────────────────
 
-fn runGateway(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
-    var cfg = yc.config.Config.load(allocator) catch {
+fn runGateway(allocator: std.mem.Allocator, sub_args: []const []const u8, io: std.Io) !void {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -159,7 +226,7 @@ fn runGateway(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
         std.process.exit(1);
     };
 
-    try yc.daemon.run(allocator, &cfg, cfg.gateway.host, cfg.gateway.port);
+    try yc.daemon.run(allocator, &cfg, cfg.gateway.host, cfg.gateway.port, io);
 }
 
 // ── Service ──────────────────────────────────────────────────────
@@ -188,7 +255,7 @@ fn runService(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
         std.process.exit(1);
     };
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -222,7 +289,7 @@ fn runService(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
 
 // ── Cron ─────────────────────────────────────────────────────────
 
-fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
+fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8, io: std.Io) !void {
     if (sub_args.len < 1) {
         std.debug.print(
             \\Usage: nullclaw cron <command> [args]
@@ -249,13 +316,13 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
     const subcmd = sub_args[0];
 
     if (std.mem.eql(u8, subcmd, "list")) {
-        try yc.cron.cliListJobs(allocator);
+        try yc.cron.cliListJobs(allocator, io);
     } else if (std.mem.eql(u8, subcmd, "add")) {
         if (sub_args.len < 3) {
             std.debug.print("Usage: nullclaw cron add <expression> <command>\n", .{});
             std.process.exit(1);
         }
-        try yc.cron.cliAddJob(allocator, sub_args[1], sub_args[2]);
+        try yc.cron.cliAddJob(allocator, sub_args[1], sub_args[2], io);
     } else if (std.mem.eql(u8, subcmd, "add-agent")) {
         if (sub_args.len < 3) {
             std.debug.print("Usage: nullclaw cron add-agent <expression> <prompt> [--model <model>]\n", .{});
@@ -269,13 +336,13 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
                 i += 1;
             }
         }
-        try yc.cron.cliAddAgentJob(allocator, sub_args[1], sub_args[2], model);
+        try yc.cron.cliAddAgentJob(allocator, sub_args[1], sub_args[2], model, io);
     } else if (std.mem.eql(u8, subcmd, "once")) {
         if (sub_args.len < 3) {
             std.debug.print("Usage: nullclaw cron once <delay> <command>\n", .{});
             std.process.exit(1);
         }
-        try yc.cron.cliAddOnce(allocator, sub_args[1], sub_args[2]);
+        try yc.cron.cliAddOnce(allocator, sub_args[1], sub_args[2], io);
     } else if (std.mem.eql(u8, subcmd, "once-agent")) {
         if (sub_args.len < 3) {
             std.debug.print("Usage: nullclaw cron once-agent <delay> <prompt> [--model <model>]\n", .{});
@@ -289,31 +356,31 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
                 i += 1;
             }
         }
-        try yc.cron.cliAddAgentOnce(allocator, sub_args[1], sub_args[2], model);
+        try yc.cron.cliAddAgentOnce(allocator, sub_args[1], sub_args[2], model, io);
     } else if (std.mem.eql(u8, subcmd, "remove")) {
         if (sub_args.len < 2) {
             std.debug.print("Usage: nullclaw cron remove <id>\n", .{});
             std.process.exit(1);
         }
-        try yc.cron.cliRemoveJob(allocator, sub_args[1]);
+        try yc.cron.cliRemoveJob(allocator, sub_args[1], io);
     } else if (std.mem.eql(u8, subcmd, "pause")) {
         if (sub_args.len < 2) {
             std.debug.print("Usage: nullclaw cron pause <id>\n", .{});
             std.process.exit(1);
         }
-        try yc.cron.cliPauseJob(allocator, sub_args[1]);
+        try yc.cron.cliPauseJob(allocator, sub_args[1], io);
     } else if (std.mem.eql(u8, subcmd, "resume")) {
         if (sub_args.len < 2) {
             std.debug.print("Usage: nullclaw cron resume <id>\n", .{});
             std.process.exit(1);
         }
-        try yc.cron.cliResumeJob(allocator, sub_args[1]);
+        try yc.cron.cliResumeJob(allocator, sub_args[1], io);
     } else if (std.mem.eql(u8, subcmd, "run")) {
         if (sub_args.len < 2) {
             std.debug.print("Usage: nullclaw cron run <id>\n", .{});
             std.process.exit(1);
         }
-        try yc.cron.cliRunJob(allocator, sub_args[1]);
+        try yc.cron.cliRunJob(allocator, sub_args[1], io);
     } else if (std.mem.eql(u8, subcmd, "update")) {
         if (sub_args.len < 2) {
             std.debug.print("Usage: nullclaw cron update <id> [--expression <expr>] [--command <cmd>] [--prompt <prompt>] [--model <model>] [--enable] [--disable]\n", .{});
@@ -345,13 +412,13 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
                 enabled = false;
             }
         }
-        try yc.cron.cliUpdateJob(allocator, id, expression, command, prompt, model, enabled);
+        try yc.cron.cliUpdateJob(allocator, id, expression, command, prompt, model, enabled, io);
     } else if (std.mem.eql(u8, subcmd, "runs")) {
         if (sub_args.len < 2) {
             std.debug.print("Usage: nullclaw cron runs <id>\n", .{});
             std.process.exit(1);
         }
-        try yc.cron.cliListRuns(allocator, sub_args[1]);
+        try yc.cron.cliListRuns(allocator, sub_args[1], io);
     } else {
         std.debug.print("Unknown cron command: {s}\n", .{subcmd});
         std.process.exit(1);
@@ -360,7 +427,7 @@ fn runCron(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
 
 // ── Channel ──────────────────────────────────────────────────────
 
-fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
+fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8, io: std.Io) !void {
     if (sub_args.len < 1) {
         std.debug.print(
             \\Usage: nullclaw channel <command> [args]
@@ -378,7 +445,7 @@ fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
 
     const subcmd = sub_args[0];
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -392,7 +459,7 @@ fn runChannel(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
             std.debug.print("  {s}: {s}\n", .{ meta.label, status_text });
         }
     } else if (std.mem.eql(u8, subcmd, "start")) {
-        try runChannelStart(allocator, sub_args[1..]);
+        try runChannelStart(allocator, sub_args[1..], io);
     } else if (std.mem.eql(u8, subcmd, "status")) {
         std.debug.print("Channel health:\n", .{});
         std.debug.print("  CLI: ok\n", .{});
@@ -444,7 +511,7 @@ fn runSkills(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
         std.process.exit(1);
     }
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -590,7 +657,7 @@ fn runHardware(allocator: std.mem.Allocator, sub_args: []const []const u8) !void
 
 // ── Migrate ──────────────────────────────────────────────────────
 
-fn runMigrate(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
+fn runMigrate(io: std.Io, allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
     if (sub_args.len < 1) {
         std.debug.print(
             \\Usage: nullclaw migrate <source> [options]
@@ -620,13 +687,13 @@ fn runMigrate(allocator: std.mem.Allocator, sub_args: []const []const u8) !void 
             }
         }
 
-        var cfg = yc.config.Config.load(allocator) catch {
+        var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
             std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
             std.process.exit(1);
         };
         defer cfg.deinit();
 
-        const stats = yc.migration.migrateOpenclaw(allocator, &cfg, source_path, dry_run) catch |err| {
+        const stats = yc.migration.migrateOpenclaw(io, allocator, &cfg, source_path, dry_run) catch |err| {
             std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -734,7 +801,7 @@ fn runMemory(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
         std.process.exit(1);
     }
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -948,7 +1015,7 @@ fn runWorkspace(allocator: std.mem.Allocator, sub_args: []const []const u8) !voi
         std.process.exit(1);
     }
 
-    var cfg = yc.config.Config.load(allocator) catch {
+    var cfg = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -1016,7 +1083,7 @@ fn runCapabilities(allocator: std.mem.Allocator, sub_args: []const []const u8) !
         }
     }
 
-    var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator) catch null;
+    var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator, std.Options.debug_io) catch null;
     defer if (cfg_opt) |*cfg| cfg.deinit();
     const cfg_ptr: ?*const yc.config.Config = if (cfg_opt) |*cfg| cfg else null;
 
@@ -1049,7 +1116,7 @@ fn runModels(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
     const subcmd = sub_args[0];
 
     if (std.mem.eql(u8, subcmd, "list")) {
-        var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator) catch null;
+        var cfg_opt: ?yc.config.Config = yc.config.Config.load(allocator, std.Options.debug_io) catch null;
         defer if (cfg_opt) |*c| c.deinit();
 
         std.debug.print("Current configuration:\n", .{});
@@ -1161,29 +1228,39 @@ fn parseOnboardArgs(sub_args: []const []const u8) OnboardArgParseResult {
 
 fn printOnboardUsage() void {
     std.debug.print(
+        \\Fastest Working Path:
+        \\  nullclaw onboard --provider openrouter --api-key <YOUR_API_KEY>
+        \\
         \\Usage: nullclaw onboard [--interactive | --channels-only | [--api-key KEY] [--provider PROV] [--memory MEM]]
         \\
         \\Modes:
-        \\  (default)         quick setup
+        \\  (default)         quick setup with sensible defaults
         \\  --interactive     run full interactive wizard
         \\  --channels-only   reconfigure channels and allowlists only
         \\
         \\Quick setup options:
         \\  --api-key KEY     provider API key to persist in config
-        \\  --provider PROV   default provider key (e.g. openrouter, anthropic)
+        \\  --provider PROV   default provider key (see list below)
         \\  --memory MEM      memory backend key (e.g. markdown, sqlite, memory)
         \\
         \\Examples:
-        \\  nullclaw onboard --api-key sk-... --provider openrouter
+        \\  nullclaw onboard --provider openrouter --api-key sk-or-...
         \\  nullclaw onboard --interactive
         \\
+        \\Available providers:
+        \\
     , .{});
+    printKnownOnboardProviders();
+    std.debug.print("\n", .{});
 }
 
 fn printKnownOnboardProviders() void {
-    std.debug.print("Known providers:", .{});
+    std.debug.print("  ", .{});
+    var first = true;
     for (yc.onboard.known_providers) |p| {
-        std.debug.print(" {s}", .{p.key});
+        if (!first) std.debug.print(", ", .{});
+        std.debug.print("{s}", .{p.key});
+        first = false;
     }
     std.debug.print("\n", .{});
 }
@@ -1288,6 +1365,7 @@ fn dispatchChannelStart(
     args: []const []const u8,
     config: *const yc.config.Config,
     meta: yc.channel_catalog.ChannelMeta,
+    io: std.Io,
 ) !void {
     if (!yc.channel_catalog.isBuildEnabled(meta.id)) {
         std.debug.print("{s} channel is disabled in this build.\n", .{meta.label});
@@ -1298,21 +1376,21 @@ fn dispatchChannelStart(
     switch (meta.id) {
         .telegram => {
             if (config.channels.telegramPrimary()) |tg_config| {
-                return runTelegramChannel(allocator, args, config.*, tg_config);
+                return runTelegramChannel(allocator, args, config.*, tg_config, io);
             }
             std.debug.print("Telegram channel is not configured.\n", .{});
             std.process.exit(1);
         },
         .signal => {
             if (config.channels.signalPrimary()) |sig_config| {
-                return runSignalChannel(allocator, args, config, sig_config);
+                return runSignalChannel(allocator, args, config, sig_config, io);
             }
             std.debug.print("Signal channel is not configured.\n", .{});
             std.process.exit(1);
         },
         .matrix => {
             if (config.channels.matrixPrimary()) |mx_config| {
-                return runMatrixChannel(allocator, args, config, mx_config);
+                return runMatrixChannel(allocator, args, config, mx_config, io);
             }
             std.debug.print("Matrix channel is not configured.\n", .{});
             std.process.exit(1);
@@ -1375,14 +1453,14 @@ fn printNoMessagingChannelConfiguredHint() void {
     std.debug.print("  Signal:   {{\"channels\": {{\"signal\": {{\"accounts\": {{\"main\": {{\"http_url\": \"http://127.0.0.1:8080\", \"account\": \"+1234567890\"}}}}}}}}\n", .{});
 }
 
-fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8) !void {
+fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8, io: std.Io) !void {
     if (args.len > 0 and std.mem.eql(u8, args[0], "--all")) {
         std.debug.print("Use `nullclaw gateway` to start all configured channels/accounts.\n", .{});
         std.process.exit(1);
     }
 
     // Load config
-    var config = yc.config.Config.load(allocator) catch {
+    var config = yc.config.Config.load(allocator, std.Options.debug_io) catch {
         std.debug.print("No config found -- run `nullclaw onboard` first\n", .{});
         std.process.exit(1);
     };
@@ -1433,19 +1511,19 @@ fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8) !void
         }
 
         const child_args: []const []const u8 = if (args.len > 1) args[1..] else &.{};
-        return dispatchChannelStart(allocator, child_args, &config, meta);
+        return dispatchChannelStart(allocator, child_args, &config, meta, io);
     }
 
     // No channel specified -- keep historical preference:
     // Telegram first, then Signal, then any other configured channel.
     if (yc.channel_catalog.findByKey("telegram")) |meta| {
         if (yc.channel_catalog.isConfigured(&config, meta.id)) {
-            return dispatchChannelStart(allocator, args, &config, meta);
+            return dispatchChannelStart(allocator, args, &config, meta, io);
         }
     }
     if (yc.channel_catalog.findByKey("signal")) |meta| {
         if (yc.channel_catalog.isConfigured(&config, meta.id)) {
-            return dispatchChannelStart(allocator, args, &config, meta);
+            return dispatchChannelStart(allocator, args, &config, meta, io);
         }
     }
 
@@ -1453,7 +1531,7 @@ fn runChannelStart(allocator: std.mem.Allocator, args: []const []const u8) !void
         if (!canStartFromChannelCommand(meta.id)) continue;
         if (meta.id == .telegram or meta.id == .signal) continue;
         if (!yc.channel_catalog.isConfigured(&config, meta.id)) continue;
-        return dispatchChannelStart(allocator, args, &config, meta);
+        return dispatchChannelStart(allocator, args, &config, meta, io);
     }
 }
 
@@ -1489,7 +1567,7 @@ fn runGatewayChannel(allocator: std.mem.Allocator, config: *const yc.config.Conf
 
     // Block until Ctrl+C
     while (!yc.daemon.isShutdownRequested()) {
-        std.Thread.sleep(1 * std.time.ns_per_s);
+        std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s }, .real) catch {};
     }
 }
 
@@ -1518,7 +1596,7 @@ fn hasReliabilityCredentialFallback(allocator: std.mem.Allocator, config: *const
     return false;
 }
 
-fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, config: *const yc.config.Config, signal_config: yc.config.SignalConfig) !void {
+fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, config: *const yc.config.Config, signal_config: yc.config.SignalConfig, io: std.Io) !void {
     _ = args;
     if (!build_options.enable_channel_signal) {
         std.debug.print("Signal channel is disabled in this build.\n", .{});
@@ -1533,10 +1611,11 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
     ) catch null;
     defer if (resolved_api_key) |k| allocator.free(k);
 
-    // OAuth providers (openai-codex) don't need an API key
+    // OAuth providers (openai-codex) and local providers (ollama) don't need an API key
     const provider_kind = yc.providers.classifyProvider(config.default_provider);
     const has_fallback_credentials = hasReliabilityCredentialFallback(allocator, config);
-    if (resolved_api_key == null and provider_kind != .openai_codex_provider and !has_fallback_credentials) {
+    const needs_api_key = provider_kind != .openai_codex_provider and provider_kind != .ollama_provider and !has_fallback_credentials;
+    if (resolved_api_key == null and needs_api_key) {
         std.debug.print("No API key configured. Set env var or add to ~/.nullclaw/config.json:\n", .{});
         std.debug.print("  \"providers\": {{ \"{s}\": {{ \"api_key\": \"...\" }} }}\n", .{config.default_provider});
         std.process.exit(1);
@@ -1573,13 +1652,13 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         std.debug.print("\n", .{});
     }
 
-    // Env overrides for Signal
-    const env_http_url = std.process.getEnvVarOwned(allocator, "SIGNAL_HTTP_URL") catch null;
-    defer if (env_http_url) |v| allocator.free(v);
-    const env_account = std.process.getEnvVarOwned(allocator, "SIGNAL_ACCOUNT") catch null;
-    defer if (env_account) |v| allocator.free(v);
-    const effective_http_url = env_http_url orelse signal_config.http_url;
-    const effective_account = env_account orelse signal_config.account;
+    // Env overrides for Signal - disabled for now due to Zig 0.16 API changes
+    // TODO: Re-enable once proper env var access is available
+    const env_http_url: ?[]const u8 = null;
+    const env_account: ?[]const u8 = null;
+
+    const effective_http_url = if (env_http_url) |v| v else signal_config.http_url;
+    const effective_account = if (env_account) |v| v else signal_config.account;
 
     var sg = yc.channels.signal.SignalChannel.init(
         allocator,
@@ -1604,7 +1683,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
 
     // Initialize MCP tools from config
     const mcp_tools: ?[]const yc.tools.Tool = if (config.mcp_servers.len > 0)
-        yc.mcp.initMcpTools(allocator, config.mcp_servers) catch |err| blk: {
+        yc.mcp.initMcpTools(allocator, io, config.mcp_servers) catch |err| blk: {
             std.debug.print("  MCP: init failed: {}\n", .{err});
             break :blk null;
         }
@@ -1628,11 +1707,11 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         .tracker = &tracker,
     };
 
-    var subagent_manager = yc.subagent.SubagentManager.init(allocator, config, null, .{});
+    var subagent_manager = yc.subagent.SubagentManager.init(allocator, io, config, null, .{});
     defer subagent_manager.deinit();
 
     // Create tools (for system prompt and tool calling)
-    const tools = yc.tools.allTools(allocator, config.workspace_dir, .{
+    const tools = yc.tools.allTools(allocator, config.workspace_dir, io, .{
         .http_enabled = config.http_request.enabled,
         .http_allowed_domains = config.http_request.allowed_domains,
         .http_max_response_size = config.http_request.max_response_size,
@@ -1641,7 +1720,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         .web_search_provider = config.http_request.search_provider,
         .web_search_fallback_providers = config.http_request.search_fallback_providers,
         .browser_enabled = config.browser.enabled,
-        .screenshot_enabled = true,
+        .screenshot_enabled = false,
         .mcp_tools = mcp_tools,
         .agents = config.agents,
         .fallback_api_key = resolved_api_key,
@@ -1676,7 +1755,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
     const obs = noop_obs.observer();
 
     // Initialize session manager
-    var session_mgr = yc.session.SessionManager.init(allocator, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+    var session_mgr = yc.session.SessionManager.init(allocator, io, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
     session_mgr.policy = &sec_policy;
     if (mem_rt) |*rt| {
         session_mgr.mem_rt = rt;
@@ -1690,7 +1769,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
     while (true) {
         const messages = sg.pollMessages(allocator) catch |err| {
             std.debug.print("Signal poll error: {}\n", .{err});
-            std.Thread.sleep(5 * std.time.ns_per_s);
+            yc.util.sleep(100_000_000); // 100ms
             continue;
         };
 
@@ -1775,7 +1854,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         }
 
         // Small delay between polls
-        std.Thread.sleep(500 * std.time.ns_per_ms);
+        yc.util.sleep(1_000_000_000); // 1 second
     }
 }
 
@@ -1786,6 +1865,7 @@ fn runMatrixChannel(
     args: []const []const u8,
     config: *const yc.config.Config,
     matrix_config: yc.config.MatrixConfig,
+    io: std.Io,
 ) !void {
     _ = args;
     if (!build_options.enable_channel_matrix) {
@@ -1820,7 +1900,7 @@ fn runMatrixChannel(
 
     std.debug.print("  Polling for messages... (Ctrl+C to stop)\n\n", .{});
 
-    const runtime = yc.channel_loop.ChannelRuntime.init(allocator, config) catch |err| {
+    const runtime = yc.channel_loop.ChannelRuntime.init(allocator, config, io) catch |err| {
         std.debug.print("Runtime init failed: {}\n", .{err});
         std.process.exit(1);
     };
@@ -1832,10 +1912,75 @@ fn runMatrixChannel(
 
 // ── Telegram Channel ───────────────────────────────────────────────-
 
-fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, config: yc.config.Config, telegram_config: yc.config.TelegramConfig) !void {
+fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, config: yc.config.Config, telegram_config: yc.config.TelegramConfig, io: std.Io) !void {
     if (!build_options.enable_channel_telegram) {
         std.debug.print("Telegram channel is disabled in this build.\n", .{});
         std.process.exit(1);
+    }
+
+    // Single instance enforcement: check if Telegram channel is already running
+    var pid_file_path_buf: [1024]u8 = undefined;
+    const pid_file_path = try std.fmt.bufPrintZ(&pid_file_path_buf, "{s}/.nullclaw-telegram.pid", .{config.workspace_dir});
+
+    // Check if another instance is already running using C system calls
+    const existing_pid = blk: {
+        const flags: std.c.O = @bitCast(@as(u32, 0)); // O_RDONLY = 0
+        const fd = std.c.open(pid_file_path, flags, @as(c_uint, 0));
+        if (fd < 0) {
+            // Failed to open, assume no PID file exists
+            break :blk null;
+        }
+        defer _ = std.c.close(fd);
+
+        var pid_buf: [20]u8 = undefined;
+        const bytes_read = std.c.read(fd, &pid_buf, pid_buf.len);
+        if (bytes_read <= 0) {
+            break :blk null;
+        }
+
+        const content = pid_buf[0..@as(usize, @intCast(bytes_read))];
+        const pid_str = std.mem.trim(u8, content, &.{ '\n', '\r' });
+        const pid = std.fmt.parseInt(u32, pid_str, 10) catch 0;
+        break :blk pid;
+    };
+
+    if (existing_pid) |pid| {
+        if (pid > 0) {
+            // Check if process is still running by sending signal 0
+            const sig: std.c.SIG = @enumFromInt(@as(u32, 0));
+            const result = std.c.kill(@as(i32, @intCast(pid)), sig);
+            const is_running = result == 0;
+
+            if (is_running) {
+                std.log.err("Telegram channel is already running (PID {d}). Exiting to prevent duplicate instances.", .{pid});
+                std.process.exit(1);
+            }
+        }
+    }
+
+    // Write our PID file using C system calls
+    {
+        // O_WRONLY = 1, O_CREAT = 64, O_TRUNC = 512
+        const flags: std.c.O = @bitCast(@as(u32, 1 | 64 | 512));
+        const fd = std.c.open(pid_file_path, flags, @as(c_uint, 0o644));
+        if (fd < 0) {
+            std.log.err("Failed to create PID file", .{});
+            std.process.exit(1);
+        }
+        defer _ = std.c.close(fd);
+
+        const pid = if (builtin.os.tag == .linux) @as(u32, @intCast(std.os.linux.getpid())) else if (builtin.os.tag == .macos) @as(u32, @intCast(std.c.getpid())) else 0;
+        var pid_str_buf: [20]u8 = undefined;
+        const pid_str = try std.fmt.bufPrintZ(&pid_str_buf, "{d}\n", .{pid});
+
+        // Calculate string length (find null terminator)
+        var len: usize = 0;
+        while (len < pid_str_buf.len and pid_str_buf[len] != 0) : (len += 1) {}
+
+        const written = std.c.write(fd, pid_str.ptr, len);
+        if (written < 0) {
+            std.log.warn("Failed to write PID file: {}", .{written});
+        }
     }
 
     // Determine allowed users: --user CLI args override config allow_from
@@ -1863,10 +2008,11 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
     ) catch null;
     defer if (resolved_api_key) |k| allocator.free(k);
 
-    // OAuth providers (openai-codex) don't need an API key
+    // OAuth providers (openai-codex) and local providers (ollama) don't need an API key
     const provider_kind = yc.providers.classifyProvider(config.default_provider);
     const has_fallback_credentials = hasReliabilityCredentialFallback(allocator, &config);
-    if (resolved_api_key == null and provider_kind != .openai_codex_provider and !has_fallback_credentials) {
+    const needs_api_key = provider_kind != .openai_codex_provider and provider_kind != .ollama_provider and !has_fallback_credentials;
+    if (resolved_api_key == null and needs_api_key) {
         std.debug.print("No API key configured. Set env var or add to ~/.nullclaw/config.json:\n", .{});
         std.debug.print("  \"providers\": {{ \"{s}\": {{ \"api_key\": \"...\" }} }}\n", .{config.default_provider});
         std.process.exit(1);
@@ -1913,7 +2059,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 
     // Initialize MCP tools from config
     const mcp_tools: ?[]const yc.tools.Tool = if (config.mcp_servers.len > 0)
-        yc.mcp.initMcpTools(allocator, config.mcp_servers) catch |err| blk: {
+        yc.mcp.initMcpTools(allocator, io, config.mcp_servers) catch |err| blk: {
             std.debug.print("  MCP: init failed: {}\n", .{err});
             break :blk null;
         }
@@ -1937,11 +2083,11 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         .tracker = &tracker,
     };
 
-    var subagent_manager = yc.subagent.SubagentManager.init(allocator, &config, null, .{});
+    var subagent_manager = yc.subagent.SubagentManager.init(allocator, io, &config, null, .{});
     defer subagent_manager.deinit();
 
     // Create tools (for system prompt and tool calling)
-    const tools = yc.tools.allTools(allocator, config.workspace_dir, .{
+    const tools = yc.tools.allTools(allocator, config.workspace_dir, io, .{
         .http_enabled = config.http_request.enabled,
         .http_allowed_domains = config.http_request.allowed_domains,
         .http_max_response_size = config.http_request.max_response_size,
@@ -1950,7 +2096,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         .web_search_provider = config.http_request.search_provider,
         .web_search_fallback_providers = config.http_request.search_fallback_providers,
         .browser_enabled = config.browser.enabled,
-        .screenshot_enabled = true,
+        .screenshot_enabled = false,
         .mcp_tools = mcp_tools,
         .agents = config.agents,
         .fallback_api_key = resolved_api_key,
@@ -1998,119 +2144,283 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
 
     std.debug.print("  Polling for messages... (Ctrl+C to stop)\n\n", .{});
 
-    var session_mgr = yc.session.SessionManager.init(allocator, &config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+    var session_mgr = yc.session.SessionManager.init(allocator, io, &config, provider_i, tools, mem_opt, obs, if (mem_rt) |*rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
     session_mgr.policy = &sec_policy;
     if (mem_rt) |*rt| {
         session_mgr.mem_rt = rt;
     }
     defer session_mgr.deinit();
 
-    var evict_counter: u32 = 0;
-    var persisted_update_id: i64 = tg.last_update_id;
+    // Create loop state for worker pool support
+    var loop_state = yc.channel_loop.TelegramLoopState.init();
+    defer loop_state.deinit(allocator);
 
-    // Bot loop: poll → full agent loop (tool calling) → reply
-    while (true) {
-        const messages = tg.pollUpdates(allocator) catch |err| {
-            std.debug.print("Poll error: {}\n", .{err});
-            std.Thread.sleep(5 * std.time.ns_per_s);
-            continue;
+    // Create channel runtime
+    var channel_rt = yc.channel_loop.ChannelRuntime{
+        .allocator = allocator,
+        .config = &config,
+        .session_mgr = session_mgr,
+        .provider_bundle = runtime_provider,
+        .tools = tools,
+        .mem_rt = mem_rt,
+        .noop_obs = &noop_obs,
+        .subagent_manager = &subagent_manager,
+        .policy_tracker = &tracker,
+        .security_policy = &sec_policy,
+    };
+
+    // Use parallel processing with worker pool
+    // Check if webhook mode is enabled
+    if (telegram_config.webhook_mode) {
+        // Check that webhook_url is configured
+        const webhook_url = telegram_config.webhook_url orelse {
+            std.debug.print("ERROR: webhook_mode is enabled but webhook_url is not configured.\n", .{});
+            std.debug.print("Add 'webhook_url' to your Telegram config, e.g.:\n", .{});
+            std.debug.print("  \"webhook_url\": \"https://your-bot.example.com:8443/\"\n", .{});
+            std.process.exit(1);
         };
 
-        for (messages) |msg| {
-            std.debug.print("[{s}] {s}: {s}\n", .{ msg.channel, msg.id, msg.content });
+        // Start webhook server instead of polling
+        std.debug.print("  Mode: webhook (port {})\n", .{telegram_config.webhook_port});
+        std.debug.print("  Webhook URL: {s}\n", .{webhook_url});
 
-            // Handle /start command (Telegram-specific greeting, not sent to LLM)
-            const trimmed_content = std.mem.trim(u8, msg.content, " \t\r\n");
-            if (std.mem.eql(u8, trimmed_content, "/start")) {
-                var greeting_buf: [512]u8 = undefined;
-                const name = msg.first_name orelse msg.id;
-                const greeting = std.fmt.bufPrint(&greeting_buf, "Hello, {s}! I'm nullClaw.\n\nModel: {s}\nType /help for available commands.", .{ name, model }) catch "Hello! I'm nullClaw. Type /help for commands.";
-                tg.sendMessageWithReply(msg.sender, greeting, msg.message_id) catch |err| log.err("failed to send /start reply: {}", .{err});
-                continue;
-            }
+        // Register webhook with Telegram
+        std.debug.print("  Registering webhook with Telegram...\n", .{});
+        if (!tg.setWebhook(webhook_url)) {
+            std.debug.print("ERROR: Failed to register webhook with Telegram.\n", .{});
+            std.debug.print("Make sure your webhook_url is publicly accessible and uses HTTPS.\n", .{});
+            std.process.exit(1);
+        }
 
-            // Determine reply-to: always in groups, configurable in private chats
-            const use_reply_to = msg.is_group or telegram_config.reply_in_private;
-            const reply_to_id: ?i64 = if (use_reply_to) msg.message_id else null;
+        // Create webhook handler context
+        const WebhookHandlerContext = struct {
+            session_mgr: *yc.session.SessionManager,
+            account_id: []const u8,
+        };
+        var webhook_ctx = WebhookHandlerContext{
+            .session_mgr = &session_mgr,
+            .account_id = tg.account_id,
+        };
 
-            // Session key — resolve through route engine, fallback to legacy key.
-            var key_buf: [128]u8 = undefined;
-            var routed_session_key: ?[]const u8 = null;
-            defer if (routed_session_key) |key| allocator.free(key);
-            const session_key = blk: {
-                const route = yc.agent_routing.resolveRouteWithSession(
-                    allocator,
-                    .{
-                        .channel = "telegram",
-                        .account_id = tg.account_id,
-                        .peer = .{
-                            .kind = if (msg.is_group) .group else .direct,
-                            .id = msg.sender,
-                        },
-                    },
-                    config.agent_bindings,
-                    config.agents,
-                    config.session,
-                ) catch break :blk std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ tg.account_id, msg.sender }) catch msg.sender;
-                allocator.free(route.main_session_key);
-                routed_session_key = route.session_key;
-                break :blk route.session_key;
-            };
+        // Set up webhook message handler callback
+        tg.webhook_handler = struct {
+            fn handler(ctx: *anyopaque, alloc: std.mem.Allocator, sender: []const u8, content: []const u8, reply_target: ?[]const u8, message_id: ?i64, is_group: bool) ?[]const u8 {
+                _ = reply_target;
+                _ = message_id;
+                const hctx: *WebhookHandlerContext = @ptrCast(@alignCast(ctx));
 
-            // Start periodic typing indicator while the model is processing
-            const typing_target = msg.sender;
-            tg.startTyping(typing_target) catch {};
-            defer tg.stopTyping(typing_target) catch {};
+                std.log.info("[WEBHOOK_HANDLER] Received message from sender={s} content_len={d} is_group={any}", .{ sender, content.len, is_group });
 
-            const reply = session_mgr.processMessage(session_key, msg.content, null) catch |err| {
-                std.debug.print("  Agent error: {}\n", .{err});
-                const err_msg = switch (err) {
-                    error.CurlFailed, error.CurlReadError, error.CurlWaitError, error.CurlWriteError => "Network error. Please try again.",
-                    error.ProviderDoesNotSupportVision => "The current provider does not support image input. Switch to a vision-capable provider or remove [IMAGE:] attachments.",
-                    error.NoResponseContent => "Model returned an empty response. Please retry or /new for a fresh session.",
-                    error.AllProvidersFailed => "All configured providers failed for this request. Check model/provider compatibility and credentials.",
-                    error.OutOfMemory => "Out of memory.",
-                    else => "An error occurred. Try again or /new for a fresh session.",
+                // Build session key
+                var key_buf: [256]u8 = undefined;
+                const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ hctx.account_id, sender }) catch sender;
+                std.log.info("[WEBHOOK_HANDLER] Session key: {s}", .{session_key});
+
+                // Log message content (truncated for privacy/debugging)
+                const content_preview = if (content.len > 100) content[0..100] else content;
+                std.log.info("[WEBHOOK_HANDLER] Content preview: '{s}'", .{content_preview});
+
+                // Process message through session manager
+                std.log.info("[WEBHOOK_HANDLER] Calling session_mgr.processMessage...", .{});
+                const reply = hctx.session_mgr.processMessage(session_key, content, null) catch |err| {
+                    std.log.err("[WEBHOOK_HANDLER] Message processing error: {}", .{err});
+                    const err_msg: []const u8 = switch (err) {
+                        error.AllProvidersFailed => "All configured providers failed. Check API credentials and try again.",
+                        error.RateLimited => "Rate limit exceeded. Please wait a moment and try again.",
+                        error.ContextLengthExceeded => "Message too long. Try /new for a fresh session.",
+                        error.ProviderDoesNotSupportVision => "Provider does not support image input.",
+                        error.NoResponseContent => "Model returned empty response. Please try again.",
+                        error.OutOfMemory => "Out of memory. Try /new for a fresh session.",
+                        else => "An error occurred. Please try again or use /new for a fresh session.",
+                    };
+                    return std.fmt.allocPrint(alloc, "❌ {s}", .{err_msg}) catch null;
                 };
-                tg.sendMessageWithReply(msg.sender, err_msg, reply_to_id) catch |send_err| log.err("failed to send error reply: {}", .{send_err});
-                continue;
-            };
-            defer allocator.free(reply);
 
-            std.debug.print("  -> {s}\n", .{reply});
+                // Log response (truncated)
+                const reply_preview = if (reply.len > 100) reply[0..100] else reply;
+                std.log.info("[WEBHOOK_HANDLER] Response generated (len={d}): '{s}...'", .{ reply.len, reply_preview });
 
-            // Reply on telegram; handles [IMAGE:path] markers + split
-            tg.sendAssistantMessageWithReply(msg.sender, msg.id, msg.is_group, reply, reply_to_id) catch |err| {
-                std.debug.print("  Send error: {}\n", .{err});
-            };
-        }
-
-        if (messages.len > 0) {
-            // Free message memory
-            for (messages) |msg| {
-                msg.deinit(allocator);
+                // Return reply (caller will free it)
+                return reply;
             }
-            allocator.free(messages);
-        }
+        }.handler;
+        tg.webhook_handler_ctx = &webhook_ctx;
 
-        if (tg.persistableUpdateOffset()) |persistable_update_id| {
-            yc.channel_loop.persistTelegramUpdateOffsetIfAdvanced(
+        // Check if async webhook mode is enabled
+        if (telegram_config.async_webhook) {
+            // Async webhook mode - use thread pool for parallel processing
+            std.debug.print("  Async webhook enabled with {} workers\n", .{telegram_config.webhook_workers});
+
+            // Create AsyncSessionManager for parallel processing with Git-like history
+            // Note: Uses same config, provider, tools, memory as sync mode but with Git-like history
+            // This enables true parallel processing without mutex blocking on session history
+            var async_session_mgr = async_session.AsyncSessionManager.init(
                 allocator,
+                io,
                 &config,
-                tg.account_id,
-                tg.bot_token,
-                &persisted_update_id,
-                persistable_update_id,
+                provider_i,
+                tools,
+                mem_opt,
+                obs,
+                if (mem_rt) |*rt| rt.session_store else null,
+                if (mem_rt) |*rt| rt.response_cache else null,
             );
-        }
+            defer async_session_mgr.deinit();
 
-        // Periodically evict sessions idle longer than the configured timeout
-        evict_counter += 1;
-        if (evict_counter >= 100) {
-            evict_counter = 0;
-            _ = session_mgr.evictIdle(config.agent.session_idle_timeout_secs);
+            // Create async webhook handler context
+            const AsyncWebhookContext = struct {
+                async_session_mgr: *async_session.AsyncSessionManager,
+                account_id: []const u8,
+            };
+            var async_ctx = AsyncWebhookContext{
+                .async_session_mgr = &async_session_mgr,
+                .account_id = tg.account_id,
+            };
+
+            // Start async webhook with thread pool
+            try tg.startAsyncWebhook(
+                telegram_config.webhook_port,
+                telegram_config.webhook_workers,
+                &async_ctx,
+                asyncWebhookHandlerNew,
+            );
+
+            // Keep main thread alive
+            while (true) {
+                std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
+            }
+        } else {
+            // Synchronous webhook mode (original behavior)
+            try tg.startWebhookServer(telegram_config.webhook_port);
+
+            // Keep main thread alive and periodically evict idle sessions (Zig 0.16: use std.Io.sleep)
+            // This prevents memory leak from accumulating sessions in webhook mode
+            var eviction_counter: u32 = 0;
+            while (true) {
+                std.Io.sleep(std.Options.debug_io, .{ .nanoseconds = std.time.ns_per_s * 60 }, .real) catch {};
+                eviction_counter += 1;
+                // Evict idle sessions every 5 minutes (5 iterations of 60-second sleep)
+                if (eviction_counter >= 5) {
+                    eviction_counter = 0;
+                    const evicted = session_mgr.evictIdle(3600, std.Options.debug_io); // 1 hour idle threshold
+                    if (evicted > 0) {
+                        std.log.info("[WEBHOOK] Evicted {} idle sessions", .{evicted});
+                    }
+                    // Proactively send health check to keep HTTP connections alive during idle periods
+                    // This is more efficient than resetting connections - it reuses the existing keep-alive connection
+                    _ = tg.healthCheck();
+                }
+            }
         }
+    } else {
+        // Traditional polling mode
+        std.debug.print("  Mode: polling\n", .{});
+
+        // Delete webhook if switching from webhook to polling mode
+        tg.deleteWebhookKeepPending();
+        yc.channel_loop.runTelegramLoop(allocator, &config, &channel_rt, &loop_state, &tg);
     }
+}
+
+// ── Async Webhook Handler ─────────────────────────────────────────────────────────
+
+/// Handler for async webhook mode - called by worker threads to process messages
+/// Uses AsyncSessionManager with Git-like fork/merge for parallel processing
+fn asyncWebhookHandlerNew(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    chat_id: []const u8,
+    content: []const u8,
+    reply_to: ?i64,
+    is_group: bool,
+) ?[]const u8 {
+    _ = reply_to;
+    _ = is_group;
+    const async_ctx: *const struct {
+        async_session_mgr: *async_session.AsyncSessionManager,
+        account_id: []const u8,
+    } = @ptrCast(@alignCast(ctx));
+
+    std.log.info("[ASYNC_WEBHOOK] Processing message from chat_id={s} content_len={d}", .{ chat_id, content.len });
+
+    // Build session key
+    var key_buf: [256]u8 = undefined;
+    const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ async_ctx.account_id, chat_id }) catch chat_id;
+
+    // Process message through AsyncSessionManager (parallel, non-blocking)
+    const reply = async_ctx.async_session_mgr.processMessageAsync(
+        session_key,
+        content,
+        null, // conversation_context
+        null, // stream_sink
+    ) catch |err| {
+        std.log.err("[ASYNC_WEBHOOK] Message processing error: {}", .{err});
+        const err_msg: []const u8 = switch (err) {
+            error.ConflictResolutionNeeded => "Another message is being processed. Please try again.",
+            error.AllProvidersFailed => "All configured providers failed. Check API credentials and try again.",
+            error.RateLimited => "Rate limit exceeded. Please wait a moment and try again.",
+            error.ContextLengthExceeded => "Message too long. Try /new for a fresh session.",
+            error.ProviderDoesNotSupportVision => "Provider does not support image input.",
+            error.NoResponseContent => "Model returned empty response. Please try again.",
+            error.OutOfMemory => "Out of memory. Try /new for a fresh session.",
+            error.ForkFailed => "Session conflict. Please try again.",
+            error.MergeFailed => "Session merge failed. Please try again.",
+            error.SessionNotFound => "Session not found. Please try again.",
+            error.ProviderError => "Provider error. Please try again.",
+            error.InvalidState => "Invalid session state. Please try again.",
+        };
+        return std.fmt.allocPrint(allocator, "❌ {s}", .{err_msg}) catch null;
+    };
+
+    std.log.info("[ASYNC_WEBHOOK] Response generated (len={d})", .{reply.len});
+
+    // Free the response (duplicated by processMessageAsync)
+    defer allocator.free(reply);
+
+    // Return a copy for the caller
+    return allocator.dupe(u8, reply) catch null;
+}
+
+/// Legacy handler for async webhook mode - kept for backward compatibility
+/// Uses traditional SessionManager (blocks on mutex)
+fn asyncWebhookHandler(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    chat_id: []const u8,
+    content: []const u8,
+    reply_to: ?i64,
+    is_group: bool,
+) ?[]const u8 {
+    _ = reply_to;
+    _ = is_group;
+    const async_ctx: *const struct {
+        session_mgr: *yc.session.SessionManager,
+        account_id: []const u8,
+    } = @ptrCast(@alignCast(ctx));
+
+    std.log.info("[ASYNC_WEBHOOK] Processing message from chat_id={s} content_len={d}", .{ chat_id, content.len });
+
+    // Build session key
+    var key_buf: [256]u8 = undefined;
+    const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ async_ctx.account_id, chat_id }) catch chat_id;
+
+    // Process message through session manager
+    const reply = async_ctx.session_mgr.processMessage(session_key, content, null) catch |err| {
+        std.log.err("[ASYNC_WEBHOOK] Message processing error: {}", .{err});
+        const err_msg: []const u8 = switch (err) {
+            error.AllProvidersFailed => "All configured providers failed. Check API credentials and try again.",
+            error.RateLimited => "Rate limit exceeded. Please wait a moment and try again.",
+            error.ContextLengthExceeded => "Message too long. Try /new for a fresh session.",
+            error.ProviderDoesNotSupportVision => "Provider does not support image input.",
+            error.NoResponseContent => "Model returned empty response. Please try again.",
+            error.OutOfMemory => "Out of memory. Try /new for a fresh session.",
+            else => "An error occurred. Please try again or use /new for a fresh session.",
+        };
+        return std.fmt.allocPrint(allocator, "❌ {s}", .{err_msg}) catch null;
+    };
+
+    std.log.info("[ASYNC_WEBHOOK] Response generated (len={d})", .{reply.len});
+    return reply;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────
@@ -2152,7 +2462,7 @@ fn runAuth(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
             defer token.deinit(allocator);
             std.debug.print("openai-codex: authenticated\n", .{});
             if (token.expires_at != 0) {
-                const remaining = token.expires_at - std.time.timestamp();
+                const remaining = token.expires_at - 0;
                 if (remaining > 0) {
                     std.debug.print("  Token expires in: {d}h {d}m\n", .{
                         @divTrunc(remaining, 3600),
@@ -2294,14 +2604,17 @@ fn runAuthImportCodex(
     };
     defer allocator.free(path);
 
-    const file = std.fs.cwd().openFile(path, .{}) catch {
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch {
         std.debug.print("Could not open {s}\n", .{path});
         std.debug.print("Install and authenticate with Codex CLI first.\n", .{});
         std.process.exit(1);
     };
-    defer file.close();
+    defer file.close(std.Options.debug_io);
 
-    const json_bytes = file.readToEndAlloc(allocator, 1024 * 1024) catch {
+    // Read file contents using reader interface
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(std.Options.debug_io, &read_buf);
+    const json_bytes = reader.interface.readAlloc(allocator, 1024 * 1024) catch {
         std.debug.print("Failed to read {s}\n", .{path});
         std.process.exit(1);
     };
@@ -2384,7 +2697,7 @@ fn runAuthImportCodex(
         std.debug.print("  Refresh token: absent\n", .{});
     }
     if (expires_at != 0) {
-        const remaining = expires_at - std.time.timestamp();
+        const remaining = expires_at - 0;
         if (remaining > 0) {
             std.debug.print("  Expires in: {d}h {d}m\n", .{
                 @divTrunc(remaining, 3600),

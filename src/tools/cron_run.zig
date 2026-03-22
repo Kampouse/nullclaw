@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const platform = @import("../platform.zig");
 const root = @import("root.zig");
@@ -25,11 +26,11 @@ pub const CronRunTool = struct {
         };
     }
 
-    pub fn execute(_: *CronRunTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronRunTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const job_id = root.getString(args, "job_id") orelse
             return ToolResult.fail("Missing 'job_id' parameter");
 
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             return ToolResult.fail("Failed to load scheduler state");
         };
         defer scheduler.deinit();
@@ -37,7 +38,7 @@ pub const CronRunTool = struct {
         // Check that the job exists
         if (scheduler.getJob(job_id) == null) {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
         // Get the command from the job
@@ -47,47 +48,51 @@ pub const CronRunTool = struct {
         };
 
         // Execute the command
-        const result = std.process.Child.run(.{
-            .allocator = allocator,
+        const result = std.process.run(allocator, util.createProcessIo(), .{
             .argv = &.{ platform.getShell(), platform.getShellFlag(), command },
-            .max_output_bytes = 65536,
         }) catch |err| {
             // Update last_status to error
             if (scheduler.getMutableJob(job_id)) |job| {
                 job.last_status = "error";
-                job.last_run_secs = std.time.timestamp();
+                job.last_run_secs = util.timestampUnix();
             }
             cron.saveJobs(&scheduler) catch {};
 
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' execution failed: {s}", .{ job_id, @errorName(err) });
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
 
-        const exit_code: u8 = switch (result.term) {
-            .Exited => |code| code,
-            else => 1,
+        // Extract exit code from process.Child.Term enum
+        const success = switch (result.term) {
+            .exited => |code| code == 0,
+            else => false,
         };
-        const success = exit_code == 0;
         const status_str: []const u8 = if (success) "success" else "error";
 
         // Update job last_run and last_status
         if (scheduler.getMutableJob(job_id)) |job| {
             job.last_status = status_str;
-            job.last_run_secs = std.time.timestamp();
+            job.last_run_secs = util.timestampUnix();
         }
         cron.saveJobs(&scheduler) catch {};
 
         const status_label: []const u8 = if (success) "ok" else "error";
         const output = if (result.stdout.len > 0) result.stdout else result.stderr;
-        const msg = try std.fmt.allocPrint(allocator, "Job {s} ran: {s} (exit {d})\n{s}", .{
+        // Extract exit code for display
+        const exit_display = switch (result.term) {
+            .exited => |code| try std.fmt.allocPrint(allocator, "{d}", .{code}),
+            else => try std.fmt.allocPrint(allocator, "signal", .{}),
+        };
+        defer allocator.free(exit_display);
+        const msg = try std.fmt.allocPrint(allocator, "Job {s} ran: {s} (exit {s})\n{s}", .{
             job_id,
             status_label,
-            exit_code,
+            exit_display,
             output,
         });
-        return ToolResult{ .success = true, .output = msg };
+        return ToolResult{ .success = true, .output = msg, .owns_output = true };
     }
 };
 
@@ -111,7 +116,7 @@ test "cron_run_requires_job_id" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }
@@ -121,15 +126,15 @@ test "cron_run_not_found" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-xyz\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }
 
 test "cron_run_executes_command" {
     // Create a scheduler with a job, save it, then run via tool
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     cron.loadJobs(&scheduler) catch {};
 
@@ -147,9 +152,8 @@ test "cron_run_executes_command" {
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
 
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "hello") != null);

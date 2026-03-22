@@ -1,4 +1,5 @@
 const std = @import("std");
+const slog = @import("../structured_log.zig");
 
 /// Result of a child process execution.
 pub const RunResult = struct {
@@ -6,18 +7,28 @@ pub const RunResult = struct {
     stderr: []u8,
     success: bool,
     exit_code: ?u32 = null,
+    /// Whether stdout and stderr are owned (allocated) by this RunResult.
+    /// If false, deinit() will not free them.
+    owns_buffers: bool = true,
 
-    /// Free both stdout and stderr buffers.
+    /// Free both stdout and stderr buffers if they are owned.
+    /// Only free non-empty slices since std.process.run() may not allocate empty buffers.
     pub fn deinit(self: *const RunResult, allocator: std.mem.Allocator) void {
-        if (self.stdout.len > 0) allocator.free(self.stdout);
-        if (self.stderr.len > 0) allocator.free(self.stderr);
+        if (self.owns_buffers) {
+            // Only free if actually allocated (non-empty)
+            // Empty slices from std.process.run() are not allocated memory
+            if (self.stdout.len > 0) allocator.free(self.stdout);
+            if (self.stderr.len > 0) allocator.free(self.stderr);
+        }
     }
 };
 
 /// Options for running a child process.
 pub const RunOptions = struct {
     cwd: ?[]const u8 = null,
-    env_map: ?*std.process.EnvMap = null,
+    /// Environment map to pass to the child process.
+    /// If null, the child inherits the parent's environment.
+    env_map: ?*const std.process.Environ.Map = null,
     max_output_bytes: usize = 1_048_576,
 };
 
@@ -30,33 +41,50 @@ pub fn run(
     argv: []const []const u8,
     opts: RunOptions,
 ) !RunResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    if (opts.cwd) |cwd| child.cwd = cwd;
-    if (opts.env_map) |env| child.env_map = env;
+    slog.logStructured("DEBUG", "process_util", "process_run_start", .{});
 
-    try child.spawn();
+    // CRITICAL: std.Options.debug_io uses a .failing allocator (see Io/Threaded.zig:1622)
+    // This causes OutOfMemory when std.process.run creates internal ArenaAllocator.
+    // Use util.createProcessIo() to get a proper Io instance with page_allocator.
+    const util = @import("../util.zig");
 
-    const stdout = try child.stdout.?.readToEndAlloc(allocator, opts.max_output_bytes);
-    errdefer allocator.free(stdout);
-    const stderr = try child.stderr.?.readToEndAlloc(allocator, opts.max_output_bytes);
-    errdefer allocator.free(stderr);
+    slog.logStructured("DEBUG", "process_util", "creating_process_io", .{});
+    const spawn_io = util.createProcessIo();
+    slog.logStructured("DEBUG", "process_util", "process_io_created", .{});
 
-    const term = try child.wait();
+    // Use std.process.run with our custom Io and allocator
+    // Convert our ?[]const u8 cwd to std.process.Child.Cwd format
+    const cwd_option: std.process.Child.Cwd = if (opts.cwd) |path| .{ .path = path } else .inherit;
 
-    return switch (term) {
-        .Exited => |code| .{
-            .stdout = stdout,
-            .stderr = stderr,
+    slog.logStructured("DEBUG", "process_util", "spawning_process", .{});
+
+    // Build the std.process.run options
+    const run_opts = std.process.RunOptions{
+        .argv = argv,
+        .cwd = cwd_option,
+        .stdout_limit = .limited(opts.max_output_bytes),
+        .stderr_limit = .limited(opts.max_output_bytes),
+        .environ_map = opts.env_map,
+    };
+
+    const result = try std.process.run(allocator, spawn_io, run_opts);
+    slog.logStructured("DEBUG", "process_util", "process_completed", .{});
+
+    slog.logStructured("DEBUG", "process_util", "returning_result", .{});
+    return switch (result.term) {
+        .exited => |code| .{
+            .stdout = result.stdout,
+            .stderr = result.stderr,
             .success = code == 0,
             .exit_code = code,
+            .owns_buffers = true,
         },
         else => .{
-            .stdout = stdout,
-            .stderr = stderr,
+            .stdout = result.stdout,
+            .stderr = result.stderr,
             .success = false,
             .exit_code = null,
+            .owns_buffers = true,
         },
     };
 }
@@ -67,7 +95,8 @@ const builtin = @import("builtin");
 
 test "run echo returns stdout" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const allocator = std.testing.allocator;
+    // Use page_allocator for these tests since the run() function creates its own Io instance
+    const allocator = std.heap.page_allocator;
     const result = try run(allocator, &.{ "echo", "hello" }, .{});
     defer result.deinit(allocator);
 
@@ -78,7 +107,8 @@ test "run echo returns stdout" {
 
 test "run failing command returns exit code" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const allocator = std.testing.allocator;
+    // Use page_allocator for these tests since the run() function creates its own Io instance
+    const allocator = std.heap.page_allocator;
     const result = try run(allocator, &.{ "ls", "/nonexistent_dir_xyz_42" }, .{});
     defer result.deinit(allocator);
 
@@ -89,13 +119,14 @@ test "run failing command returns exit code" {
 
 test "run with cwd" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const allocator = std.testing.allocator;
+    // Test that cwd option works - run pwd in /tmp directory
+    const allocator = std.heap.page_allocator;
     const result = try run(allocator, &.{"pwd"}, .{ .cwd = "/tmp" });
     defer result.deinit(allocator);
 
     try std.testing.expect(result.success);
-    // /tmp may resolve to /private/tmp on macOS
     try std.testing.expect(result.stdout.len > 0);
+    // /tmp may resolve to /private/tmp on macOS
     try std.testing.expect(std.mem.indexOf(u8, result.stdout, "tmp") != null);
 }
 
@@ -108,6 +139,7 @@ test "RunResult deinit frees buffers" {
         .stderr = stderr,
         .success = true,
         .exit_code = 0,
+        .owns_buffers = true,
     };
     result.deinit(allocator);
 }
@@ -119,6 +151,7 @@ test "RunResult deinit with empty buffers" {
         .stderr = "",
         .success = true,
         .exit_code = 0,
+        .owns_buffers = false, // Empty string literals, not owned
     };
     result.deinit(allocator); // should not crash or attempt to free ""
 }

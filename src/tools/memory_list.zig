@@ -26,10 +26,11 @@ pub const MemoryListTool = struct {
         };
     }
 
-    pub fn execute(self: *MemoryListTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *MemoryListTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const m = self.memory orelse {
             const msg = try std.fmt.allocPrint(allocator, "Memory backend not configured. Cannot list entries.", .{});
-            return ToolResult{ .success = false, .output = msg };
+            return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };
 
         const limit_raw = root.getInt(args, "limit") orelse 5;
@@ -50,7 +51,7 @@ pub const MemoryListTool = struct {
 
         const entries = m.list(allocator, category_opt, session_id_opt) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to list memory entries: {s}", .{@errorName(err)});
-            return ToolResult{ .success = false, .output = msg };
+            return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };
         defer mem_root.freeEntries(allocator, entries);
 
@@ -65,28 +66,43 @@ pub const MemoryListTool = struct {
                 "No memory entries found for this filter."
             else
                 "No memory entries found.";
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         const shown = @min(limit, filtered_total);
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(allocator);
-        const w = out.writer(allocator);
-        try w.print("Memory entries: showing {d}/{d}\n", .{ shown, filtered_total });
+        var buf: [128]u8 = undefined;
+        
+        try out.appendSlice(allocator, "Memory entries: showing ");
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "{d}/{d}\n", .{ shown, filtered_total }));
 
         var written: usize = 0;
         for (entries) |entry| {
             if (!include_internal and isInternalEntry(entry)) continue;
             if (written >= shown) break;
-            try w.print("  {d}. {s} [{s}] {s}\n", .{ written + 1, entry.key, entry.category.toString(), entry.timestamp });
+            try out.appendSlice(allocator, "  ");
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "{d}", .{written + 1}));
+            try out.appendSlice(allocator, ". ");
+            try out.appendSlice(allocator, entry.key);
+            try out.appendSlice(allocator, " [");
+            try out.appendSlice(allocator, entry.category.toString());
+            try out.appendSlice(allocator, "] ");
+            try out.appendSlice(allocator, entry.timestamp);
+            try out.appendSlice(allocator, "\n");
             if (include_content) {
                 const preview = truncateUtf8(entry.content, 120);
-                try w.print("     {s}{s}\n", .{ preview, if (entry.content.len > preview.len) "..." else "" });
+                try out.appendSlice(allocator, "     ");
+                try out.appendSlice(allocator, preview);
+                if (entry.content.len > preview.len) {
+                    try out.appendSlice(allocator, "...");
+                }
+                try out.appendSlice(allocator, "\n");
             }
             written += 1;
         }
 
-        return ToolResult{ .success = true, .output = try out.toOwnedSlice(allocator) };
+        return ToolResult{ .success = true, .output = try out.toOwnedSlice(allocator), .owns_output = true };
     }
 
     fn isInternalEntry(entry: MemoryEntry) bool {
@@ -112,8 +128,8 @@ test "memory_list executes without backend" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.output, "not configured") != null);
 }
@@ -132,7 +148,7 @@ test "memory_list filters internal keys by default" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"limit\":10}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);
@@ -153,7 +169,7 @@ test "memory_list include_internal true includes autosave entries" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"include_internal\":true}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);
@@ -173,7 +189,7 @@ test "memory_list filters markdown-encoded internal keys in content" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"limit\":10}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);
@@ -194,7 +210,7 @@ test "memory_list filters bootstrap internal keys by default" {
     const t = mt.tool();
     const parsed = try root.parseTestArgs("{\"limit\":10}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.output.len > 0) allocator.free(result.output);
 
     try std.testing.expect(result.success);

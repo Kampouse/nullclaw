@@ -3,6 +3,7 @@
 //! All connections are TLS-only (wss://).
 
 const std = @import("std");
+const util = @import("util.zig");
 
 const log = std.log.scoped(.websocket);
 
@@ -32,8 +33,8 @@ pub const Frame = struct {
 /// Heap-allocated TLS state.
 /// Must be heap-allocated so internal pointers remain stable after init.
 pub const TlsState = struct {
-    stream_reader: std.net.Stream.Reader,
-    stream_writer: std.net.Stream.Writer,
+    stream_reader: std.Io.Reader,
+    stream_writer: std.Io.Writer,
     tls_client: std.crypto.tls.Client,
     read_buf: []u8,
     write_buf: []u8,
@@ -54,9 +55,9 @@ pub const TlsState = struct {
 /// `write_mu` serializes concurrent writes (heartbeat + gateway threads).
 pub const WsClient = struct {
     allocator: std.mem.Allocator,
-    stream: std.net.Stream,
+    stream: std.posix.socket_t,
     tls: *TlsState,
-    write_mu: std.Thread.Mutex,
+    write_mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
 
     /// Connect to wss://host:port/path.
     /// `extra_headers`: additional HTTP request headers (without trailing CRLF).
@@ -68,11 +69,9 @@ pub const WsClient = struct {
         extra_headers: []const []const u8,
     ) !WsClient {
         // DNS + TCP
-        const addr_list = try std.net.getAddressList(allocator, host, port);
-        defer addr_list.deinit();
-        if (addr_list.addrs.len == 0) return error.DnsResolutionFailed;
-        const stream = try std.net.tcpConnectToAddress(addr_list.addrs[0]);
-        errdefer stream.close();
+        const address = try std.Io.net.IpAddress.resolve(std.Options.debug_io, host, port);
+        const stream = try std.Io.net.IpAddress.connect(address, std.Options.debug_io, .{ .mode = .stream });
+        errdefer stream.close(std.Options.debug_io);
 
         // Allocate TLS buffers (pattern from irc.zig)
         const tls_buf_len = std.crypto.tls.Client.min_buffer_len;
@@ -92,12 +91,15 @@ pub const WsClient = struct {
         tls_state.write_buf = write_buf;
         tls_state.tls_read_buf = tls_read_buf;
         tls_state.tls_write_buf = tls_write_buf;
-        tls_state.stream_reader = stream.reader(read_buf);
-        tls_state.stream_writer = stream.writer(write_buf);
+        var stream_reader = stream.reader(std.Options.debug_io, read_buf);
+        var stream_writer = stream.writer(std.Options.debug_io, write_buf);
+        tls_state.stream_reader = stream_reader.interface;
+        tls_state.stream_writer = stream_writer.interface;
 
         var ca_bundle = std.crypto.Certificate.Bundle{};
         var has_ca_bundle = false;
-        if (ca_bundle.rescan(allocator)) |_| {
+        const now = std.Io.Timestamp.now(std.Options.debug_io, .real);
+        if (ca_bundle.rescan(allocator, std.Options.debug_io, now)) |_| {
             has_ca_bundle = true;
         } else |err| {
             // Preserve current behavior on platforms/environments where system CAs
@@ -106,44 +108,53 @@ pub const WsClient = struct {
         }
         defer if (has_ca_bundle) ca_bundle.deinit(allocator);
 
+        // Allocate and fill entropy buffer for TLS client
+        var entropy_buf: [240]u8 = undefined;
+        util.randomBytes(&entropy_buf);
+
+        // Convert nanoseconds to seconds for TLS
+        const now_seconds: i64 = @intCast(@divTrunc(now.nanoseconds, 1_000_000_000));
+
         const tls_options: std.crypto.tls.Client.Options = .{
             .host = .{ .explicit = host },
             .ca = if (has_ca_bundle) .{ .bundle = ca_bundle } else .no_verification,
             .read_buffer = tls_read_buf,
             .write_buffer = tls_write_buf,
             .allow_truncation_attacks = true,
+            .entropy = &entropy_buf,
+            .realtime_now_seconds = now_seconds,
         };
 
         tls_state.tls_client = std.crypto.tls.Client.init(
-            tls_state.stream_reader.interface(),
-            &tls_state.stream_writer.interface,
+            &tls_state.stream_reader,
+            &tls_state.stream_writer,
             tls_options,
         ) catch return error.TlsInitializationFailed;
 
         // HTTP Upgrade handshake
         var key_raw: [16]u8 = undefined;
-        std.crypto.random.bytes(&key_raw);
+        util.randomBytes(&key_raw);
         var key_b64: [24]u8 = undefined;
         _ = std.base64.standard.Encoder.encode(&key_b64, &key_raw);
 
         var req_buf: [4096]u8 = undefined;
-        var req_fbs = std.io.fixedBufferStream(&req_buf);
+        var req_fbs = util.fixedBufferStream(&req_buf);
         const rw = req_fbs.writer();
         try rw.print("GET {s} HTTP/1.1\r\n", .{path});
         try rw.print("Host: {s}\r\n", .{host});
-        try rw.writeAll("Upgrade: websocket\r\n");
-        try rw.writeAll("Connection: Upgrade\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "Upgrade: websocket\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "Connection: Upgrade\r\n");
         try rw.print("Sec-WebSocket-Key: {s}\r\n", .{key_b64});
-        try rw.writeAll("Sec-WebSocket-Version: 13\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "Sec-WebSocket-Version: 13\r\n");
         for (extra_headers) |hdr| {
             try rw.print("{s}\r\n", .{hdr});
         }
-        try rw.writeAll("\r\n");
+        try rw.writeStreamingAll(std.Options.debug_io, "\r\n");
         const req = req_fbs.getWritten();
 
         try tls_state.tls_client.writer.writeAll(req);
         try tls_state.tls_client.writer.flush();
-        try tls_state.stream_writer.interface.flush();
+        try tls_state.stream_writer.flush();
 
         // Read HTTP 101 response headers byte-by-byte to avoid consuming
         // any WebSocket frame data that follows the headers in the same TLS
@@ -183,9 +194,9 @@ pub const WsClient = struct {
 
         return WsClient{
             .allocator = allocator,
-            .stream = stream,
+            .stream = stream.socket.handle,
             .tls = tls_state,
-            .write_mu = .{},
+            .write_mu = std.Io.Mutex.init,
         };
     }
 
@@ -258,8 +269,8 @@ pub const WsClient = struct {
             .ping => {
                 // Auto-reply with pong
                 {
-                    self.write_mu.lock();
-                    defer self.write_mu.unlock();
+                    self.write_mu.lockUncancelable(std.Options.debug_io);
+                    defer self.write_mu.unlock(std.Options.debug_io);
                     self.writeFrameLocked(.pong, payload) catch |err| {
                         log.warn("WS auto-pong failed: {}", .{err});
                     };
@@ -312,7 +323,7 @@ pub const WsClient = struct {
 
         // Random 4-byte masking key (RFC 6455 §5.3: client→server MUST mask)
         var mask: [4]u8 = undefined;
-        std.crypto.random.bytes(&mask);
+        util.randomBytes(&mask);
         @memcpy(header[hlen..][0..4], &mask);
         hlen += 4;
 
@@ -331,20 +342,20 @@ pub const WsClient = struct {
         }
 
         try self.tls.tls_client.writer.flush();
-        try self.tls.stream_writer.interface.flush();
+        try self.tls.stream_writer.flush();
     }
 
     /// Send a text frame (acquires write_mu).
     pub fn writeText(self: *WsClient, text: []const u8) !void {
-        self.write_mu.lock();
-        defer self.write_mu.unlock();
+        try self.write_mu.lock(std.Options.debug_io);
+        defer self.write_mu.unlock(std.Options.debug_io);
         try self.writeFrameLocked(.text, text);
     }
 
     /// Send a close frame (acquires write_mu, ignores errors).
     pub fn writeClose(self: *WsClient) void {
-        self.write_mu.lock();
-        defer self.write_mu.unlock();
+        self.write_mu.lockUncancelable(std.Options.debug_io);
+        defer self.write_mu.unlock(std.Options.debug_io);
         self.writeFrameLocked(.close, &.{}) catch |err| {
             log.warn("WS close frame error: {}", .{err});
         };
@@ -389,7 +400,7 @@ pub const WsClient = struct {
             log.warn("TLS close_notify failed: {}", .{err});
         };
         self.tls.deinit(self.allocator);
-        self.stream.close();
+        std.Options.debug_io.vtable.netClose(std.Options.debug_io.userdata, &.{self.stream});
     }
 };
 
@@ -405,7 +416,7 @@ pub fn buildFrame(
     payload: []const u8,
     mask_key: [4]u8,
 ) !usize {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
 
     // Byte 0: FIN=1, RSV=0, opcode
@@ -433,7 +444,7 @@ pub fn buildFrame(
     }
 
     // Masking key
-    try w.writeAll(&mask_key);
+    try w.writeStreamingAll(std.Options.debug_io, &mask_key);
 
     // Masked payload
     for (payload, 0..) |b, i| {
@@ -496,14 +507,14 @@ test "ws accept key known value" {
 
 test "ws accept key length" {
     var key: [24]u8 = undefined;
-    std.crypto.random.bytes(&key);
+    util.randomBytes(&key);
     const accept = WsClient.computeAcceptKey(&key);
     try std.testing.expectEqual(@as(usize, 28), accept.len);
 }
 
 test "ws handshake key is 24 chars base64" {
     var key_raw: [16]u8 = undefined;
-    std.crypto.random.bytes(&key_raw);
+    util.randomBytes(&key_raw);
     var key_b64: [24]u8 = undefined;
     _ = std.base64.standard.Encoder.encode(&key_b64, &key_raw);
     // 16 bytes → 24 base64 chars (no padding needed since 16 is divisible by 3? No, 16/3=5r1 → 24 with padding)

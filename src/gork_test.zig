@@ -8,6 +8,7 @@
 //! - Security validation functions
 
 const std = @import("std");
+const util = @import("util.zig");
 
 const gork = @import("./gork_hybrid.zig");
 const Hybrid = gork.Hybrid;
@@ -59,7 +60,7 @@ test "CircuitBreaker: transitions to half_open after timeout" {
     try std.testing.expect(cb.allow() == false);
 
     // Wait for timeout
-    std.Thread.sleep(150 * std.time.ns_per_ms);
+    util.sleep(65 * std.time.ns_per_s);
 
     // Should transition to half_open
     try std.testing.expect(cb.allow() == true);
@@ -75,7 +76,7 @@ test "CircuitBreaker: closes again after successful requests in half_open" {
 
     // Open and wait for timeout
     cb.recordFailure();
-    std.Thread.sleep(150 * std.time.ns_per_ms);
+    util.sleep(65 * std.time.ns_per_s);
 
     // Enter half_open
     _ = cb.allow();
@@ -100,7 +101,7 @@ test "CircuitBreaker: reopens on failure in half_open" {
 
     // Open and wait for timeout
     cb.recordFailure();
-    std.Thread.sleep(150 * std.time.ns_per_ms);
+    util.sleep(65 * std.time.ns_per_s);
 
     // Enter half_open
     _ = cb.allow();
@@ -193,7 +194,7 @@ test "RateLimiter: resets after window expires" {
     try std.testing.expect(rl.allow(agent_id) == false);
 
     // Wait for window to expire
-    std.Thread.sleep(150 * std.time.ns_per_ms);
+    util.sleep(65 * std.time.ns_per_s);
 
     // Should allow requests again
     try std.testing.expect(rl.allow(agent_id) == true);
@@ -239,7 +240,7 @@ test "RateLimiter: cleans up expired entries" {
     try std.testing.expectEqual(@as(usize, 15), rl.map.count());
 
     // Wait for entries to expire
-    std.Thread.sleep(250 * std.time.ns_per_ms);
+    util.sleep(65 * std.time.ns_per_s);
 
     // Add one more - should trigger cleanup
     _ = rl.allow("trigger.near");
@@ -398,7 +399,7 @@ test "validateBinaryPath: accepts valid absolute paths" {
     // Skip test on Windows or if /usr/bin doesn't exist
     if (@import("builtin").os.tag == .windows) return;
 
-    if (std.fs.openFileAbsolute("/usr/bin/ls", .{})) |file| {
+    if (std.Io.Dir.cwd().openFile(std.Options.debug_io, "/usr/bin/ls", .{})) |file| {
         file.close();
         try gork.validateBinaryPath("/usr/bin/ls");
     } else |_| {}

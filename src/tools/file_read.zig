@@ -1,10 +1,13 @@
 const std = @import("std");
 const root = @import("root.zig");
+const profiling = @import("../profiling.zig");
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
-const isPathSafe = @import("path_security.zig").isPathSafe;
-const isResolvedPathAllowed = @import("path_security.zig").isResolvedPathAllowed;
+const path_security = @import("path_security.zig");
+const isPathSafe = path_security.isPathSafe;
+const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
+const resolvePathAlloc = path_security.resolvePathAlloc;
 
 /// Default maximum file size to read (10MB).
 const DEFAULT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
@@ -30,7 +33,10 @@ pub const FileReadTool = struct {
         };
     }
 
-    pub fn execute(self: *FileReadTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *FileReadTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zoneNamed(@src(), "tool_file_read");
+        defer zone.end();
+        
         const path = root.getString(args, "path") orelse
             return ToolResult.fail("Missing 'path' parameter");
 
@@ -49,44 +55,27 @@ pub const FileReadTool = struct {
         defer allocator.free(full_path);
 
         // Resolve to catch symlink escapes
-        const resolved = std.fs.cwd().realpathAlloc(allocator, full_path) catch |err| {
+        const resolved = resolvePathAlloc(allocator, full_path) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to resolve file path: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer allocator.free(resolved);
 
         // Validate against workspace + allowed_paths + system blocklist
-        const ws_resolved: ?[]const u8 = std.fs.cwd().realpathAlloc(allocator, self.workspace_dir) catch null;
+        const ws_resolved: ?[]const u8 = resolvePathAlloc(allocator, self.workspace_dir) catch null;
         defer if (ws_resolved) |wr| allocator.free(wr);
 
         if (!isResolvedPathAllowed(allocator, resolved, ws_resolved orelse "", self.allowed_paths)) {
             return ToolResult.fail("Path is outside allowed areas");
         }
 
-        // Check file size
-        const file = std.fs.openFileAbsolute(resolved, .{}) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "Failed to open file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        };
-        defer file.close();
-
-        const stat = try file.stat();
-        if (stat.size > self.max_file_size) {
-            const msg = try std.fmt.allocPrint(
-                allocator,
-                "File too large: {} bytes (limit: {} bytes)",
-                .{ stat.size, self.max_file_size },
-            );
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
-        }
-
-        // Read contents
-        const contents = file.readToEndAlloc(allocator, @intCast(self.max_file_size)) catch |err| {
+        // Check file size and read contents
+        const contents = std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, .limited(self.max_file_size)) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to read file: {}", .{err});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
-        return ToolResult{ .success = true, .output = contents };
+        return ToolResult{ .success = true, .output = contents, .owns_output = true };
     }
 };
 
@@ -110,19 +99,18 @@ test "file_read reads existing file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile(.{ .sub_path = "test.txt", .data = "hello world" });
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "test.txt", .data = "hello world" });
 
     // Get the real path of the tmp dir
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"test.txt\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("hello world", result.output);
@@ -131,16 +119,15 @@ test "file_read reads existing file" {
 test "file_read nonexistent file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"nope.txt\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
@@ -151,7 +138,7 @@ test "file_read blocks path traversal" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"../../../etc/passwd\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not allowed") != null);
@@ -162,7 +149,7 @@ test "file_read blocks absolute path" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"/etc/passwd\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
 }
@@ -172,7 +159,7 @@ test "file_read missing path param" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     // error_msg is a static string from ToolResult.fail(), don't free it
     try std.testing.expect(!result.success);
     try std.testing.expect(result.error_msg != null);
@@ -181,19 +168,18 @@ test "file_read missing path param" {
 test "file_read nested path" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.makePath("sub/dir");
-    try tmp_dir.dir.writeFile(.{ .sub_path = "sub/dir/deep.txt", .data = "deep content" });
+    try tmp_dir.dir.createDirPath(std.Options.debug_io, "sub/dir");
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "sub/dir/deep.txt", .data = "deep content" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"sub/dir/deep.txt\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("deep content", result.output);
@@ -202,18 +188,17 @@ test "file_read nested path" {
 test "file_read empty file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "empty.txt", .data = "" });
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "empty.txt", .data = "" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
 
     var ft = FileReadTool{ .workspace_dir = ws_path };
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"empty.txt\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("", result.output);
@@ -233,7 +218,7 @@ test "file_read absolute path without allowed_paths is rejected" {
     const t = ft.tool();
     const parsed = try root.parseTestArgs("{\"path\": \"/tmp/foo.txt\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Absolute paths not allowed") != null);
 }
@@ -241,10 +226,10 @@ test "file_read absolute path without allowed_paths is rejected" {
 test "file_read absolute path with allowed_paths works" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    try tmp_dir.dir.writeFile(.{ .sub_path = "hello.txt", .data = "allowed content" });
+    try tmp_dir.dir.writeFile(std.Options.debug_io, .{ .sub_path = "hello.txt", .data = "allowed content" });
 
-    const ws_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(ws_path);
+    const ws_path = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(ws_path.ptr[0 .. ws_path.len + 1]);
     const abs_file = try std.fs.path.join(std.testing.allocator, &.{ ws_path, "hello.txt" });
     defer std.testing.allocator.free(abs_file);
 
@@ -266,9 +251,8 @@ test "file_read absolute path with allowed_paths works" {
     defer parsed.deinit();
 
     var ft = FileReadTool{ .workspace_dir = "/nonexistent", .allowed_paths = &.{ws_path} };
-    const result = try ft.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try ft.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.success);
     try std.testing.expectEqualStrings("allowed content", result.output);

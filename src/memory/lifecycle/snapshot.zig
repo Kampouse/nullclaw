@@ -6,6 +6,7 @@
 //!   - should_hydrate: checks if memory is empty but snapshot exists
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const build_options = @import("build_options");
 const root = @import("../root.zig");
 const json_util = @import("../../json_util.zig");
@@ -49,14 +50,22 @@ pub fn exportSnapshot(allocator: std.mem.Allocator, mem: Memory, workspace_dir: 
 
     try json_buf.appendSlice(allocator, "\n]\n");
 
-    // Write to file
+    // Write to file (Zig 0.16.0 I/O API)
     const snapshot_path = try std.fs.path.join(allocator, &.{ workspace_dir, SNAPSHOT_FILENAME });
     defer allocator.free(snapshot_path);
 
-    const file = try std.fs.cwd().createFile(snapshot_path, .{});
-    defer file.close();
+    const file = std.Io.Dir.cwd().createFile(io, snapshot_path, .{}) catch |err| {
+        std.log.err("Failed to create snapshot file: {}", .{err});
+        return error.SnapshotWriteFailed;
+    };
+    defer file.close(io);
 
-    try file.writeAll(json_buf.items);
+    var write_buf: [8192]u8 = undefined;
+    var bw = file.writer(io, &write_buf);
+    const w = &bw.interface;
+
+    try w.writeAll(json_buf.items);
+    try w.flush();
 
     return entries.len;
 }
@@ -76,55 +85,56 @@ pub fn hydrateFromSnapshot(allocator: std.mem.Allocator, mem: Memory, workspace_
     const snapshot_path = try std.fs.path.join(allocator, &.{ workspace_dir, SNAPSHOT_FILENAME });
     defer allocator.free(snapshot_path);
 
-    // Read snapshot file
-    const content = std.fs.cwd().readFileAlloc(allocator, snapshot_path, 10 * 1024 * 1024) catch return 0;
-    defer allocator.free(content);
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, snapshot_path, allocator, .limited(10 * 1024 * 1024)) catch |err| {
+        std.log.err("Failed to read snapshot file: {}", .{err});
+        return error.SnapshotReadFailed;
+    };
+    defer allocator.free(json_bytes);
 
-    if (content.len == 0) return 0;
-
-    // Parse JSON array
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return 0;
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch |err| {
+        std.log.err("Failed to parse snapshot JSON: {}", .{err});
+        return error.SnapshotParseFailed;
+    };
     defer parsed.deinit();
 
-    const array = switch (parsed.value) {
-        .array => |a| a,
-        else => return 0,
+    const root_array = switch (parsed.value) {
+        .array => |arr| arr,
+        else => return error.SnapshotInvalidFormat,
     };
 
-    var hydrated: usize = 0;
-    for (array.items) |item| {
-        const obj = switch (item) {
-            .object => |o| o,
+    var hydrated_count: usize = 0;
+    for (root_array.items) |entry_val| {
+        const entry_obj = switch (entry_val) {
+            .object => |obj| obj,
             else => continue,
         };
 
-        const key_val = obj.get("key") orelse continue;
-        const content_val = obj.get("content") orelse continue;
-
-        const key = switch (key_val) {
-            .string => |s| s,
-            else => continue,
-        };
-        const entry_content = switch (content_val) {
+        const key = switch (entry_obj.get("key") orelse continue) {
             .string => |s| s,
             else => continue,
         };
 
-        // Determine category
-        var category: MemoryCategory = .core;
-        if (obj.get("category")) |cat_val| {
-            const cat_str = switch (cat_val) {
-                .string => |s| s,
-                else => "core",
-            };
-            category = MemoryCategory.fromString(cat_str);
-        }
+        const content = switch (entry_obj.get("content") orelse continue) {
+            .string => |s| s,
+            else => continue,
+        };
 
-        mem.store(key, entry_content, category, null) catch continue;
-        hydrated += 1;
+        const category_str = switch (entry_obj.get("category") orelse continue) {
+            .string => |s| s,
+            else => continue,
+        };
+
+        const category = MemoryCategory.fromString(category_str);
+
+        mem.store(key, content, category, null) catch |err| {
+            std.log.err("Failed to hydrate memory entry {s}: {}", .{key, err});
+            continue;
+        };
+
+        hydrated_count += 1;
     }
 
-    return hydrated;
+    return hydrated_count;
 }
 
 // ── Should hydrate ────────────────────────────────────────────────
@@ -142,7 +152,7 @@ pub fn shouldHydrate(allocator: std.mem.Allocator, mem: ?Memory, workspace_dir: 
     const snapshot_path = std.fs.path.join(allocator, &.{ workspace_dir, SNAPSHOT_FILENAME }) catch return false;
     defer allocator.free(snapshot_path);
 
-    std.fs.cwd().access(snapshot_path, .{}) catch return false;
+    std.Io.Dir.cwd().access(io, snapshot_path, .{}) catch return false;
     return true;
 }
 
@@ -191,7 +201,7 @@ test "R3: snapshot export then import roundtrip preserves all entries" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const workspace_dir = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace_dir = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace_dir);
 
     // Source memory: populate with entries
@@ -244,10 +254,10 @@ test "R3: shouldHydrate returns true when memory is empty and snapshot exists" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const snap_file = try tmp.dir.createFile(SNAPSHOT_FILENAME, .{});
-    snap_file.close();
+    const snap_file = try tmp.dir.createFile(std.Options.debug_io, SNAPSHOT_FILENAME, .{});
+    snap_file.close(std.Options.debug_io);
 
-    const workspace_dir = try tmp.dir.realpathAlloc(allocator, ".");
+    const workspace_dir = try std.testing.allocator.dupe(u8, ".");
     defer allocator.free(workspace_dir);
 
     var mem_impl = try sqlite_mod.SqliteMemory.init(allocator, ":memory:");

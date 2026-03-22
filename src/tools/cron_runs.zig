@@ -24,7 +24,7 @@ pub const CronRunsTool = struct {
         };
     }
 
-    pub fn execute(_: *CronRunsTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronRunsTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const job_id = root.getString(args, "job_id") orelse
             return ToolResult.fail("Missing 'job_id' parameter");
 
@@ -33,28 +33,27 @@ pub const CronRunsTool = struct {
             break :blk if (raw > 0) @intCast(raw) else 10;
         };
 
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
         defer scheduler.deinit();
 
         const job = scheduler.getJob(job_id) orelse {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
         const runs = scheduler.listRuns(job_id, limit);
 
         if (runs.len == 0) {
             const msg = try std.fmt.allocPrint(allocator, "No run history for job {s}. Use 'cron run {s}' to execute manually.", .{ job_id, job_id });
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         // Format output
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
+        var buf: [8192]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
 
         // Header with job info
         const last_run_str: []const u8 = if (job.last_run_secs) |lrs| blk: {
@@ -81,7 +80,8 @@ pub const CronRunsTool = struct {
             });
         }
 
-        return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
+        const output = try allocator.dupe(u8, w.buffered());
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 };
 
@@ -92,7 +92,7 @@ test "cron_runs_requires_job_id" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }
@@ -102,8 +102,8 @@ test "cron_runs_not_found" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-xyz\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }
@@ -111,7 +111,7 @@ test "cron_runs_not_found" {
 test "cron_runs_no_history" {
     const allocator = std.testing.allocator;
     // Create a scheduler with a job but no runs (no file I/O)
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.testing.io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("* * * * *", "echo test");
     const job_id = job.id;
@@ -125,7 +125,7 @@ test "cron_runs_no_history" {
     const t = crt.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"no-such-job-abc\"}");
     defer parsed.deinit();
-    const result = try t.execute(allocator, parsed.value.object);
+    const result = try t.execute(allocator, parsed.parsed.value.object, std.testing.io);
     defer if (result.error_msg) |e| allocator.free(e);
     try std.testing.expect(!result.success);
 }
@@ -133,7 +133,7 @@ test "cron_runs_no_history" {
 test "cron_runs_shows_history" {
     const allocator = std.testing.allocator;
     // Create a scheduler with a job and add runs directly (no file I/O)
-    var scheduler = CronScheduler.init(allocator, 10, true);
+    var scheduler = CronScheduler.init(allocator, 10, true, std.testing.io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/5 * * * *", "echo hello");

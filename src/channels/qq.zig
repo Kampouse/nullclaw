@@ -1,3 +1,4 @@
+const util = @import("../util.zig");
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root.zig");
@@ -5,6 +6,7 @@ const config_types = @import("../config_types.zig");
 const bus = @import("../bus.zig");
 const websocket = @import("../websocket.zig");
 
+const io = std.Options.debug_io;
 const log = std.log.scoped(.qq);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -215,11 +217,11 @@ pub const DEDUP_CAPACITY: usize = 10_000;
 pub const StringDedupSet = struct {
     seen: std.StringHashMapUnmanaged(void) = .empty,
     order: std.ArrayListUnmanaged([]u8) = .empty,
-    mu: std.Thread.Mutex = .{},
+    mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
 
     pub fn deinit(self: *StringDedupSet, allocator: std.mem.Allocator) void {
-        self.mu.lock();
-        defer self.mu.unlock();
+        self.mu.lock(std.Options.debug_io) catch return;
+        defer self.mu.unlock(std.Options.debug_io);
         for (self.order.items) |key| allocator.free(key);
         self.order.deinit(allocator);
         self.seen.deinit(allocator);
@@ -228,8 +230,8 @@ pub const StringDedupSet = struct {
     pub fn isDuplicate(self: *StringDedupSet, allocator: std.mem.Allocator, message_id: []const u8) !bool {
         if (message_id.len == 0) return false;
 
-        self.mu.lock();
-        defer self.mu.unlock();
+        try self.mu.lock(io);
+        defer self.mu.unlock(io);
 
         if (self.seen.contains(message_id)) {
             return true;
@@ -264,7 +266,7 @@ pub const StringDedupSet = struct {
 /// Build the IDENTIFY payload for QQ Gateway WebSocket.
 /// Format: {"op":2,"d":{"token":"QQBot {access_token}","intents":N,"shard":[0,1]}}
 pub fn buildIdentifyPayload(buf: []u8, access_token: []const u8, intents: u32) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{{\"op\":2,\"d\":{{\"token\":\"QQBot {s}\",\"intents\":{d},\"shard\":[0,1]}}}}", .{
         access_token,
@@ -276,19 +278,19 @@ pub fn buildIdentifyPayload(buf: []u8, access_token: []const u8, intents: u32) !
 /// Build a heartbeat payload.
 /// Format: {"op":1,"d":N} where N is the last sequence number (or null).
 pub fn buildHeartbeatPayload(buf: []u8, sequence: ?i64) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     if (sequence) |seq| {
         try w.print("{{\"op\":1,\"d\":{d}}}", .{seq});
     } else {
-        try w.writeAll("{\"op\":1,\"d\":null}");
+        try w.writeStreamingAll(std.Options.debug_io, "{\"op\":1,\"d\":null}");
     }
     return fbs.getWritten();
 }
 
 /// Build the REST API URL for sending a message to a channel.
 pub fn buildSendUrl(buf: []u8, base: []const u8, channel_id: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/channels/{s}/messages", .{ base, channel_id });
     return fbs.getWritten();
@@ -296,7 +298,7 @@ pub fn buildSendUrl(buf: []u8, base: []const u8, channel_id: []const u8) ![]cons
 
 /// Build the REST API URL for sending a DM (direct message).
 pub fn buildDmUrl(buf: []u8, base: []const u8, guild_id: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/dms/{s}/messages", .{ base, guild_id });
     return fbs.getWritten();
@@ -305,7 +307,7 @@ pub fn buildDmUrl(buf: []u8, base: []const u8, guild_id: []const u8) ![]const u8
 /// Build the REST API URL for sending a group message.
 /// Format: {base}/v2/groups/{group_openid}/messages
 pub fn buildGroupSendUrl(buf: []u8, base: []const u8, group_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.FixedBufferStream.init(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/groups/{s}/messages", .{ base, group_openid });
     return fbs.getWritten();
@@ -314,7 +316,7 @@ pub fn buildGroupSendUrl(buf: []u8, base: []const u8, group_openid: []const u8) 
 /// Build the REST API URL for sending a C2C (private) message.
 /// Format: {base}/v2/users/{user_openid}/messages
 pub fn buildC2cSendUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/users/{s}/messages", .{ base, user_openid });
     return fbs.getWritten();
@@ -323,7 +325,7 @@ pub fn buildC2cSendUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![]
 /// Build the REST API URL for uploading a group media file descriptor.
 /// Format: {base}/v2/groups/{group_openid}/files
 pub fn buildGroupFilesUrl(buf: []u8, base: []const u8, group_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/groups/{s}/files", .{ base, group_openid });
     return fbs.getWritten();
@@ -332,7 +334,7 @@ pub fn buildGroupFilesUrl(buf: []u8, base: []const u8, group_openid: []const u8)
 /// Build the REST API URL for uploading a C2C media file descriptor.
 /// Format: {base}/v2/users/{user_openid}/files
 pub fn buildC2cFilesUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/v2/users/{s}/files", .{ base, user_openid });
     return fbs.getWritten();
@@ -341,7 +343,7 @@ pub fn buildC2cFilesUrl(buf: []u8, base: []const u8, user_openid: []const u8) ![
 /// Build the REST API URL for resolving gateway endpoint.
 /// Format: {base}/gateway
 pub fn buildGatewayResolveUrl(buf: []u8, base: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("{s}/gateway", .{base});
     return fbs.getWritten();
@@ -366,10 +368,14 @@ pub fn buildSendBody(
         try root.json_util.appendJsonString(&body_list, allocator, mid);
     }
     if (msg_type) |mt| {
-        try body_list.writer(allocator).print(",\"msg_type\":{d}", .{mt});
+        var buf: [64]u8 = undefined;
+        const mt_str = try std.fmt.bufPrint(&buf, ",\"msg_type\":{d}", .{mt});
+        try body_list.appendSlice(allocator, mt_str);
     }
     if (msg_seq) |seq| {
-        try body_list.writer(allocator).print(",\"msg_seq\":{d}", .{seq});
+        var buf: [64]u8 = undefined;
+        const seq_str = try std.fmt.bufPrint(&buf, ",\"msg_seq\":{d}", .{seq});
+        try body_list.appendSlice(allocator, seq_str);
     }
     try body_list.appendSlice(allocator, "}");
 
@@ -408,7 +414,9 @@ pub fn buildMediaSendBody(
         try root.json_util.appendJsonString(&body_list, allocator, mid);
     }
     if (msg_seq) |seq| {
-        try body_list.writer(allocator).print(",\"msg_seq\":{d}", .{seq});
+        var buf: [64]u8 = undefined;
+        const seq_str = try std.fmt.bufPrint(&buf, ",\"msg_seq\":{d}", .{seq});
+        try body_list.appendSlice(allocator, seq_str);
     }
     try body_list.appendSlice(allocator, "}");
 
@@ -417,7 +425,7 @@ pub fn buildMediaSendBody(
 
 /// Build auth header value: "Authorization: QQBot {access_token}"
 pub fn buildAuthHeader(buf: []u8, access_token: []const u8) ![]const u8 {
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = util.fixedBufferStream(buf);
     const w = fbs.writer();
     try w.print("Authorization: QQBot {s}", .{access_token});
     return fbs.getWritten();
@@ -731,7 +739,7 @@ pub const QQChannel = struct {
     heartbeat_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     force_heartbeat: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     ws_fd: std.atomic.Value(std.posix.socket_t) = std.atomic.Value(std.posix.socket_t).init(invalid_socket),
-    token_mu: std.Thread.Mutex = .{},
+    token_mu: std.Io.Mutex = .{ .state = .init(.unlocked) },
 
     // ── Access token state ──
     access_token: ?[]u8 = null,
@@ -772,10 +780,10 @@ pub const QQChannel = struct {
     /// Ensure a valid access_token is available, fetching or refreshing as needed.
     /// Returns a caller-owned copy of the token to avoid lifetime races with stop().
     fn ensureAccessToken(self: *QQChannel) ![]u8 {
-        self.token_mu.lock();
-        defer self.token_mu.unlock();
+        try self.token_mu.lock(std.Options.debug_io);
+        defer self.token_mu.unlock(std.Options.debug_io);
 
-        const now = std.time.timestamp();
+        const now = util.timestampUnix();
         if (self.access_token) |tok| {
             if (now < self.token_expires_at - TOKEN_REFRESH_MARGIN_SECS) {
                 return self.allocator.dupe(u8, tok);
@@ -1092,27 +1100,27 @@ pub const QQChannel = struct {
 
         // Build metadata JSON
         var meta_buf: [512]u8 = undefined;
-        var meta_fbs = std.io.fixedBufferStream(&meta_buf);
+        var meta_fbs = util.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
-        mw.writeAll("{\"msg_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, "{\"msg_id\":") catch return;
         root.appendJsonStringW(mw, msg_id_str) catch return;
         mw.print(",\"is_dm\":{s},\"is_group\":{s}", .{
             if (is_dm) "true" else "false",
             if (is_group) "true" else "false",
         }) catch return;
         if (channel_id.len > 0) {
-            mw.writeAll(",\"channel_id\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":") catch return;
             root.appendJsonStringW(mw, channel_id) catch return;
         }
         if (group_openid.len > 0) {
-            mw.writeAll(",\"group_openid\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"group_openid\":") catch return;
             root.appendJsonStringW(mw, group_openid) catch return;
         }
         if (user_openid.len > 0) {
-            mw.writeAll(",\"user_openid\":") catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"user_openid\":") catch return;
             root.appendJsonStringW(mw, user_openid) catch return;
         }
-        mw.writeAll(",\"account_id\":") catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":") catch return;
         root.appendJsonStringW(mw, self.config.account_id) catch return;
         mw.writeByte('}') catch return;
         const metadata = meta_fbs.getWritten();
@@ -1389,7 +1397,16 @@ pub const QQChannel = struct {
             if (comptime builtin.os.tag == .windows) {
                 _ = std.os.windows.ws2_32.closesocket(fd);
             } else {
-                std.posix.close(fd);
+                const posix_close = struct {
+                    fn close(fd_val: std.posix.fd_t) void {
+                        if (comptime builtin.os.tag == .linux) {
+                            _ = std.os.linux.close(fd_val);
+                        } else {
+                            _ = std.c.close(@as(std.c.fd_t, @intCast(fd_val)));
+                        }
+                    }
+                };
+                posix_close.close(fd);
             }
         }
         if (self.gateway_thread) |t| {
@@ -1400,8 +1417,8 @@ pub const QQChannel = struct {
             self.allocator.free(sid);
             self.session_id = null;
         }
-        self.token_mu.lock();
-        defer self.token_mu.unlock();
+        self.token_mu.lockUncancelable(io);
+        defer self.token_mu.unlock(io);
         if (self.access_token) |tok| {
             self.allocator.free(tok);
             self.access_token = null;
@@ -1461,7 +1478,7 @@ pub const QQChannel = struct {
             // Interruptible backoff
             var slept: u64 = 0;
             while (slept < backoff_ms and self.running.load(.acquire)) {
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                util.sleep(100 * std.time.ns_per_ms);
                 slept += 100;
             }
         }
@@ -1499,7 +1516,7 @@ pub const QQChannel = struct {
         var ws = try websocket.WsClient.connect(self.allocator, host, port, path, &.{});
 
         // Store fd for interrupt-on-stop
-        self.ws_fd.store(ws.stream.handle, .release);
+        self.ws_fd.store(ws.stream, .release);
 
         // Start heartbeat thread
         self.heartbeat_stop.store(false, .release);
@@ -1591,7 +1608,7 @@ pub const QQChannel = struct {
             if (self.force_heartbeat.swap(false, .acq_rel)) {
                 self.sendHeartbeatNow(ws);
             }
-            std.Thread.sleep(10 * std.time.ns_per_ms);
+            util.sleep(100 * std.time.ns_per_ms);
         }
         log.info("Heartbeat thread running (interval={d}ms)", .{self.heartbeat_interval_ms.load(.acquire)});
         while (!self.heartbeat_stop.load(.acquire)) {
@@ -1605,7 +1622,7 @@ pub const QQChannel = struct {
                     elapsed = 0;
                     continue;
                 }
-                std.Thread.sleep(100 * std.time.ns_per_ms);
+                util.sleep(100 * std.time.ns_per_ms);
                 elapsed += 100;
             }
             if (self.heartbeat_stop.load(.acquire)) return;

@@ -24,7 +24,7 @@ pub const CronUpdateTool = struct {
         };
     }
 
-    pub fn execute(_: *CronUpdateTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronUpdateTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const job_id = root.getString(args, "job_id") orelse
             return ToolResult.fail("Missing 'job_id' parameter");
 
@@ -42,7 +42,7 @@ pub const CronUpdateTool = struct {
                 return ToolResult.fail("Invalid cron expression");
         }
 
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             return ToolResult.fail("Failed to load scheduler state");
         };
         defer scheduler.deinit();
@@ -55,21 +55,21 @@ pub const CronUpdateTool = struct {
 
         if (!scheduler.updateJob(allocator, job_id, patch)) {
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' not found", .{job_id});
-            return ToolResult{ .success = false, .output = "", .error_msg = msg };
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
         cron.saveJobs(&scheduler) catch {};
 
         // Build summary of what changed
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
+        var buf: [1024]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
         try w.print("Updated job {s}", .{job_id});
         if (expression) |expr| try w.print(" | expression={s}", .{expr});
         if (command) |cmd| try w.print(" | command={s}", .{cmd});
         if (enabled) |ena| try w.print(" | enabled={s}", .{if (ena) "true" else "false"});
 
-        return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
+        const output = try allocator.dupe(u8, w.buffered());
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 };
 
@@ -93,7 +93,7 @@ test "cron_update_requires_job_id" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "job_id") != null);
 }
@@ -103,7 +103,7 @@ test "cron_update_requires_something" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"job-1\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Nothing to update") != null);
 }
@@ -112,7 +112,7 @@ test "cron_update_expression" {
     var ct = CronUpdateTool{};
     const t = ct.tool();
     // First create a job via CronScheduler so there's something to update
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
     cron.saveJobs(&scheduler) catch {};
@@ -121,9 +121,8 @@ test "cron_update_expression" {
     defer std.testing.allocator.free(args);
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Updated job") != null);
         try std.testing.expect(std.mem.indexOf(u8, result.output, "expression") != null);
@@ -133,7 +132,7 @@ test "cron_update_expression" {
 test "cron_update_disable" {
     var ct = CronUpdateTool{};
     const t = ct.tool();
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
     cron.saveJobs(&scheduler) catch {};
@@ -142,9 +141,8 @@ test "cron_update_disable" {
     defer std.testing.allocator.free(args);
     const parsed = try root.parseTestArgs(args);
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Updated job") != null);
         try std.testing.expect(std.mem.indexOf(u8, result.output, "enabled=false") != null);
@@ -156,8 +154,8 @@ test "cron_update_not_found" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"nonexistent-999\", \"command\": \"echo new\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.error_msg) |e| std.testing.allocator.free(e);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "not found") != null);
 }
@@ -167,7 +165,7 @@ test "cron_update_invalid_expression" {
     const t = ct.tool();
     const parsed = try root.parseTestArgs("{\"job_id\": \"job-1\", \"expression\": \"bad\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Invalid cron expression") != null);
 }

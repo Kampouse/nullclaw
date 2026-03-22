@@ -11,6 +11,7 @@
 //! Uses std.http.Server (built-in, no external deps).
 
 const std = @import("std");
+const util = @import("util.zig");
 const build_options = @import("build_options");
 const health = @import("health.zig");
 const Config = @import("config.zig").Config;
@@ -49,6 +50,57 @@ const GatewayObservedToolEvent = struct {
     success: bool = false,
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Helper Functions for ArrayListUnmanaged (Zig 0.16: ArrayList.writer() removed)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Append JSON-escaped string to ArrayListUnmanaged
+fn appendJsonEscaped(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, input: []const u8) !void {
+    for (input) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(alloc, "\\\""),
+            '\\' => try buf.appendSlice(alloc, "\\\\"),
+            '\n' => try buf.appendSlice(alloc, "\\n"),
+            '\r' => try buf.appendSlice(alloc, "\\r"),
+            '\t' => try buf.appendSlice(alloc, "\\t"),
+            0x08 => try buf.appendSlice(alloc, "\\b"),
+            0x0C => try buf.appendSlice(alloc, "\\f"),
+            0x00...0x07, 0x0B, 0x0E...0x1F => |control| {
+                // Escape control characters as \uXXXX
+                try buf.appendSlice(alloc, "\\u");
+                var hex_buf: [4]u8 = undefined;
+                const hex = try std.fmt.bufPrint(&hex_buf, "{x:0>4}", .{control});
+                try buf.appendSlice(alloc, hex);
+            },
+            else => try buf.append(alloc, c),
+        }
+    }
+}
+
+/// Append byte to ArrayListUnmanaged
+fn appendByte(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, byte: u8) !void {
+    try buf.append(alloc, byte);
+}
+
+/// Append slice to ArrayListUnmanaged
+fn appendSlice(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, slice: []const u8) !void {
+    try buf.appendSlice(alloc, slice);
+}
+
+/// Append formatted string to ArrayListUnmanaged
+fn appendPrint(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
+    var stack_buf: [256]u8 = undefined;
+    if (std.fmt.bufPrint(&stack_buf, fmt, args)) |formatted| {
+        try buf.appendSlice(alloc, formatted);
+    } else |_| {
+        // Only NoSpaceLeft can fail for bufPrint
+        // Fallback: allocPrint for larger output
+        const alloc_fmt = try std.fmt.allocPrint(alloc, fmt, args);
+        defer alloc.free(alloc_fmt);
+        try buf.appendSlice(alloc, alloc_fmt);
+    }
+}
+
 const GatewayTurnToolEvent = struct {
     kind: GatewayObservedToolEventKind,
     tool: []const u8,
@@ -59,9 +111,10 @@ const GatewayTurnToolEvent = struct {
 /// Used to enrich webhook responses with tool execution summaries.
 const GatewayThreadObserver = struct {
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
     next_seq: u64 = 0,
     events: std.ArrayListUnmanaged(GatewayObservedToolEvent) = .empty,
+    io: std.Io,
 
     const vtable = observability.Observer.VTable{
         .record_event = recordEvent,
@@ -70,13 +123,13 @@ const GatewayThreadObserver = struct {
         .name = name,
     };
 
-    pub fn init(allocator: std.mem.Allocator) GatewayThreadObserver {
-        return .{ .allocator = allocator };
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) GatewayThreadObserver {
+        return .{ .allocator = allocator, .io = io };
     }
 
     pub fn deinit(self: *GatewayThreadObserver) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(self.io) catch return;
+        defer self.mutex.unlock(self.io);
         for (self.events.items) |event| {
             self.allocator.free(event.tool);
         }
@@ -91,8 +144,8 @@ const GatewayThreadObserver = struct {
     }
 
     pub fn currentSeq(self: *GatewayThreadObserver) u64 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         return self.next_seq;
     }
 
@@ -101,8 +154,8 @@ const GatewayThreadObserver = struct {
         allocator: std.mem.Allocator,
         seq: u64,
     ) ![]GatewayTurnToolEvent {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(self.io) catch return error.MutexLockFailed;
+        defer self.mutex.unlock(self.io);
 
         var count: usize = 0;
         for (self.events.items) |event| {
@@ -152,8 +205,8 @@ const GatewayThreadObserver = struct {
         tool: []const u8,
         success: bool,
     ) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lock(std.Options.debug_io) catch return;
+        defer self.mutex.unlock(std.Options.debug_io);
 
         const owned_tool = self.allocator.dupe(u8, tool) catch return;
 
@@ -191,7 +244,7 @@ pub const SlidingWindowRateLimiter = struct {
             .limit_per_window = limit_per_window,
             .window_ns = @as(i128, @intCast(window_secs)) * 1_000_000_000,
             .entries = .empty,
-            .last_sweep = std.time.nanoTimestamp(),
+            .last_sweep = util.nanoTimestamp(),
         };
     }
 
@@ -207,7 +260,7 @@ pub const SlidingWindowRateLimiter = struct {
     pub fn allow(self: *SlidingWindowRateLimiter, allocator: std.mem.Allocator, key: []const u8) bool {
         if (self.limit_per_window == 0) return true;
 
-        const now = std.time.nanoTimestamp();
+        const now = util.nanoTimestamp();
         const cutoff = now - self.window_ns;
 
         // Periodic sweep
@@ -315,7 +368,7 @@ pub const IdempotencyStore = struct {
     /// Returns true if this key is new and is now recorded.
     /// Returns false if this is a duplicate.
     pub fn recordIfNew(self: *IdempotencyStore, allocator: std.mem.Allocator, key: []const u8) bool {
-        const now = std.time.nanoTimestamp();
+        const now = util.nanoTimestamp();
         const cutoff = now - self.ttl_ns;
 
         // Clean expired keys (simple sweep)
@@ -664,13 +717,13 @@ fn constantTimeEql(a: *const [32]u8, b: *const [32]u8) bool {
 pub fn jsonEscapeInto(writer: anytype, input: []const u8) !void {
     for (input) |c| {
         switch (c) {
-            '"' => try writer.writeAll("\\\""),
-            '\\' => try writer.writeAll("\\\\"),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
-            0x08 => try writer.writeAll("\\b"),
-            0x0C => try writer.writeAll("\\f"),
+            '"' => try writer.writeStreamingAll(std.Options.debug_io, "\\\""),
+            '\\' => try writer.writeStreamingAll(std.Options.debug_io, "\\\\"),
+            '\n' => try writer.writeStreamingAll(std.Options.debug_io, "\\n"),
+            '\r' => try writer.writeStreamingAll(std.Options.debug_io, "\\r"),
+            '\t' => try writer.writeStreamingAll(std.Options.debug_io, "\\t"),
+            0x08 => try writer.writeStreamingAll(std.Options.debug_io, "\\b"),
+            0x0C => try writer.writeStreamingAll(std.Options.debug_io, "\\f"),
             else => {
                 if (c < 0x20) {
                     try writer.print("\\u{x:0>4}", .{c});
@@ -687,12 +740,11 @@ pub fn jsonEscapeInto(writer: anytype, input: []const u8) !void {
 pub fn jsonWrapField(allocator: std.mem.Allocator, key: []const u8, value: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeByte('"');
-    try w.writeAll(key);
-    try w.writeAll("\":\"");
-    try jsonEscapeInto(w, value);
-    try w.writeByte('"');
+    try appendByte(&buf, allocator, '"');
+    try appendSlice(&buf, allocator, key);
+    try appendSlice(&buf, allocator, "\":\"");
+    try appendJsonEscaped(&buf, allocator, value);
+    try appendByte(&buf, allocator, '"');
     return buf.toOwnedSlice(allocator);
 }
 
@@ -701,10 +753,9 @@ pub fn jsonWrapField(allocator: std.mem.Allocator, key: []const u8, value: []con
 pub fn jsonWrapResponse(allocator: std.mem.Allocator, response: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeAll("{\"status\":\"ok\",\"response\":\"");
-    try jsonEscapeInto(w, response);
-    try w.writeAll("\"}");
+    try appendSlice(&buf, allocator, "{\"status\":\"ok\",\"response\":\"");
+    try appendJsonEscaped(&buf, allocator, response);
+    try appendSlice(&buf, allocator, "\"}");
     return buf.toOwnedSlice(allocator);
 }
 
@@ -715,9 +766,8 @@ fn buildThreadEventsJson(
 ) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
 
-    try w.writeByte('[');
+    try appendByte(&buf, allocator, '[');
 
     var tool_results: usize = 0;
     var failed_results: usize = 0;
@@ -728,14 +778,14 @@ fn buildThreadEventsJson(
     }
 
     if (tool_results > 0) {
-        try w.writeAll("{\"type\":\"tool_summary\",\"total\":");
-        try w.print("{d}", .{tool_results});
-        try w.writeAll(",\"failed\":");
-        try w.print("{d}", .{failed_results});
-        try w.writeByte('}');
+        try appendSlice(&buf, allocator, "{\"type\":\"tool_summary\",\"total\":");
+        try appendPrint(&buf, allocator, "{d}", .{tool_results});
+        try appendSlice(&buf, allocator, ",\"failed\":");
+        try appendPrint(&buf, allocator, "{d}", .{failed_results});
+        try appendByte(&buf, allocator, '}');
     }
 
-    try w.writeByte(']');
+    try appendByte(&buf, allocator, ']');
     return buf.toOwnedSlice(allocator);
 }
 
@@ -748,12 +798,11 @@ fn buildWebhookSuccessResponse(
 ) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeAll("{\"status\":\"ok\",\"response\":\"");
-    try jsonEscapeInto(w, response_text);
-    try w.writeAll("\",\"thread_events\":");
-    try w.writeAll(thread_events_json);
-    try w.writeByte('}');
+    try appendSlice(&buf, allocator, "{\"status\":\"ok\",\"response\":\"");
+    try appendJsonEscaped(&buf, allocator, response_text);
+    try appendSlice(&buf, allocator, "\",\"thread_events\":");
+    try appendSlice(&buf, allocator, thread_events_json);
+    try appendByte(&buf, allocator, '}');
     return buf.toOwnedSlice(allocator);
 }
 
@@ -762,10 +811,9 @@ fn buildWebhookSuccessResponse(
 fn jsonWrapChallenge(allocator: std.mem.Allocator, challenge: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.writeAll("{\"challenge\":\"");
-    try jsonEscapeInto(w, challenge);
-    try w.writeAll("\"}");
+    try appendSlice(&buf, allocator, "{\"challenge\":\"");
+    try appendJsonEscaped(&buf, allocator, challenge);
+    try appendSlice(&buf, allocator, "\"}");
     return buf.toOwnedSlice(allocator);
 }
 
@@ -1055,15 +1103,14 @@ fn verifySlackSignature(
     if (provided_hex.len != 64) return false;
 
     const ts = std.fmt.parseInt(i64, ts_trimmed, 10) catch return false;
-    const now = std.time.timestamp();
+    const now = util.timestampUnix();
     const delta = if (now >= ts) now - ts else ts - now;
     if (delta > 300) return false; // 5-minute replay window
 
     var base_buf: std.ArrayListUnmanaged(u8) = .empty;
     defer base_buf.deinit(allocator);
-    const bw = base_buf.writer(allocator);
-    bw.print("v0:{s}:", .{ts_trimmed}) catch return false;
-    bw.writeAll(body) catch return false;
+    appendPrint(&base_buf, allocator, "v0:{s}:", .{ts_trimmed}) catch return false;
+    appendSlice(&base_buf, allocator, body) catch return false;
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [32]u8 = undefined;
@@ -1470,18 +1517,16 @@ pub fn extractBody(raw: []const u8) ?[]const u8 {
 /// Process an incoming message by spawning `nullclaw agent -m "..."`.
 /// Returns the agent's response text. Caller owns the returned memory.
 pub fn processIncomingMessage(allocator: std.mem.Allocator, message: []const u8) ![]u8 {
+    _ = message; // TODO: pass to agent via stdin
     // Find our own executable path
     var self_buf: [std.fs.max_path_bytes]u8 = undefined;
     const self_path = std.fs.selfExePath(&self_buf) catch "nullclaw";
 
-    var child = std.process.Child.init(
-        &[_][]const u8{ self_path, "agent", "-m", message },
-        allocator,
-    );
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-
-    try child.spawn();
+    var child = try std.process.spawn(std.Options.debug_io, .{
+        .argv = &[_][]const u8{self_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
 
     // Read stdout
     var stdout_buf: std.ArrayList(u8) = .empty;
@@ -1495,7 +1540,7 @@ pub fn processIncomingMessage(allocator: std.mem.Allocator, message: []const u8)
         try stdout_buf.appendSlice(allocator, read_buf[0..n]);
     }
 
-    const term = try child.wait();
+    const term = try child.wait(std.Options.debug_io);
     _ = term;
 
     if (stdout_buf.items.len > 0) {
@@ -1505,7 +1550,7 @@ pub fn processIncomingMessage(allocator: std.mem.Allocator, message: []const u8)
 }
 
 /// Send a reply to a Telegram chat using the Bot API.
-pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, chat_id: i64, text: []const u8) !void {
+pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, chat_id: i64, text: []const u8, io: std.Io) !void {
     // Build the curl command to call the Telegram API
     const url = try std.fmt.allocPrint(allocator, "https://api.telegram.org/bot{s}/sendMessage", .{bot_token});
     defer allocator.free(url);
@@ -1513,35 +1558,35 @@ pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, ch
     // JSON-escape the text for the body
     var body_buf: std.ArrayList(u8) = .empty;
     defer body_buf.deinit(allocator);
-    const w = body_buf.writer(allocator);
-    try w.print("{{\"chat_id\":{d},\"text\":\"", .{chat_id});
+    var fmt_buf: [128]u8 = undefined;
+    try body_buf.appendSlice(allocator, std.fmt.bufPrint(&fmt_buf, "{{\"chat_id\":{d},\"text\":\"", .{chat_id}) catch return error.OutOfMemory);
     for (text) |c| {
         switch (c) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
-            else => try w.writeByte(c),
+            '"' => try body_buf.appendSlice(allocator, "\\\""),
+            '\\' => try body_buf.appendSlice(allocator, "\\\\"),
+            '\n' => try body_buf.appendSlice(allocator, "\\n"),
+            '\r' => try body_buf.appendSlice(allocator, "\\r"),
+            '\t' => try body_buf.appendSlice(allocator, "\\t"),
+            else => try body_buf.append(allocator, c),
         }
     }
-    try w.writeAll("\"}");
+    try body_buf.appendSlice(allocator, "\"}");
 
     const body = body_buf.items;
 
-    var curl_child = std.process.Child.init(
-        &[_][]const u8{
-            "curl", "-s",                             "-X", "POST",
-            "-H",   "Content-Type: application/json", "-d", body,
-            url,
-        },
-        allocator,
-    );
-    curl_child.stdout_behavior = .Pipe;
-    curl_child.stderr_behavior = .Pipe;
+    const argv = [_][]const u8{
+        "curl", "-s",                             "-X", "POST",
+        "-H",   "Content-Type: application/json", "-d", body,
+        url,
+    };
 
-    curl_child.spawn() catch return;
-    _ = curl_child.wait() catch {};
+    var curl_child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch return;
+
+    _ = curl_child.wait(io) catch {};
 }
 
 fn userFacingAgentError(err: anyerror) []const u8 {
@@ -1575,6 +1620,7 @@ const WebhookHandlerContext = struct {
     config_opt: ?*const Config,
     state: *GatewayState,
     session_mgr_opt: ?*session_mod.SessionManager,
+    io: std.Io,
     response_status: []const u8 = "200 OK",
     response_body: []const u8 = "",
 };
@@ -1667,14 +1713,14 @@ fn handleTelegramWebhookRoute(ctx: *WebhookHandlerContext) void {
                 const sk = telegramSessionKeyRouted(ctx.req_allocator, &kb, chat_id.?, b, tg_cfg_opt, tg_account_id);
                 const reply: ?[]const u8 = sm.processMessage(sk, msg_text.?, null) catch |err| blk: {
                     if (tg_bot_token.len > 0) {
-                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, userFacingAgentError(err)) catch {};
+                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, userFacingAgentError(err), ctx.io) catch {};
                     }
                     break :blk null;
                 };
                 if (reply) |r| {
                     defer ctx.root_allocator.free(r);
                     if (tg_bot_token.len > 0) {
-                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, r) catch {};
+                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, r, ctx.io) catch {};
                     }
                     ctx.response_body = "{\"status\":\"ok\"}";
                 } else {
@@ -2431,7 +2477,7 @@ fn handleQqWebhookRoute(ctx: *WebhookHandlerContext) void {
 /// Run the HTTP gateway. Binds to host:port and serves HTTP requests.
 /// Endpoints: GET /health, GET /ready, POST /pair, POST /webhook, GET|POST /whatsapp, POST /telegram, POST /slack/events, POST /line, POST /lark, POST /qq
 /// If config_ptr is null, loads config internally (for backward compatibility).
-pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr: ?*const Config, event_bus: ?*bus_mod.Bus) !void {
+pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr: ?*const Config, event_bus: ?*bus_mod.Bus, io: std.Io) !void {
     health.markComponentOk("gateway");
 
     var state = GatewayState.init(allocator);
@@ -2443,7 +2489,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     if (config_ptr) |cfg| {
         config_opt = cfg;
     } else {
-        owned_config = Config.load(allocator) catch null;
+        owned_config = Config.load(allocator, std.Options.debug_io) catch null;
         if (owned_config) |*c| {
             config_opt = c;
         }
@@ -2458,7 +2504,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     var subagent_manager_opt: ?*subagent_mod.SubagentManager = null;
     var sec_tracker_opt: ?security.RateTracker = null;
     var sec_policy_opt: ?security.SecurityPolicy = null;
-    var gateway_thread_observer = GatewayThreadObserver.init(allocator);
+    var gateway_thread_observer = GatewayThreadObserver.init(allocator, io);
     defer gateway_thread_observer.deinit();
     const needs_local_agent = event_bus == null;
 
@@ -2534,12 +2580,12 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
                 const subagent_manager = allocator.create(subagent_mod.SubagentManager) catch null;
                 if (subagent_manager) |mgr| {
-                    mgr.* = subagent_mod.SubagentManager.init(allocator, cfg, event_bus, .{});
+                    mgr.* = subagent_mod.SubagentManager.init(allocator, io, cfg, event_bus, .{});
                     subagent_manager_opt = mgr;
                 }
 
                 // Tools.
-                tools_slice = tools_mod.allTools(allocator, cfg.workspace_dir, .{
+                tools_slice = tools_mod.allTools(allocator, cfg.workspace_dir, io, .{
                     .http_enabled = cfg.http_request.enabled,
                     .http_allowed_domains = cfg.http_request.allowed_domains,
                     .http_max_response_size = cfg.http_request.max_response_size,
@@ -2548,7 +2594,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     .web_search_provider = cfg.http_request.search_provider,
                     .web_search_fallback_providers = cfg.http_request.search_fallback_providers,
                     .browser_enabled = cfg.browser.enabled,
-                    .screenshot_enabled = true,
+                    .screenshot_enabled = false,
                     .agents = cfg.agents,
                     .fallback_api_key = resolved_api_key,
                     .allowed_paths = cfg.autonomy.allowed_paths,
@@ -2557,7 +2603,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 }) catch &.{};
 
                 const mem_opt: ?memory_mod.Memory = if (mem_rt) |rt| rt.memory else null;
-                var sm = session_mod.SessionManager.init(allocator, cfg, provider_i, tools_slice, mem_opt, gateway_thread_observer.observer(), if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+                var sm = session_mod.SessionManager.init(allocator, io, cfg, provider_i, tools_slice, mem_opt, gateway_thread_observer.observer(), if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
                 if (sec_policy_opt) |*policy| {
                     sm.policy = policy;
                 }
@@ -2582,15 +2628,16 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     defer if (session_mgr_opt) |*sm| sm.deinit();
     defer if (sec_tracker_opt) |*tracker| tracker.deinit();
 
-    // Resolve the listen address
-    const addr = try std.net.Address.resolveIp(host, port);
-    var server = try addr.listen(.{
-        .reuse_address = true,
-    });
-    defer server.deinit();
+    // Create listening socket using direct BSD calls (avoids Zig 0.16 I/O race condition)
+    const net_socket = @import("net_socket.zig");
+    const server_fd = net_socket.listenSocket(host, port) catch |err| {
+        std.log.err("Gateway: listen socket failed: {}", .{err});
+        return err;
+    };
+    defer net_socket.closeSocket(server_fd);
 
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(io, &stdout_buf);
     const stdout = &bw.interface;
     try stdout.print("Gateway listening on {s}:{d}\n", .{ host, port });
     try stdout.flush();
@@ -2607,8 +2654,8 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
     // Accept loop — read raw HTTP from TCP connections
     while (true) {
-        var conn = server.accept() catch continue;
-        defer conn.stream.close();
+        const client_fd = net_socket.acceptConnection(server_fd) catch continue;
+        defer net_socket.closeSocket(client_fd);
 
         // Per-request arena — all request-scoped allocations freed in one shot
         var arena = std.heap.ArenaAllocator.init(allocator);
@@ -2617,7 +2664,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
         // Read request line + headers from TCP stream
         var req_buf: [4096]u8 = undefined;
-        const n = conn.stream.read(&req_buf) catch continue;
+        const n = net_socket.readSocket(client_fd, &req_buf) catch continue;
         if (n == 0) continue;
         const raw = req_buf[0..n];
 
@@ -2652,6 +2699,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 .config_opt = config_opt,
                 .state = &state,
                 .session_mgr_opt = if (session_mgr_opt) |*sm| sm else null,
+                .io = io,
             };
             desc.handler(&webhook_ctx);
             response_status = webhook_ctx.response_status;
@@ -2666,6 +2714,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 .config_opt = config_opt,
                 .state = &state,
                 .session_mgr_opt = if (session_mgr_opt) |*sm| sm else null,
+                .io = io,
             };
             handleSlackWebhookRoute(&webhook_ctx);
             response_status = webhook_ctx.response_status;
@@ -2795,9 +2844,9 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         }
 
         // Send HTTP response
-        var resp_buf: [2048]u8 = undefined;
-        const resp = std.fmt.bufPrint(&resp_buf, "HTTP/1.1 {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}", .{ response_status, response_body.len, response_body }) catch continue;
-        _ = conn.stream.write(resp) catch continue;
+        var resp_buf: [8192]u8 = undefined;
+        const resp = std.fmt.bufPrint(&resp_buf, "HTTP/1.1 {s}\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {d}\r\n\r\n{s}", .{ response_status, response_body.len, response_body }) catch continue;
+        _ = net_socket.writeSocket(client_fd, resp) catch continue;
     }
 }
 
@@ -3488,6 +3537,7 @@ test "handleQqWebhookRoute rejects invalid json payload" {
         .config_opt = &cfg,
         .state = &state,
         .session_mgr_opt = null,
+        .io = std.testing.io,
     };
 
     handleQqWebhookRoute(&ctx);
@@ -4141,13 +4191,12 @@ test "verifySlackSignature accepts valid signature" {
     const secret = "slack_signing_secret";
 
     var ts_buf: [32]u8 = undefined;
-    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{std.time.timestamp()}) catch unreachable;
+    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{util.timestampUnix()}) catch unreachable;
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
-    const sw = signed.writer(std.testing.allocator);
-    try sw.print("v0:{s}:", .{ts});
-    try sw.writeAll(body);
+    try appendPrint(&signed, std.testing.allocator, "v0:{s}:", .{ts});
+    try appendSlice(&signed, std.testing.allocator, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [HmacSha256.mac_length]u8 = undefined;
@@ -4169,13 +4218,12 @@ test "verifySlackSignature rejects stale timestamp" {
     const secret = "slack_signing_secret";
 
     var ts_buf: [32]u8 = undefined;
-    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{std.time.timestamp() - 900}) catch unreachable;
+    const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{util.timestampUnix() - 900}) catch unreachable;
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
-    const sw = signed.writer(std.testing.allocator);
-    try sw.print("v0:{s}:", .{ts});
-    try sw.writeAll(body);
+    try appendPrint(&signed, std.testing.allocator, "v0:{s}:", .{ts});
+    try appendSlice(&signed, std.testing.allocator, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac: [HmacSha256.mac_length]u8 = undefined;
@@ -4231,7 +4279,7 @@ test "hasSlackHttpEndpoint respects mode and webhook_path" {
 
 test "findSlackConfigForRequest selects account by verified signature" {
     const body = "{\"type\":\"event_callback\",\"event\":{\"type\":\"message\",\"channel\":\"C1\",\"user\":\"U1\",\"text\":\"hi\"}}";
-    const ts_val = std.time.timestamp();
+    const ts_val = util.timestampUnix();
     var ts_buf: [32]u8 = undefined;
     const ts = std.fmt.bufPrint(&ts_buf, "{d}", .{ts_val}) catch unreachable;
 
@@ -4240,9 +4288,8 @@ test "findSlackConfigForRequest selects account by verified signature" {
 
     var signed: std.ArrayListUnmanaged(u8) = .empty;
     defer signed.deinit(std.testing.allocator);
-    const sw = signed.writer(std.testing.allocator);
-    try sw.print("v0:{s}:", .{ts});
-    try sw.writeAll(body);
+    try appendPrint(&signed, std.testing.allocator, "v0:{s}:", .{ts});
+    try appendSlice(&signed, std.testing.allocator, body);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var mac_b: [HmacSha256.mac_length]u8 = undefined;
@@ -4425,8 +4472,7 @@ test "GatewayState event_bus defaults to null" {
 fn escapeToString(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try jsonEscapeInto(w, input);
+    try appendJsonEscaped(&buf, allocator, input);
     return buf.toOwnedSlice(allocator);
 }
 
@@ -4538,12 +4584,12 @@ test "jsonWrapResponse with clean input" {
 // ── GatewayThreadObserver tests ─────────────────────────────────
 
 test "GatewayThreadObserver init/deinit no leaks" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     obs.deinit();
 }
 
 test "GatewayThreadObserver records tool events and collectSince works" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     defer obs.deinit();
 
     const seq_before = obs.currentSeq();
@@ -4566,7 +4612,7 @@ test "GatewayThreadObserver records tool events and collectSince works" {
 }
 
 test "GatewayThreadObserver collectSince filters by sequence" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     defer obs.deinit();
 
     const event1 = observability.ObserverEvent{ .tool_call = .{ .tool = "shell", .duration_ms = 10, .success = true } };
@@ -4587,7 +4633,7 @@ test "GatewayThreadObserver collectSince filters by sequence" {
 }
 
 test "GatewayThreadObserver collectSince OOM frees partial output" {
-    var obs = GatewayThreadObserver.init(std.testing.allocator);
+    var obs = GatewayThreadObserver.init(std.testing.allocator, std.testing.io);
     defer obs.deinit();
 
     const event1 = observability.ObserverEvent{ .tool_call = .{ .tool = "shell", .duration_ms = 10, .success = true } };

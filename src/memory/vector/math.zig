@@ -3,12 +3,16 @@
 //! Mirrors ZeroClaw's vector module for semantic search support.
 
 const std = @import("std");
+const profiling = @import("../../profiling.zig");
 
 // ── Cosine similarity ─────────────────────────────────────────────
 
 /// Cosine similarity between two vectors. Returns 0.0–1.0.
 /// Returns 0.0 for empty, mismatched, or degenerate inputs.
 pub fn cosineSimilarity(a: []const f32, b: []const f32) f32 {
+    const zone = profiling.zone(@src());
+    defer zone.end();
+
     if (a.len != b.len or a.len == 0) return 0.0;
 
     var dot: f64 = 0.0;
@@ -94,6 +98,9 @@ pub fn hybridMerge(
     keyword_weight: f32,
     limit: usize,
 ) ![]ScoredResult {
+    const zone = profiling.zone(@src());
+    defer zone.end();
+
     // Use a simple approach: collect all unique ids, track scores
     var ids: std.ArrayList([]const u8) = .empty;
     defer ids.deinit(allocator);

@@ -23,7 +23,7 @@ pub const CronAddTool = struct {
         };
     }
 
-    pub fn execute(_: *CronAddTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(_: *CronAddTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         const command = root.getString(args, "command") orelse
             return ToolResult.fail("Missing required 'command' parameter");
 
@@ -45,7 +45,7 @@ pub const CronAddTool = struct {
                 return ToolResult.fail("Invalid delay format");
         }
 
-        var scheduler = loadScheduler(allocator) catch {
+        var scheduler = loadScheduler(allocator, io) catch {
             return ToolResult.fail("Failed to load scheduler state");
         };
         defer scheduler.deinit();
@@ -54,7 +54,7 @@ pub const CronAddTool = struct {
         if (expression) |expr| {
             const job = scheduler.addJob(expr, command) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to create job: {s}", .{@errorName(err)});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
             cron.saveJobs(&scheduler) catch {};
@@ -64,13 +64,13 @@ pub const CronAddTool = struct {
                 job.expression,
                 job.command,
             });
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         if (delay) |d| {
             const job = scheduler.addOnce(d, command) catch |err| {
                 const msg = try std.fmt.allocPrint(allocator, "Failed to create one-shot task: {s}", .{@errorName(err)});
-                return ToolResult{ .success = false, .output = "", .error_msg = msg };
+                return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
             cron.saveJobs(&scheduler) catch {};
@@ -80,7 +80,7 @@ pub const CronAddTool = struct {
                 job.expression,
                 job.command,
             });
-            return ToolResult{ .success = true, .output = msg };
+            return ToolResult{ .success = true, .output = msg, .owns_output = true };
         }
 
         return ToolResult.fail("Unexpected state: no expression or delay");
@@ -89,8 +89,8 @@ pub const CronAddTool = struct {
 
 /// Load the CronScheduler from persisted state (~/.nullclaw/cron.json).
 /// Shared by cron_add, cron_list, cron_remove, and schedule tools.
-pub fn loadScheduler(allocator: std.mem.Allocator) !CronScheduler {
-    var scheduler = CronScheduler.init(allocator, 1024, true);
+pub fn loadScheduler(allocator: std.mem.Allocator, io: std.Io) !CronScheduler {
+    var scheduler = CronScheduler.init(allocator, 1024, true, io);
     cron.loadJobs(&scheduler) catch {};
     return scheduler;
 }
@@ -102,7 +102,7 @@ test "cron_add_requires_command" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"expression\": \"*/5 * * * *\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "command") != null);
 }
@@ -112,7 +112,7 @@ test "cron_add_requires_schedule" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"command\": \"echo hello\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "expression") != null or
         std.mem.indexOf(u8, result.error_msg.?, "delay") != null);
@@ -123,8 +123,8 @@ test "cron_add_with_expression" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"expression\": \"*/5 * * * *\", \"command\": \"echo hello\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Created cron job") != null);
     }
@@ -135,8 +135,8 @@ test "cron_add_with_delay" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"delay\": \"30m\", \"command\": \"echo later\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     if (result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.output, "Created cron job") != null);
     }
@@ -147,7 +147,7 @@ test "cron_add_rejects_invalid_expression" {
     const t = cat.tool();
     const parsed = try root.parseTestArgs("{\"expression\": \"bad cron\", \"command\": \"echo fail\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "Invalid cron expression") != null);
 }

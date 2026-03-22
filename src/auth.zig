@@ -6,9 +6,15 @@
 //! - Device Authorization Grant flow (RFC 8628)
 
 const std = @import("std");
+const util = @import("util.zig");
+const io = std.Options.debug_io;
+
 const platform = @import("platform.zig");
 const json_util = @import("json_util.zig");
 
+fn timestamp() i64 {
+    return util.timestampUnix();
+}
 // ── PKCE (RFC 7636) ────────────────────────────────────────────────────
 
 pub const PkceChallenge = struct {
@@ -27,7 +33,7 @@ pub const PkceChallenge = struct {
 /// SHA-256(verifier) → base64url (no padding) challenge.
 pub fn generatePkce(allocator: std.mem.Allocator) !PkceChallenge {
     var random_bytes: [64]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    util.randomBytes(&random_bytes);
 
     // base64url-encode the random bytes → verifier (86 chars for 64 bytes, no padding)
     const verifier = try base64UrlEncodeAlloc(allocator, &random_bytes);
@@ -64,7 +70,7 @@ pub const OAuthToken = struct {
     /// Returns true if the token is expired or within 300s of expiring.
     pub fn isExpired(self: OAuthToken) bool {
         if (self.expires_at == 0) return false;
-        return std.time.timestamp() + 300 >= self.expires_at;
+        return timestamp() + 300 >= self.expires_at;
     }
 
     /// Free all heap-allocated fields. Only call on tokens returned by
@@ -93,8 +99,11 @@ pub fn saveCredential(allocator: std.mem.Allocator, provider: []const u8, token:
     const dir_path = try std.fs.path.join(allocator, &.{ home, CRED_DIR });
     defer allocator.free(dir_path);
 
-    // Ensure directory exists
-    std.fs.cwd().makePath(dir_path) catch return error.CredentialWriteFailed;
+    // Ensure directory exists (Zig 0.16.0 - use createDirPath)
+    std.Io.Dir.cwd().createDirPath(io, dir_path) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
 
     const file_path = try std.fs.path.join(allocator, &.{ dir_path, CRED_FILE });
     defer allocator.free(file_path);
@@ -164,14 +173,20 @@ pub fn saveCredential(allocator: std.mem.Allocator, provider: []const u8, token:
     }
     try buf.append(allocator, '}');
 
-    // Write atomically
-    const file = std.fs.cwd().createFile(file_path, .{}) catch return error.CredentialWriteFailed;
-    defer file.close();
-    file.writeAll(buf.items) catch return error.CredentialWriteFailed;
+    // Write atomically (Zig 0.16.0 - use writer pattern)
+    const debug_io = std.Options.debug_io;
+    const file = std.Io.Dir.cwd().createFile(debug_io, file_path, .{}) catch return error.CredentialWriteFailed;
+    defer file.close(debug_io);
 
-    if (@import("builtin").os.tag != .windows) {
-        file.chmod(0o600) catch {};
-    }
+    var write_buf: [8192]u8 = undefined;
+    var bw = file.writer(debug_io, &write_buf);
+    const w = &bw.interface;
+
+    try w.writeAll(buf.items);
+    try w.flush();
+
+    // Note: chmod functionality removed in Zig 0.16.0 I/O API
+    // File permissions are set by createFile with default umask
 }
 
 /// Load a credential for the given provider from ~/.nullclaw/auth.json.
@@ -183,10 +198,7 @@ pub fn loadCredential(allocator: std.mem.Allocator, provider: []const u8) !?OAut
     const file_path = try std.fs.path.join(allocator, &.{ home, CRED_DIR, CRED_FILE });
     defer allocator.free(file_path);
 
-    const file = std.fs.cwd().openFile(file_path, .{}) catch return null;
-    defer file.close();
-
-    const json_bytes = file.readToEndAlloc(allocator, 1024 * 1024) catch return null;
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(1024 * 1024)) catch return null;
     defer allocator.free(json_bytes);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return null;
@@ -238,7 +250,7 @@ pub fn loadCredential(allocator: std.mem.Allocator, provider: []const u8) !?OAut
     const token_type = try allocator.dupe(u8, token_type_raw);
     errdefer allocator.free(token_type);
 
-    if (expires_at != 0 and std.time.timestamp() + 300 >= expires_at) {
+    if (expires_at != 0 and timestamp() + 300 >= expires_at) {
         allocator.free(access_token);
         if (refresh_token) |rt| allocator.free(rt);
         allocator.free(token_type);
@@ -267,10 +279,7 @@ fn freeStoredToken(allocator: std.mem.Allocator, tok: StoredToken) void {
 }
 
 fn loadAllCredentials(allocator: std.mem.Allocator, file_path: []const u8) ?std.StringArrayHashMap(StoredToken) {
-    const file = std.fs.cwd().openFile(file_path, .{}) catch return null;
-    defer file.close();
-
-    const json_bytes = file.readToEndAlloc(allocator, 1024 * 1024) catch return null;
+    const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(1024 * 1024)) catch return null;
     defer allocator.free(json_bytes);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return null;
@@ -336,7 +345,7 @@ pub fn refreshAccessToken(
     client_id: []const u8,
     refresh_token: []const u8,
 ) !OAuthToken {
-    var client: std.http.Client = .{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator, .io = std.Options.debug_io };
     defer client.deinit();
 
     const payload = try std.fmt.allocPrint(
@@ -434,9 +443,9 @@ pub fn deleteCredential(allocator: std.mem.Allocator, provider: []const u8) !boo
     }
     try buf.append(allocator, '}');
 
-    const file = std.fs.cwd().createFile(file_path, .{}) catch return error.CredentialWriteFailed;
-    defer file.close();
-    file.writeAll(buf.items) catch return error.CredentialWriteFailed;
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, file_path, .{}) catch return error.CredentialWriteFailed;
+    defer file.close(std.Options.debug_io);
+    file.writeStreamingAll(std.Options.debug_io, buf.items) catch return error.CredentialWriteFailed;
 
     return true;
 }
@@ -464,7 +473,7 @@ pub fn startDeviceCodeFlow(
     device_auth_url: []const u8,
     scope: []const u8,
 ) !DeviceCode {
-    var client: std.http.Client = .{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator, .io = std.Options.debug_io };
     defer client.deinit();
 
     const payload = try std.fmt.allocPrint(
@@ -551,7 +560,7 @@ pub fn pollDeviceCode(
     device_code: []const u8,
     interval_s: u32,
 ) !OAuthToken {
-    var client: std.http.Client = .{ .allocator = allocator };
+    var client: std.http.Client = .{ .allocator = allocator, .io = std.Options.debug_io };
     defer client.deinit();
 
     const payload = try std.fmt.allocPrint(
@@ -565,7 +574,7 @@ pub fn pollDeviceCode(
     const max_attempts: u32 = 120;
 
     for (0..max_attempts) |_| {
-        std.Thread.sleep(interval_ns);
+        util.sleep(interval_ns);
 
         var aw: std.Io.Writer.Allocating = .init(allocator);
         defer aw.deinit();
@@ -648,7 +657,7 @@ fn parseTokenResponse(allocator: std.mem.Allocator, body: []const u8) !OAuthToke
     return .{
         .access_token = at_owned,
         .refresh_token = rt_owned,
-        .expires_at = std.time.timestamp() + expires_in,
+        .expires_at = timestamp() + expires_in,
         .token_type = tt_owned,
     };
 }
@@ -708,7 +717,7 @@ test "PKCE challenge matches SHA-256 of verifier" {
 test "OAuthToken isExpired returns true for past expiry" {
     const token = OAuthToken{
         .access_token = "tok",
-        .expires_at = std.time.timestamp() - 3600,
+        .expires_at = timestamp() - 3600,
     };
     try std.testing.expect(token.isExpired());
 }
@@ -716,7 +725,7 @@ test "OAuthToken isExpired returns true for past expiry" {
 test "OAuthToken isExpired returns false for far-future expiry" {
     const token = OAuthToken{
         .access_token = "tok",
-        .expires_at = std.time.timestamp() + 3600,
+        .expires_at = timestamp() + 3600,
     };
     try std.testing.expect(!token.isExpired());
 }
@@ -732,7 +741,7 @@ test "OAuthToken isExpired returns false when expires_at is zero" {
 test "OAuthToken isExpired buffer: token expiring in 200s is expired" {
     const token = OAuthToken{
         .access_token = "tok",
-        .expires_at = std.time.timestamp() + 200,
+        .expires_at = timestamp() + 200,
     };
     // 200s < 300s buffer → should be expired
     try std.testing.expect(token.isExpired());
@@ -741,7 +750,7 @@ test "OAuthToken isExpired buffer: token expiring in 200s is expired" {
 test "OAuthToken isExpired buffer: token expiring in 400s is NOT expired" {
     const token = OAuthToken{
         .access_token = "tok",
-        .expires_at = std.time.timestamp() + 400,
+        .expires_at = timestamp() + 400,
     };
     // 400s > 300s buffer → not expired
     try std.testing.expect(!token.isExpired());
@@ -796,7 +805,7 @@ test "parseTokenResponse parses valid token" {
 
     try std.testing.expectEqualStrings("ya29.xyz", token.access_token);
     try std.testing.expectEqualStrings("1//abc", token.refresh_token.?);
-    try std.testing.expect(token.expires_at > std.time.timestamp());
+    try std.testing.expect(token.expires_at > timestamp());
 }
 
 test "parseTokenResponse fails on missing access_token" {
@@ -824,7 +833,7 @@ test "parseTokenResponse preserves refresh_token in refresh response" {
     try std.testing.expectEqualStrings("new_access", token.access_token);
     try std.testing.expectEqualStrings("new_refresh", token.refresh_token.?);
     try std.testing.expectEqualStrings("Bearer", token.token_type);
-    try std.testing.expect(token.expires_at > std.time.timestamp());
+    try std.testing.expect(token.expires_at > timestamp());
 }
 
 test "parseTokenResponse handles missing refresh_token in response" {

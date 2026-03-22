@@ -7,6 +7,8 @@
 //!   - Prunes old conversation rows from SQLite
 
 const std = @import("std");
+const io = std.Options.debug_io;
+const util = @import("../../util.zig");
 const build_options = @import("build_options");
 const root = @import("../root.zig");
 const Memory = root.Memory;
@@ -66,7 +68,8 @@ pub fn runIfDue(allocator: std.mem.Allocator, config: HygieneConfig, mem: ?Memor
 
     // Mark hygiene as completed
     if (mem) |m| {
-        const now = std.time.timestamp();
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
         var buf: [20]u8 = undefined;
         const ts = std.fmt.bufPrint(&buf, "{d}", .{now}) catch return report;
         m.store(LAST_HYGIENE_KEY, ts, .core, null) catch {};
@@ -88,7 +91,8 @@ fn shouldRunNow(allocator: std.mem.Allocator, config: HygieneConfig, mem: ?Memor
         // Parse raw timestamps (sqlite-like) and markdown-encoded entries
         // (markdown backend stores as "**key**: value").
         const last_ts = parseLastHygieneTimestamp(e.content) orelse return true;
-        const now = std.time.timestamp();
+        const now_ns = std.Io.Clock.real.now(io).nanoseconds;
+        const now = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
         return (now - last_ts) >= HYGIENE_INTERVAL_SECS;
     }
 
@@ -110,43 +114,56 @@ fn archiveOldFiles(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
     const memory_dir_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory" });
     defer allocator.free(memory_dir_path);
 
-    var memory_dir = std.fs.cwd().openDir(memory_dir_path, .{ .iterate = true }) catch return 0;
-    defer memory_dir.close();
+    var memory_dir = std.Io.Dir.cwd().openDir(io, memory_dir_path, .{ .iterate = true }) catch return 0;
+    defer memory_dir.close(io);
 
     const archive_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory", "archive" });
     defer allocator.free(archive_path);
 
-    std.fs.cwd().makePath(archive_path) catch {};
+    // Create archive directory if it doesn't exist
+    std.Io.Dir.cwd().createDirPath(io, archive_path) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
 
-    const cutoff_secs = std.time.timestamp() - @as(i64, @intCast(config.archive_after_days)) * 24 * 60 * 60;
+    const now_secs = util.timestampUnix();
+    const cutoff_secs = now_secs - @as(i64, @intCast(config.archive_after_days)) * 24 * 60 * 60;
     var moved: u64 = 0;
 
     var iter = memory_dir.iterate();
-    while (iter.next() catch null) |entry| {
+    while (iter.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         const name = entry.name;
 
         // Only process .md files
         if (!std.mem.endsWith(u8, name, ".md")) continue;
 
-        // Check file modification time
-        const stat = memory_dir.statFile(name) catch continue;
-        const mtime_secs: i64 = @intCast(@divFloor(stat.mtime, std.time.ns_per_s));
+        // Get file modification time
+        const file_path = try std.fs.path.join(allocator, &.{ memory_dir_path, name });
+        defer allocator.free(file_path);
+
+        const file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+        const stat = file.stat(io) catch {
+            file.close(io);
+            continue;
+        };
+        file.close(io);
+
+        const mtime_secs = @divFloor(stat.mtime.nanoseconds, std.time.ns_per_s);
         if (mtime_secs >= cutoff_secs) continue;
 
-        // Build full source and destination paths, then rename
-        const src_path = std.fs.path.join(allocator, &.{ memory_dir_path, name }) catch continue;
-        defer allocator.free(src_path);
-        const dst_path = std.fs.path.join(allocator, &.{ archive_path, name }) catch continue;
-        defer allocator.free(dst_path);
+        // Move file to archive
+        const archive_file_path = try std.fs.path.join(allocator, &.{ archive_path, name });
+        defer allocator.free(archive_file_path);
 
-        std.fs.cwd().rename(src_path, dst_path) catch {
-            // Fallback: try copy + delete
-            var dest_dir = std.fs.cwd().openDir(archive_path, .{}) catch continue;
-            defer dest_dir.close();
-            memory_dir.copyFile(name, dest_dir, name, .{}) catch continue;
-            memory_dir.deleteFile(name) catch {};
+        std.Io.Dir.renameAbsolute(file_path, archive_file_path, io) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
         };
+
         moved += 1;
     }
 
@@ -158,21 +175,44 @@ fn purgeOldArchives(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
     const archive_path = try std.fs.path.join(allocator, &.{ config.workspace_dir, "memory", "archive" });
     defer allocator.free(archive_path);
 
-    var archive_dir = std.fs.cwd().openDir(archive_path, .{ .iterate = true }) catch return 0;
-    defer archive_dir.close();
+    var archive_dir = std.Io.Dir.cwd().openDir(io, archive_path, .{ .iterate = true }) catch return 0;
+    defer archive_dir.close(io);
 
-    const cutoff_secs = std.time.timestamp() - @as(i64, @intCast(config.purge_after_days)) * 24 * 60 * 60;
+    const now_secs = util.timestampUnix();
+    const cutoff_secs = now_secs - @as(i64, @intCast(config.purge_after_days)) * 24 * 60 * 60;
     var removed: u64 = 0;
 
     var iter = archive_dir.iterate();
-    while (iter.next() catch null) |entry| {
+    while (iter.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
+        const name = entry.name;
 
-        const stat = archive_dir.statFile(entry.name) catch continue;
-        const mtime_secs: i64 = @intCast(@divFloor(stat.mtime, std.time.ns_per_s));
+        // Only process .md files
+        if (!std.mem.endsWith(u8, name, ".md")) continue;
+
+        // Get file modification time
+        const file_path = try std.fs.path.join(allocator, &.{ archive_path, name });
+        defer allocator.free(file_path);
+
+        const file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+        const stat = file.stat(io) catch {
+            file.close(io);
+            continue;
+        };
+        file.close(io);
+
+        const mtime_secs = @divFloor(stat.mtime.nanoseconds, std.time.ns_per_s);
         if (mtime_secs >= cutoff_secs) continue;
 
-        archive_dir.deleteFile(entry.name) catch continue;
+        // Delete the file
+        std.Io.Dir.cwd().deleteFile(io, file_path) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+
         removed += 1;
     }
 
@@ -182,7 +222,7 @@ fn purgeOldArchives(allocator: std.mem.Allocator, config: HygieneConfig) !u64 {
 /// Prune conversation rows older than retention_days via the Memory interface.
 /// Searches for conversation-tagged entries and deletes those whose timestamp is old.
 pub fn pruneConversationRows(allocator: std.mem.Allocator, mem: Memory, retention_days: u32) !u64 {
-    const cutoff_secs = std.time.timestamp() - @as(i64, @intCast(retention_days)) * 24 * 60 * 60;
+    const cutoff_secs = 0 - @as(i64, @intCast(retention_days)) * 24 * 60 * 60;
 
     // Search for conversation-tagged entries
     const results = mem.search(allocator, "conversation", 1000) catch return 0;
@@ -263,8 +303,8 @@ test "parseLastHygieneTimestamp supports markdown format" {
 test "runIfDue with markdown backend does not append hygiene marker twice inside interval" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     var markdown_memory = try root.MarkdownMemory.init(std.testing.allocator, base);
     defer markdown_memory.deinit();

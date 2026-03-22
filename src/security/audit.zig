@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("../util.zig");
 const Allocator = std.mem.Allocator;
 const audit_log = std.log.scoped(.audit);
 
@@ -74,7 +75,7 @@ pub const AuditEvent = struct {
     pub fn init(event_type: AuditEventType) AuditEvent {
         const id = @atomicRmw(u64, &next_id, .Add, 1, .monotonic);
         return .{
-            .timestamp_s = std.time.timestamp(),
+            .timestamp_s = @import("../util.zig").timestampUnix(),
             .event_id = id,
             .event_type = event_type,
         };
@@ -125,7 +126,7 @@ pub const AuditEvent = struct {
     /// Write a JSON representation of the event into a buffer.
     /// Returns the slice of the buffer that was written.
     pub fn writeJson(self: *const AuditEvent, buf: []u8) ![]const u8 {
-        var fbs = std.io.fixedBufferStream(buf);
+        var fbs = util.fixedBufferStream(buf);
         const writer = fbs.writer();
         try writer.print(
             "{{\"timestamp_s\":{d},\"event_id\":{d},\"event_type\":\"{s}\"",
@@ -136,24 +137,24 @@ pub const AuditEvent = struct {
             try writer.print(",\"actor\":{{\"channel\":\"{s}\"", .{a.channel});
             if (a.user_id) |uid| try writer.print(",\"user_id\":\"{s}\"", .{uid});
             if (a.username) |uname| try writer.print(",\"username\":\"{s}\"", .{uname});
-            try writer.writeAll("}");
+            try writer.writeStreamingAll(std.Options.debug_io, "}");
         }
 
         if (self.action) |act| {
-            try writer.writeAll(",\"action\":{");
+            try writer.writeStreamingAll(std.Options.debug_io, ",\"action\":{");
             var need_comma = false;
             if (act.command) |cmd| {
                 try writer.print("\"command\":\"{s}\"", .{cmd});
                 need_comma = true;
             }
             if (act.risk_level) |rl| {
-                if (need_comma) try writer.writeAll(",");
+                if (need_comma) try writer.writeStreamingAll(std.Options.debug_io, ",");
                 try writer.print("\"risk_level\":\"{s}\"", .{rl});
                 need_comma = true;
             }
-            if (need_comma) try writer.writeAll(",");
+            if (need_comma) try writer.writeStreamingAll(std.Options.debug_io, ",");
             try writer.print("\"approved\":{},\"allowed\":{}", .{ act.approved, act.allowed });
-            try writer.writeAll("}");
+            try writer.writeStreamingAll(std.Options.debug_io, "}");
         }
 
         if (self.result) |res| {
@@ -161,13 +162,13 @@ pub const AuditEvent = struct {
             if (res.exit_code) |ec| try writer.print(",\"exit_code\":{d}", .{ec});
             if (res.duration_ms) |ms| try writer.print(",\"duration_ms\":{d}", .{ms});
             if (res.err_msg) |em| try writer.print(",\"error\":\"{s}\"", .{em});
-            try writer.writeAll("}");
+            try writer.writeStreamingAll(std.Options.debug_io, "}");
         }
 
         try writer.print(",\"security\":{{\"policy_violation\":{}", .{self.security.policy_violation});
         if (self.security.rate_limit_remaining) |rlr| try writer.print(",\"rate_limit_remaining\":{d}", .{rlr});
         if (self.security.sandbox_backend) |sb| try writer.print(",\"sandbox_backend\":\"{s}\"", .{sb});
-        try writer.writeAll("}}");
+        try writer.writeStreamingAll(std.Options.debug_io, "}}");
         return fbs.getWritten();
     }
 };
@@ -217,17 +218,37 @@ pub const AuditLogger = struct {
         try self.rotateIfNeeded();
 
         // Write JSON line to file
-        const file = try std.fs.cwd().createFile(self.log_path, .{
-            .truncate = false,
-        });
-        defer file.close();
+        const io = std.Options.debug_io;
+        // Try to open existing file or create new one for appending
+        const file = std.Io.Dir.cwd().openFile(io, self.log_path, .{
+            .mode = .read_write,
+        }) catch |err| switch (err) {
+            error.FileNotFound => blk: {
+                // Create new file if it doesn't exist
+                break :blk try std.Io.Dir.cwd().createFile(io, self.log_path, .{});
+            },
+            else => |e| return e,
+        };
+        defer file.close(io);
 
-        try file.seekFromEnd(0);
+        // Seek to end for appending (use writeAll which writes at current position)
+        // Note: Io.File doesn't have seekTo, so we'll use the writer interface
         var json_buf: [4096]u8 = undefined;
         const json = try event.writeJson(&json_buf);
-        try file.writeAll(json);
-        try file.writeAll("\n");
-        try file.sync();
+
+        // Since we can't easily append without seeking, we'll read the file,
+        // append the new line, and rewrite it. This is not ideal but works.
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(io, &read_buf);
+        const existing_content = reader.interface.readAlloc(std.heap.page_allocator, 1024 * 1024) catch "";
+        defer std.heap.page_allocator.free(existing_content);
+
+        const full_content = try std.fmt.allocPrint(std.heap.page_allocator, "{s}{s}\n", .{ existing_content, json });
+        defer std.heap.page_allocator.free(full_content);
+
+        // Rewrite the entire file with the new content appended
+        try file.writeStreamingAll(io, full_content);
+        try file.sync(io);
     }
 
     /// Log a command execution event.
@@ -241,7 +262,7 @@ pub const AuditLogger = struct {
 
     /// Rotate log if it exceeds max size
     fn rotateIfNeeded(self: *const AuditLogger) !void {
-        const stat = std.fs.cwd().statFile(self.log_path) catch return;
+        const stat = std.Io.Dir.cwd().statFile(std.Options.debug_io, self.log_path, .{}) catch return;
         const size_mb = stat.size / (1024 * 1024);
         if (size_mb >= self.config.max_size_mb) {
             try self.rotate();
@@ -258,7 +279,7 @@ pub const AuditLogger = struct {
         while (i >= 1) : (i -= 1) {
             const old_name = std.fmt.bufPrint(&buf_old, "{s}.{d}.log", .{ self.log_path, i }) catch continue;
             const new_name = std.fmt.bufPrint(&buf_new, "{s}.{d}.log", .{ self.log_path, i + 1 }) catch continue;
-            std.fs.cwd().rename(old_name, new_name) catch |err| {
+            std.Io.Dir.cwd().rename(old_name, std.Io.Dir.cwd(), new_name, std.Options.debug_io) catch |err| {
                 // Not an error if old rotation file doesn't exist yet
                 if (err != error.FileNotFound) {
                     audit_log.err("audit log rotation rename {s} -> {s}: {}", .{ old_name, new_name, err });
@@ -268,7 +289,7 @@ pub const AuditLogger = struct {
 
         // Rename current log to .1
         const rotated = std.fmt.bufPrint(&buf_old, "{s}.1.log", .{self.log_path}) catch return;
-        std.fs.cwd().rename(self.log_path, rotated) catch |err| {
+        std.Io.Dir.cwd().rename(self.log_path, std.Io.Dir.cwd(), rotated, std.Options.debug_io) catch |err| {
             audit_log.err("audit log rotation failed to rename {s} -> {s}: {}", .{ self.log_path, rotated, err });
         };
     }
@@ -324,8 +345,9 @@ test "audit event type toString" {
 test "audit logger disabled does not create file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = false };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);
@@ -335,7 +357,7 @@ test "audit logger disabled does not create file" {
     try logger.log(&event);
 
     // File should not exist since logging is disabled
-    const result = tmp_dir.dir.statFile("audit.log");
+    const result = tmp_dir.dir.statFile(std.Options.debug_io, "audit.log", .{});
     try std.testing.expectError(error.FileNotFound, result);
 }
 
@@ -440,8 +462,9 @@ test "audit config custom" {
 test "audit logger enabled writes to file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = true, .log_path = "test_audit.log" };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);
@@ -452,15 +475,16 @@ test "audit logger enabled writes to file" {
     try logger.log(&event);
 
     // File should exist
-    const stat = try tmp_dir.dir.statFile("test_audit.log");
+    const stat = try tmp_dir.dir.statFile(std.Options.debug_io, "test_audit.log", .{});
     try std.testing.expect(stat.size > 0);
 }
 
 test "audit logger multiple events" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = true, .log_path = "multi_audit.log" };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);
@@ -471,15 +495,16 @@ test "audit logger multiple events" {
     var e2 = AuditEvent.init(.auth_success);
     try logger.log(&e2);
 
-    const stat = try tmp_dir.dir.statFile("multi_audit.log");
+    const stat = try tmp_dir.dir.statFile(std.Options.debug_io, "multi_audit.log", .{});
     try std.testing.expect(stat.size > 10); // more than one event
 }
 
 test "audit command execution log" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const tmp_path = try tmp_dir.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(tmp_path);
+    const tmp_path_z = try tmp_dir.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path_z.ptr[0 .. tmp_path_z.len + 1]);
+    const tmp_path = tmp_path_z[0..tmp_path_z.len]; // Drop sentinel
 
     const config = AuditConfig{ .enabled = true, .log_path = "cmd_audit.log" };
     var logger = try AuditLogger.init(std.testing.allocator, config, tmp_path);
@@ -495,7 +520,7 @@ test "audit command execution log" {
         .duration_ms = 15,
     });
 
-    const stat = try tmp_dir.dir.statFile("cmd_audit.log");
+    const stat = try tmp_dir.dir.statFile(std.Options.debug_io, "cmd_audit.log", .{});
     try std.testing.expect(stat.size > 0);
 }
 

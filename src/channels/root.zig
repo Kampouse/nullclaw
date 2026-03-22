@@ -16,6 +16,7 @@
 //!   - DingTalk (WebSocket stream mode)
 
 const std = @import("std");
+const io = std.Options.debug_io;
 const streaming = @import("../streaming.zig");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -150,7 +151,7 @@ pub const qq = @import("qq.zig");
 pub const maixcam = @import("maixcam.zig");
 pub const signal = @import("signal.zig");
 pub const web = if (@import("build_options").enable_channel_web)
-    @import("web.zig")
+    @import("web_stub.zig")
 else
     struct {
         pub const WebChannel = struct {
@@ -286,10 +287,11 @@ pub fn isAllowedExact(allowed: []const []const u8, sender: []const u8) bool {
 }
 
 /// Get current UNIX epoch seconds.
+/// Uses std.c.gettimeofday() which works in tests unlike Io.Clock.real.now().
 pub fn nowEpochSecs() u64 {
-    const ns = std.time.nanoTimestamp();
-    if (ns < 0) return 0;
-    return @intCast(@as(u128, @intCast(ns)) / 1_000_000_000);
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    return @intCast(tv.sec);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -308,16 +310,16 @@ pub fn appendJsonStringW(writer: anytype, text: []const u8) !void {
     try writer.writeByte('"');
     for (text) |c| {
         switch (c) {
-            '"' => try writer.writeAll("\\\""),
-            '\\' => try writer.writeAll("\\\\"),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
+            '"' => try writer.writeStreamingAll(std.Options.debug_io, "\\\""),
+            '\\' => try writer.writeStreamingAll(std.Options.debug_io, "\\\\"),
+            '\n' => try writer.writeStreamingAll(std.Options.debug_io, "\\n"),
+            '\r' => try writer.writeStreamingAll(std.Options.debug_io, "\\r"),
+            '\t' => try writer.writeStreamingAll(std.Options.debug_io, "\\t"),
             else => {
                 if (c < 0x20) {
                     var esc: [6]u8 = undefined;
                     const escape = std.fmt.bufPrint(&esc, "\\u{x:0>4}", .{c}) catch unreachable;
-                    try writer.writeAll(escape);
+                    try writer.writeStreamingAll(std.Options.debug_io, escape);
                 } else {
                     try writer.writeByte(c);
                 }

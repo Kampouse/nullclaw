@@ -106,7 +106,7 @@ pub const OllamaEmbedding = struct {
         const url = try self_.buildUrl(allocator);
         defer allocator.free(url);
 
-        var client = std.http.Client{ .allocator = allocator };
+        var client = std.http.Client{ .allocator = allocator, .io = std.Options.debug_io };
         defer client.deinit();
 
         var aw: std.Io.Writer.Allocating = .init(allocator);

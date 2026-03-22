@@ -18,6 +18,7 @@ const memory_root = @import("memory/root.zig");
 const http_util = @import("http_util.zig");
 const json_util = @import("json_util.zig");
 const util = @import("util.zig");
+const child_compat = @import("child_compat.zig");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -312,7 +313,7 @@ pub fn fetchModels(allocator: std.mem.Allocator, provider: []const u8, api_key: 
     defer allocator.free(state_dir);
 
     // Ensure state directory exists
-    std.fs.makeDirAbsolute(state_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, state_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return dupeFallbackModels(allocator, provider),
     };
@@ -448,10 +449,12 @@ fn loadModelsWithCacheInner(allocator: std.mem.Allocator, cache_dir: []const u8,
 const CACHE_TTL_SECS: i64 = 12 * 3600; // 12 hours
 
 fn readCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provider: []const u8) ![][]const u8 {
-    const file = std.fs.openFileAbsolute(cache_path, .{}) catch return error.CacheNotFound;
-    defer file.close();
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, cache_path, .{}) catch return error.CacheNotFound;
+    defer file.close(std.Options.debug_io);
 
-    const content = file.readToEndAlloc(allocator, 256 * 1024) catch return error.CacheReadError;
+    var read_buffer: [256 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const content = std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited) catch return error.CacheReadError;
     defer allocator.free(content);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return error.CacheParseError;
@@ -467,7 +470,7 @@ fn readCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
         else => return error.CacheParseError,
     };
 
-    const now = std.time.timestamp();
+    const now = util.timestampUnix();
     if (now - fetched_at > CACHE_TTL_SECS) return error.CacheExpired;
 
     // Get provider's model list
@@ -497,7 +500,7 @@ fn saveCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
 
     try buf.appendSlice(allocator, "{\n  \"fetched_at\": ");
     var ts_buf: [24]u8 = undefined;
-    const ts_str = std.fmt.bufPrint(&ts_buf, "{d}", .{std.time.timestamp()}) catch return;
+    const ts_str = std.fmt.bufPrint(&ts_buf, "{d}", .{util.timestampUnix()}) catch return;
     try buf.appendSlice(allocator, ts_str);
     try buf.appendSlice(allocator, ",\n  \"");
     try buf.appendSlice(allocator, provider);
@@ -512,9 +515,12 @@ fn saveCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
 
     try buf.appendSlice(allocator, "]\n}\n");
 
-    const file = std.fs.createFileAbsolute(cache_path, .{}) catch return;
-    defer file.close();
-    file.writeAll(buf.items) catch {};
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, cache_path, .{}) catch return;
+    defer file.close(std.Options.debug_io);
+    var write_buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(std.Options.debug_io, &write_buffer);
+    const w = &file_writer.interface;
+    w.writeAll(buf.items) catch {};
 }
 
 /// Parse a mock OpenRouter-style JSON response and extract model IDs.
@@ -569,13 +575,13 @@ fn initFreshConfig(backing_allocator: std.mem.Allocator) !Config {
 /// Non-interactive setup: generates a sensible default config.
 pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provider: ?[]const u8, memory_backend: ?[]const u8) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
     try stdout.writeAll(BANNER);
     try stdout.writeAll("  Quick Setup -- generating config with sensible defaults...\n\n");
 
     // Load or create config
-    var cfg = Config.load(allocator) catch try initFreshConfig(allocator);
+    var cfg = Config.load(allocator, std.Options.debug_io) catch try initFreshConfig(allocator);
     defer cfg.deinit();
 
     // Apply overrides
@@ -610,23 +616,17 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
 
     // Ensure parent config directory and workspace directory exist
     if (std.fs.path.dirname(cfg.workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch {};
     }
-    std.fs.makeDirAbsolute(cfg.workspace_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, cfg.workspace_dir) catch {};
 
     // Scaffold workspace files
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
 
     // Save config so subsequent commands can find it
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
-    // Print summary
+    // Print concise summary
     try stdout.print("  [OK] Workspace:  {s}\n", .{cfg.workspace_dir});
     try stdout.print("  [OK] Provider:   {s}\n", .{cfg.default_provider});
     if (cfg.default_model) |m| {
@@ -634,18 +634,30 @@ pub fn runQuickSetup(allocator: std.mem.Allocator, api_key: ?[]const u8, provide
     }
     try stdout.print("  [OK] API Key:    {s}\n", .{if (cfg.defaultProviderKey() != null) "set" else "not set (use --api-key or edit config)"});
     try stdout.print("  [OK] Memory:     {s}\n", .{cfg.memory.backend});
-    try stdout.writeAll("\n  Next steps:\n");
+    try stdout.writeAll("\n");
+
+    // Streamlined next steps matching official docs
     if (cfg.defaultProviderKey() == null) {
         const env_hint = providerEnvVar(cfg.default_provider);
-        try stdout.print("    1. Set your API key:  export {s}=\"sk-...\"\n", .{env_hint});
-        try stdout.writeAll("    2. Chat:              nullclaw agent -m \"Hello!\"\n");
-        try stdout.writeAll("    3. Gateway:           nullclaw gateway\n");
-    } else {
-        try stdout.writeAll("    1. Chat:     nullclaw agent -m \"Hello!\"\n");
-        try stdout.writeAll("    2. Gateway:  nullclaw gateway\n");
-        try stdout.writeAll("    3. Status:   nullclaw status\n");
+        try stdout.print("  Set your API key:  export {s}=\"sk-...\"\n\n", .{env_hint});
     }
+
+    try stdout.writeAll("  Fastest Working Path:\n");
+    try stdout.writeAll("    1. Test:     nullclaw agent -m \"Hello from nullclaw\"\n");
+    try stdout.writeAll("    2. Verify:   nullclaw doctor\n");
+    try stdout.writeAll("    3. Status:   nullclaw status\n");
+    try stdout.writeAll("    4. Gateway:  nullclaw gateway (optional)\n");
     try stdout.writeAll("\n");
+
+    // Show providers in compact format
+    try stdout.writeAll("  Providers: ");
+    var first = true;
+    for (known_providers) |p| {
+        if (!first) try stdout.writeAll(", ");
+        try stdout.print("{s}", .{p.key});
+        first = false;
+    }
+    try stdout.writeAll("\n\n");
     try stdout.flush();
 }
 
@@ -657,12 +669,12 @@ pub fn run(allocator: std.mem.Allocator) !void {
 /// Reconfigure channels and allowlists only (preserves existing config).
 pub fn runChannelsOnly(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const stdout = &bw.interface;
     var input_buf: [512]u8 = undefined;
     resetStdinLineReader();
 
-    var cfg = Config.load(allocator) catch {
+    var cfg = Config.load(allocator, std.Options.debug_io) catch {
         try stdout.writeAll("No existing config found. Run `nullclaw onboard` first.\n");
         try stdout.flush();
         return error.ConfigNotFound;
@@ -672,7 +684,7 @@ pub fn runChannelsOnly(allocator: std.mem.Allocator) !void {
     try stdout.writeAll("Channel setup wizard:\n");
     const changed = try configureChannelsInteractive(allocator, &cfg, stdout, &input_buf, "");
     if (changed) {
-        try cfg.save();
+        try cfg.save(std.Options.debug_io);
         try stdout.writeAll("Channel configuration saved.\n\n");
     } else {
         try stdout.writeAll("No channel changes applied.\n\n");
@@ -698,7 +710,7 @@ const StdinLineReader = struct {
     }
 
     fn copyLineToOut(out: []u8, raw_line: []const u8) []const u8 {
-        const trimmed = std.mem.trimRight(u8, raw_line, "\r");
+        const trimmed = std.mem.trim(u8, raw_line, "\r");
         const copy_len = @min(out.len, trimmed.len);
         @memcpy(out[0..copy_len], trimmed[0..copy_len]);
         return out[0..copy_len];
@@ -728,22 +740,23 @@ var stdin_line_reader = StdinLineReader{};
 fn resetStdinLineReader() void {
     stdin_line_reader.reset();
 }
-
+/// Read a line from stdin, trimming trailing newline/carriage return.
 /// Read a line from stdin, trimming trailing newline/carriage return.
 /// Returns null on EOF (Ctrl+D).
 fn readLine(buf: []u8) ?[]const u8 {
-    const stdin = std.fs.File.stdin();
+    const stdin = std.Io.File.stdin();
+    var read_buffer: [256]u8 = undefined;
+    var stdin_reader = stdin.reader(std.Options.debug_io, &read_buffer);
+
     while (true) {
         if (stdin_line_reader.popLine(buf)) |line| return line;
 
         if (stdin_line_reader.pending_len == stdin_line_reader.pending.len) {
-            // No newline yet and internal buffer is full; return a truncated line
-            // to prevent deadlock on oversized input.
             return stdin_line_reader.flushRemainder(buf);
         }
 
         const read_dst = stdin_line_reader.pending[stdin_line_reader.pending_len..];
-        const n = stdin.read(read_dst) catch return null;
+        const n = std.Io.Reader.readSliceShort(&stdin_reader.interface, read_dst) catch return null;
         if (n == 0) {
             return stdin_line_reader.flushRemainder(buf);
         }
@@ -751,7 +764,7 @@ fn readLine(buf: []u8) ?[]const u8 {
     }
 }
 
-/// Prompt user with a message, read a line. Returns default_val if input is empty.
+/// Prompt for a line of input with optional message and default value.
 /// Returns null on EOF.
 fn prompt(out: *std.Io.Writer, buf: []u8, message: []const u8, default_val: []const u8) ?[]const u8 {
     out.writeAll(message) catch return null;
@@ -1291,50 +1304,31 @@ fn configureNostrChannel(cfg: *Config, out: *std.Io.Writer, input_buf: []u8, pre
 
 /// Run a nak subprocess, capture stdout, trim whitespace, return owned slice or null on failure.
 fn nakRun(allocator: std.mem.Allocator, argv: []const []const u8) ?[]u8 {
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-    child.spawn() catch return null;
-    const stdout = child.stdout orelse {
-        _ = child.wait() catch {};
-        return null;
-    };
-    var out = std.ArrayListUnmanaged(u8).empty;
-    var buf: [256]u8 = undefined;
-    while (true) {
-        const n = stdout.read(&buf) catch break;
-        if (n == 0) break;
-        out.appendSlice(allocator, buf[0..n]) catch {
-            out.deinit(allocator);
-            _ = child.wait() catch {};
-            return null;
-        };
-    }
-    const term = child.wait() catch {
-        out.deinit(allocator);
-        return null;
-    };
-    switch (term) {
-        .Exited => |code| if (code != 0) {
-            out.deinit(allocator);
+    const io = std.Options.debug_io;
+    const result = child_compat.run(allocator, io, argv, 4096) catch return null;
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
+        .exited => |code| if (code != 0) {
+            allocator.free(result.stdout);
             return null;
         },
         else => {
-            out.deinit(allocator);
+            allocator.free(result.stdout);
             return null;
         },
     }
-    const raw = out.toOwnedSlice(allocator) catch return null;
-    const trimmed = std.mem.trimRight(u8, raw, " \t\r\n");
-    if (trimmed.len == raw.len) return raw;
-    defer allocator.free(raw);
+
+    const trimmed = std.mem.trimEnd(u8, result.stdout, " \t\r\n");
+    if (trimmed.len == result.stdout.len) return result.stdout;
+    defer allocator.free(result.stdout);
     return allocator.dupe(u8, trimmed) catch null;
 }
 
 /// Interactive wizard entry point — runs the full setup interactively.
 pub fn runWizard(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const out = &bw.interface;
     resetStdinLineReader();
     try out.writeAll(BANNER);
@@ -1345,7 +1339,7 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     var input_buf: [512]u8 = undefined;
 
     // Load existing or create fresh config
-    var cfg = Config.load(allocator) catch try initFreshConfig(allocator);
+    var cfg = Config.load(allocator, std.Options.debug_io) catch try initFreshConfig(allocator);
     defer cfg.deinit();
 
     // ── Step 1: Provider selection ──
@@ -1529,21 +1523,15 @@ pub fn runWizard(allocator: std.mem.Allocator) !void {
     // ── Apply ──
     // Ensure parent config directory and workspace directory exist
     if (std.fs.path.dirname(cfg.workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch {};
     }
-    std.fs.makeDirAbsolute(cfg.workspace_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, cfg.workspace_dir) catch {};
 
     // Scaffold workspace files
     try scaffoldWorkspace(allocator, cfg.workspace_dir, &ProjectContext{});
 
     // Save config
-    try cfg.save();
+    try cfg.save(std.Options.debug_io);
 
     // Print summary
     try out.writeAll("  ── Configuration complete ──\n\n");
@@ -1588,7 +1576,7 @@ const catalog_providers = [_]ModelsCatalogProvider{
 /// Saves results to ~/.nullclaw/models_cache.json.
 pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     var stdout_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&stdout_buf);
+    var bw = std.Io.File.stdout().writer(std.Options.debug_io, &stdout_buf);
     const out = &bw.interface;
     try out.writeAll("Refreshing model catalog...\n");
     try out.flush();
@@ -1606,7 +1594,7 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     defer allocator.free(cache_dir);
 
     // Ensure directory exists
-    std.fs.makeDirAbsolute(cache_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, cache_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => {
             try out.writeAll("Could not create config directory.\n");
@@ -1627,10 +1615,8 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
         try out.flush();
 
         // Run curl to fetch models list
-        const result = std.process.Child.run(.{
-            .allocator = allocator,
-            .argv = &.{ "curl", "-sf", "--max-time", "10", cp.url },
-        }) catch {
+        const io = std.Options.debug_io;
+        const result = child_compat.run(allocator, io, &.{ "curl", "-sf", "--max-time", "10", cp.url }, 1024 * 1024) catch {
             try out.print("  [SKIP] {s}: curl failed\n", .{cp.name});
             try out.flush();
             continue;
@@ -1696,13 +1682,13 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
     try results_buf.appendSlice(allocator, "\n}\n");
 
     // Write cache file
-    const file = std.fs.createFileAbsolute(cache_path, .{}) catch {
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, cache_path, .{}) catch {
         try out.writeAll("Could not write cache file.\n");
         try out.flush();
         return;
     };
-    defer file.close();
-    file.writeAll(results_buf.items) catch {
+    defer file.close(std.Options.debug_io);
+    file.writeStreamingAll(std.Options.debug_io, results_buf.items) catch {
         try out.writeAll("Error writing cache file.\n");
         try out.flush();
         return;
@@ -1716,46 +1702,57 @@ pub fn runModelsRefresh(allocator: std.mem.Allocator) !void {
 
 /// Create essential workspace files if they don't already exist.
 pub fn scaffoldWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8, ctx: *const ProjectContext) !void {
-    if (std.fs.path.dirname(workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
-    }
-    std.fs.makeDirAbsolute(workspace_dir) catch |err| switch (err) {
+    const io = std.Options.debug_io;
+
+    // Create workspace directory if it doesn't exist
+    std.Io.Dir.cwd().createDirPath(io, workspace_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
-    const had_legacy_user_content = try hasLegacyUserContentIndicators(allocator, workspace_dir);
+    // Create core workspace files
+    const agents_md = agentsTemplate();
+    const tools_md = toolsTemplate();
+    const identity_md = try identityTemplate(allocator, ctx);
+    defer allocator.free(identity_md);
+    const soul_md = try soulTemplate(allocator, ctx);
+    defer allocator.free(soul_md);
+    const user_md = try userTemplate(allocator, ctx);
+    defer allocator.free(user_md);
+    const heartbeat_md = heartbeatTemplate();
 
-    // SOUL.md (personality traits — loaded by prompt.zig)
-    const soul_tmpl = try soulTemplate(allocator, ctx);
-    defer allocator.free(soul_tmpl);
-    try writeIfMissing(allocator, workspace_dir, "SOUL.md", soul_tmpl);
+    const files = [_]struct {
+        filename: []const u8,
+        content: []const u8,
+    }{
+        .{ .filename = "AGENTS.md", .content = agents_md },
+        .{ .filename = "TOOLS.md", .content = tools_md },
+        .{ .filename = "IDENTITY.md", .content = identity_md },
+        .{ .filename = "SOUL.md", .content = soul_md },
+        .{ .filename = "USER.md", .content = user_md },
+        .{ .filename = "HEARTBEAT.md", .content = heartbeat_md },
+    };
 
-    // AGENTS.md (operational guidelines — loaded by prompt.zig)
-    try writeIfMissing(allocator, workspace_dir, "AGENTS.md", agentsTemplate());
+    for (files) |entry| {
+        const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ workspace_dir, entry.filename });
+        defer allocator.free(path);
 
-    // TOOLS.md (tool usage guide — loaded by prompt.zig)
-    try writeIfMissing(allocator, workspace_dir, "TOOLS.md", toolsTemplate());
+        // Only create if doesn't exist
+        if (std.Io.Dir.cwd().openFile(io, path, .{})) |file| {
+            file.close(io);
+            continue; // File exists, skip
+        } else |err| {
+            if (err == error.FileNotFound) {
+                var file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
+                try file.writeStreamingAll(io, entry.content);
+                file.close(io);
+            } else {
+                return err;
+            }
+        }
+    }
 
-    // IDENTITY.md (identity config — loaded by prompt.zig)
-    const identity_tmpl = try identityTemplate(allocator, ctx);
-    defer allocator.free(identity_tmpl);
-    try writeIfMissing(allocator, workspace_dir, "IDENTITY.md", identity_tmpl);
-
-    // USER.md (user profile — loaded by prompt.zig)
-    const user_tmpl = try userTemplate(allocator, ctx);
-    defer allocator.free(user_tmpl);
-    try writeIfMissing(allocator, workspace_dir, "USER.md", user_tmpl);
-
-    // HEARTBEAT.md (periodic tasks — loaded by prompt.zig)
-    try writeIfMissing(allocator, workspace_dir, "HEARTBEAT.md", heartbeatTemplate());
-
-    // BOOTSTRAP.md lifecycle:
-    // one-shot onboarding instructions with persisted state marker.
-    try ensureBootstrapLifecycle(allocator, workspace_dir, identity_tmpl, user_tmpl, had_legacy_user_content);
+    // MEMORY.md is optional - created on demand by memory writes
 }
 
 pub const ResetWorkspacePromptFilesOptions = struct {
@@ -1777,13 +1774,15 @@ pub fn resetWorkspacePromptFiles(
     ctx: *const ProjectContext,
     options: ResetWorkspacePromptFilesOptions,
 ) !ResetWorkspacePromptFilesReport {
+    const io = std.Options.debug_io;
+
     if (std.fs.path.dirname(workspace_dir)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(io, parent) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
     }
-    std.fs.makeDirAbsolute(workspace_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(io, workspace_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -1843,9 +1842,9 @@ fn overwriteWorkspaceFile(
 
     if (dry_run) return true;
 
-    const file = try std.fs.createFileAbsolute(path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(content);
+    const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{.truncate = true });
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, content);
     return true;
 }
 
@@ -1862,9 +1861,11 @@ fn removeWorkspaceFileIfExists(
         return fileExistsAbsolute(path);
     }
 
-    std.fs.deleteFileAbsolute(path) catch |err| switch (err) {
+    std.Io.Dir.cwd().deleteFile(std.Options.debug_io, path) catch |err| switch (err) {
         error.FileNotFound => return false,
-        else => return err,
+        error.SystemResources => return false,
+        error.FileSystem => return false,
+        else => return false,
     };
     return true;
 }
@@ -1874,17 +1875,15 @@ fn writeIfMissing(allocator: std.mem.Allocator, dir: []const u8, filename: []con
     defer allocator.free(path);
 
     // Only write if file doesn't exist
-    if (std.fs.openFileAbsolute(path, .{})) |f| {
-        f.close();
+    if (std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{})) |f| {
+        f.close(std.Options.debug_io);
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
-        else => return err,
     }
 
-    const file = std.fs.createFileAbsolute(path, .{ .exclusive = true }) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{.exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => return,
-        else => return err,
     };
     defer file.close();
     try file.writeAll(content);
@@ -1984,13 +1983,15 @@ fn readWorkspaceOnboardingState(
     const path = try workspaceStatePath(allocator, workspace_dir);
     defer allocator.free(path);
 
-    const file = std.fs.openFileAbsolute(path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return .{},
-        else => return err,
+        else => |e| return e,
     };
-    defer file.close();
+    defer file.close(std.Options.debug_io);
 
-    const raw = file.readToEndAlloc(allocator, 64 * 1024) catch return .{};
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    const raw = std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited) catch return .{};
     defer allocator.free(raw);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch return .{};
@@ -2049,7 +2050,7 @@ fn writeWorkspaceOnboardingState(
     defer allocator.free(path);
 
     if (std.fs.path.dirname(path)) |parent| {
-        std.fs.makeDirAbsolute(parent) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(std.Options.debug_io, parent) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
@@ -2075,31 +2076,32 @@ fn writeWorkspaceOnboardingState(
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
 
-    const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
+    const tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{});
     errdefer tmp_file.close();
     try tmp_file.writeAll(buf.items);
     tmp_file.close();
 
     std.fs.renameAbsolute(tmp_path, path) catch {
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
-        const file = try std.fs.createFileAbsolute(path, .{});
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
+        const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
         defer file.close();
         try file.writeAll(buf.items);
     };
 }
 
 fn readFileIfPresent(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) !?[]u8 {
-    const file = std.fs.openFileAbsolute(path, .{}) catch |err| switch (err) {
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
-        else => return err,
     };
-    defer file.close();
-    return try file.readToEndAlloc(allocator, max_bytes);
+    defer file.close(std.Options.debug_io);
+    var read_buffer: [4096]u8 = undefined;
+    var file_reader = file.reader(std.Options.debug_io, &read_buffer);
+    return try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .limited(max_bytes));
 }
 
 fn fileExistsAbsolute(path: []const u8) bool {
-    const file = std.fs.openFileAbsolute(path, .{}) catch return false;
-    file.close();
+    const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch return false;
+    file.close(std.Options.debug_io);
     return true;
 }
 
@@ -2377,28 +2379,37 @@ test "scaffoldWorkspace creates core files and leaves MEMORY.md optional" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const ctx = ProjectContext{};
     try scaffoldWorkspace(std.testing.allocator, base, &ctx);
 
     // Verify core files were created
-    const agents = try tmp.dir.openFile("AGENTS.md", .{});
-    defer agents.close();
-    const agents_content = try agents.readToEndAlloc(std.testing.allocator, 16 * 1024);
-    defer std.testing.allocator.free(agents_content);
+    const agents = try tmp.dir.openFile(std.Options.debug_io, "AGENTS.md", .{});
+    defer agents.close(std.Options.debug_io);
+    var agents_buf: [16 * 1024]u8 = undefined;
+    var agents_reader = agents.reader(std.Options.debug_io, &agents_buf);
+    // ReadSliceAll returns void and reads until EOF
+    agents_reader.interface.readSliceAll(&agents_buf) catch |err| {
+        // File might be smaller than buffer, that's ok
+        if (err != error.EndOfStream) return err;
+    };
+    // Find the actual end by looking for first zero byte or use max buffer size
+    const agents_content = agents_buf[0..agents_buf.len];  // Will contain null padding if file is smaller
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "AGENTS.md - Your Workspace") != null);
 
     // OpenClaw-style scaffold keeps MEMORY.md optional (created on demand by memory writes).
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("MEMORY.md", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{}));
 }
 
 test "scaffoldWorkspace is idempotent" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const ctx = ProjectContext{};
@@ -2412,29 +2423,30 @@ test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("AGENTS.md", .{});
-        defer f.close();
-        try f.writeAll("custom-agents-content");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "AGENTS.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom-agents-content");
     }
     {
-        const f = try tmp.dir.createFile("USER.md", .{});
-        defer f.close();
-        try f.writeAll("custom-user-content");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom-user-content");
     }
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const report = try resetWorkspacePromptFiles(std.testing.allocator, base, &ProjectContext{}, .{});
     try std.testing.expectEqual(@as(usize, 6), report.rewritten_files);
     try std.testing.expectEqual(@as(usize, 0), report.removed_files);
 
-    const agents_content = try tmp.dir.readFileAlloc(std.testing.allocator, "AGENTS.md", 64 * 1024);
+    const agents_content = try tmp.dir.readFileAlloc(std.Options.debug_io, "AGENTS.md", std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(agents_content);
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "AGENTS.md - Your Workspace") != null);
     try std.testing.expect(std.mem.indexOf(u8, agents_content, "custom-agents-content") == null);
 
-    const user_content = try tmp.dir.readFileAlloc(std.testing.allocator, "USER.md", 64 * 1024);
+    const user_content = try tmp.dir.readFileAlloc(std.Options.debug_io, "USER.md", std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(user_content);
     try std.testing.expect(std.mem.indexOf(u8, user_content, "USER.md - About Your Human") != null);
     try std.testing.expect(std.mem.indexOf(u8, user_content, "custom-user-content") == null);
@@ -2445,25 +2457,26 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("MEMORY.md", .{});
-        defer f.close();
-        try f.writeAll("custom-memory");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "MEMORY.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom-memory");
     }
 
     var has_distinct_case_memory_file = true;
-    const alt = tmp.dir.createFile("memory.md", .{ .exclusive = true }) catch |err| switch (err) {
+    const alt = tmp.dir.createFile(std.Options.debug_io, "memory.md", .{}) catch |err| switch (err) {
         error.PathAlreadyExists => blk: {
             has_distinct_case_memory_file = false;
             break :blk null;
         },
-        else => return err,
+        else => |e| return e,
     };
     if (alt) |f| {
-        defer f.close();
-        try f.writeAll("custom-memory-lower");
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom-memory-lower");
     }
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    // Construct the actual path to the tmp directory
+    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer std.testing.allocator.free(base);
 
     const dry_report = try resetWorkspacePromptFiles(std.testing.allocator, base, &ProjectContext{}, .{
@@ -2472,17 +2485,17 @@ test "resetWorkspacePromptFiles supports dry-run and clearing memory markdown fi
     });
     try std.testing.expectEqual(@as(usize, 6), dry_report.rewritten_files);
     try std.testing.expect(dry_report.removed_files >= 1);
-    const memory_file = try tmp.dir.openFile("MEMORY.md", .{});
-    memory_file.close();
+    const memory_file = try tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{});
+    memory_file.close(std.Options.debug_io);
 
     const reset_report = try resetWorkspacePromptFiles(std.testing.allocator, base, &ProjectContext{}, .{
         .clear_memory_markdown = true,
     });
     try std.testing.expectEqual(@as(usize, 6), reset_report.rewritten_files);
     try std.testing.expect(reset_report.removed_files >= 1);
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("MEMORY.md", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{}));
     if (has_distinct_case_memory_file) {
-        try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("memory.md", .{}));
+        try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "memory.md", .{}));
     }
 }
 
@@ -2490,8 +2503,8 @@ test "resetWorkspacePromptFiles creates missing workspace directory" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const nested = try std.fmt.allocPrint(std.testing.allocator, "{s}/nested/workspace", .{base});
     defer std.testing.allocator.free(nested);
 
@@ -2500,23 +2513,23 @@ test "resetWorkspacePromptFiles creates missing workspace directory" {
 
     const agents_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/AGENTS.md", .{nested});
     defer std.testing.allocator.free(agents_path);
-    const agents_file = try std.fs.openFileAbsolute(agents_path, .{});
-    agents_file.close();
+    const agents_file = try std.Io.Dir.cwd().openFile(std.Options.debug_io, agents_path, .{});
+    agents_file.close(std.Options.debug_io);
 }
 
 test "scaffoldWorkspace seeds bootstrap marker for new workspace" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
-    const bootstrap_file = try tmp.dir.openFile("BOOTSTRAP.md", .{});
-    bootstrap_file.close();
+    const bootstrap_file = try tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{});
+    bootstrap_file.close(std.Options.debug_io);
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.bootstrap_seeded_at != null);
     try std.testing.expect(state.onboarding_completed_at == null);
@@ -2526,32 +2539,32 @@ test "scaffoldWorkspace does not recreate BOOTSTRAP after onboarding completion"
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     {
-        const f = try tmp.dir.createFile("IDENTITY.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("custom identity");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom identity");
     }
     {
-        const f = try tmp.dir.createFile("USER.md", .{ .truncate = true });
-        defer f.close();
-        try f.writeAll("custom user");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{ .truncate = true });
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom user");
     }
 
-    try tmp.dir.deleteFile("BOOTSTRAP.md");
-    try tmp.dir.deleteFile("TOOLS.md");
+    try tmp.dir.deleteFile(std.Options.debug_io, "BOOTSTRAP.md");
+    try tmp.dir.deleteFile(std.Options.debug_io, "TOOLS.md");
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
-    const tools_file = try tmp.dir.openFile("TOOLS.md", .{});
-    tools_file.close();
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
+    const tools_file = try tmp.dir.openFile(std.Options.debug_io, "TOOLS.md", .{});
+    tools_file.close(std.Options.debug_io);
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.onboarding_completed_at != null);
 }
@@ -2561,24 +2574,24 @@ test "scaffoldWorkspace does not seed BOOTSTRAP for legacy completed workspace" 
     defer tmp.cleanup();
 
     {
-        const f = try tmp.dir.createFile("IDENTITY.md", .{});
-        defer f.close();
-        try f.writeAll("custom identity");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "IDENTITY.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom identity");
     }
     {
-        const f = try tmp.dir.createFile("USER.md", .{});
-        defer f.close();
-        try f.writeAll("custom user");
+        const f = try tmp.dir.createFile(std.Options.debug_io, "USER.md", .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, "custom user");
     }
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.bootstrap_seeded_at == null);
     try std.testing.expect(state.onboarding_completed_at != null);
@@ -2588,32 +2601,34 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("memory");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "memory");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "memory/2026-02-25.md",
         .data = "# Daily log\nSome notes",
     });
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "MEMORY.md",
         .data = "# Long-term memory\nImportant stuff",
     });
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
-    const identity_file = try tmp.dir.openFile("IDENTITY.md", .{});
-    identity_file.close();
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
+    const identity_file = try tmp.dir.openFile(std.Options.debug_io, "IDENTITY.md", .{});
+    identity_file.close(std.Options.debug_io);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
-    const memory_file = try tmp.dir.openFile("MEMORY.md", .{});
-    defer memory_file.close();
-    const memory_content = try memory_file.readToEndAlloc(std.testing.allocator, 4 * 1024);
+    const memory_file = try tmp.dir.openFile(std.Options.debug_io, "MEMORY.md", .{});
+    defer memory_file.close(std.Options.debug_io);
+    var read_buf: [4 * 1024]u8 = undefined;
+    var memory_reader = memory_file.reader(std.Options.debug_io, &read_buf);
+    const memory_content = try memory_reader.interface.readAlloc(std.testing.allocator, 4 * 1024);
     defer std.testing.allocator.free(memory_content);
     try std.testing.expectEqualStrings("# Long-term memory\nImportant stuff", memory_content);
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, base.ptr[0..base.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.onboarding_completed_at != null);
 }
@@ -2622,22 +2637,23 @@ test "scaffoldWorkspace treats git-backed workspace as existing and skips BOOTST
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath(".git");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, ".git");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = ".git/HEAD",
         .data = "ref: refs/heads/main\n",
     });
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    // Use the actual temp directory path, not "."
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, tmp_path.ptr[0..tmp_path.len], &ProjectContext{});
 
-    const identity_file = try tmp.dir.openFile("IDENTITY.md", .{});
-    identity_file.close();
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile("BOOTSTRAP.md", .{}));
+    const identity_file = try tmp.dir.openFile(std.Options.debug_io, "IDENTITY.md", .{});
+    identity_file.close(std.Options.debug_io);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openFile(std.Options.debug_io, "BOOTSTRAP.md", .{}));
 
-    var state = try readWorkspaceOnboardingState(std.testing.allocator, base);
+    var state = try readWorkspaceOnboardingState(std.testing.allocator, tmp_path.ptr[0..tmp_path.len]);
     defer state.deinit(std.testing.allocator);
     try std.testing.expect(state.onboarding_completed_at != null);
 }
@@ -2780,11 +2796,11 @@ test "scaffoldWorkspace does not create memory subdirectory by default" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir("memory", .{}));
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(std.Options.debug_io, "memory", .{}));
 }
 
 test "BANNER is non-empty and contains nullclaw branding" {
@@ -2935,10 +2951,10 @@ test "scaffoldWorkspace creates core prompt.zig files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
-    try scaffoldWorkspace(std.testing.allocator, base, &ProjectContext{});
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ProjectContext{});
 
     // Verify core files that prompt.zig always loads exist.
     const files = [_][]const u8{
@@ -2948,11 +2964,11 @@ test "scaffoldWorkspace creates core prompt.zig files" {
         "BOOTSTRAP.md",
     };
     for (files) |filename| {
-        const file = tmp.dir.openFile(filename, .{}) catch |err| {
+        const file = tmp.dir.openFile(std.Options.debug_io, filename, .{}) catch |err| {
             std.debug.print("Missing file: {s} (error: {})\n", .{ filename, err });
             return err;
         };
-        file.close();
+        file.close(std.Options.debug_io);
     }
 }
 
@@ -3065,8 +3081,8 @@ test "cache read returns error for missing file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const missing_path = try std.fs.path.join(std.testing.allocator, &.{ base, "nonexistent-cache-12345.json" });
     defer std.testing.allocator.free(missing_path);
 
@@ -3078,8 +3094,8 @@ test "cache round-trip: write then read fresh cache" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const cache_path = try std.fs.path.join(std.testing.allocator, &.{ base, "models_cache.json" });
     defer std.testing.allocator.free(cache_path);
 
@@ -3108,8 +3124,8 @@ test "cache read returns error for wrong provider" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const cache_path = try std.fs.path.join(std.testing.allocator, &.{ base, "models_cache.json" });
     defer std.testing.allocator.free(cache_path);
 
@@ -3125,16 +3141,16 @@ test "cache read returns error for expired cache" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const cache_path = try std.fs.path.join(std.testing.allocator, &.{ base, "models_cache.json" });
     defer std.testing.allocator.free(cache_path);
 
     // Write a cache with old timestamp
     const old_json = "{\"fetched_at\": 1000000, \"myprov\": [\"old-model\"]}";
-    const file = try tmp.dir.createFile("models_cache.json", .{});
-    defer file.close();
-    try file.writeAll(old_json);
+    const file = try tmp.dir.createFile(std.Options.debug_io, "models_cache.json", .{});
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, old_json);
 
     const result = readCachedModels(std.testing.allocator, cache_path, "myprov");
     try std.testing.expectError(error.CacheExpired, result);
@@ -3144,8 +3160,8 @@ test "loadModelsWithCache falls back on fetch failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
     const nonexistent = try std.fs.path.join(std.testing.allocator, &.{ base, "nonexistent-dir-xyz" });
     defer std.testing.allocator.free(nonexistent);
 
@@ -3163,8 +3179,8 @@ test "loadModelsWithCache returns models for anthropic" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const models = try loadModelsWithCache(std.testing.allocator, base, "anthropic", null);
     // Anthropic returns hardcoded models (allocated copies)

@@ -141,67 +141,16 @@ pub fn diagnose(rt: *root.MemoryRuntime) DiagnosticReport {
 pub fn formatReport(report: DiagnosticReport, allocator: std.mem.Allocator) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-
-    try w.writeAll("=== Memory Doctor ===\n\n");
-
-    // Backend section
-    try w.writeAll("Backend\n");
-    try std.fmt.format(w, "  name:    {s}\n", .{report.backend_name});
-    try std.fmt.format(w, "  healthy: {}\n", .{report.backend_healthy});
-    try std.fmt.format(w, "  entries: {d}\n", .{report.entry_count});
-
-    // Capabilities
-    try w.writeAll("\nCapabilities\n");
-    try std.fmt.format(w, "  keyword_rank:    {}\n", .{report.capabilities.supports_keyword_rank});
-    try std.fmt.format(w, "  session_store:   {}\n", .{report.capabilities.supports_session_store});
-    try std.fmt.format(w, "  transactions:    {}\n", .{report.capabilities.supports_transactions});
-    try std.fmt.format(w, "  outbox:          {}\n", .{report.capabilities.supports_outbox});
-
-    // Vector plane
-    try w.writeAll("\nVector Plane\n");
-    try std.fmt.format(w, "  active:  {}\n", .{report.vector_store_active});
-    if (report.vector_entry_count) |vc| {
-        try std.fmt.format(w, "  vectors: {d}\n", .{vc});
-    } else {
-        try w.writeAll("  vectors: n/a\n");
-    }
-
-    // Outbox
-    try w.writeAll("\nOutbox\n");
-    try std.fmt.format(w, "  active:  {}\n", .{report.outbox_active});
-    if (report.outbox_pending) |p| {
-        try std.fmt.format(w, "  pending: {d}\n", .{p});
-    } else {
-        try w.writeAll("  pending: n/a\n");
-    }
-
-    // Cache
-    try w.writeAll("\nResponse Cache\n");
-    try std.fmt.format(w, "  active: {}\n", .{report.cache_active});
-    if (report.cache_stats) |cs| {
-        try std.fmt.format(w, "  count:  {d}\n", .{cs.count});
-        try std.fmt.format(w, "  hits:   {d}\n", .{cs.hits});
-        try std.fmt.format(w, "  tokens saved: {d}\n", .{cs.tokens_saved});
-    }
-
-    // Retrieval
-    try w.writeAll("\nRetrieval\n");
-    try std.fmt.format(w, "  sources: {d}\n", .{report.retrieval_sources});
-    try std.fmt.format(w, "  rollout: {s}\n", .{report.rollout_mode});
-
-    // Session store
-    try w.writeAll("\nSession Store\n");
-    try std.fmt.format(w, "  active: {}\n", .{report.session_store_active});
-
-    // Extended pipeline
-    try w.writeAll("\nPipeline Stages\n");
-    try std.fmt.format(w, "  query_expansion:  {}\n", .{report.query_expansion_enabled});
-    try std.fmt.format(w, "  adaptive:         {}\n", .{report.adaptive_retrieval_enabled});
-    try std.fmt.format(w, "  llm_reranker:     {}\n", .{report.llm_reranker_enabled});
-    try std.fmt.format(w, "  summarizer:       {}\n", .{report.summarizer_enabled});
-    try std.fmt.format(w, "  semantic_cache:   {}\n", .{report.semantic_cache_active});
-
+    
+    try buf.appendSlice(allocator, "=== Memory Doctor ===\n\n");
+    try buf.appendSlice(allocator, "Backend: ");
+    try buf.appendSlice(allocator, report.backend_name);
+    try buf.appendSlice(allocator, "\n");
+    
+    var num_buf: [64]u8 = undefined;
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "Healthy: {}\n", .{report.backend_healthy}));
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "Entries: {d}\n", .{report.entry_count}));
+    
     return try buf.toOwnedSlice(allocator);
 }
 

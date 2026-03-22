@@ -27,7 +27,8 @@ pub const SpawnTool = struct {
         };
     }
 
-    pub fn execute(self: *SpawnTool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
+    pub fn execute(self: *SpawnTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        _ = io;
         const task = root.getString(args, "task") orelse
             return ToolResult.fail("Missing 'task' parameter");
 
@@ -89,7 +90,7 @@ test "spawn missing task parameter" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"label\": \"test\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "task") != null);
 }
@@ -99,7 +100,7 @@ test "spawn empty task rejected" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"task\": \"  \"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "empty") != null);
 }
@@ -109,7 +110,7 @@ test "spawn without manager fails" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{\"task\": \"do something\"}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "SubagentManager") != null);
 }
@@ -119,6 +120,6 @@ test "spawn empty JSON rejected" {
     const t = st.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     try std.testing.expect(!result.success);
 }

@@ -97,41 +97,52 @@ pub const ClaudeCliProvider = struct {
 
     /// Run the claude CLI and parse stream-json output.
     fn runClaude(allocator: std.mem.Allocator, prompt: []const u8, model: []const u8) ![]const u8 {
-        const argv = [_][]const u8{
-            CLI_NAME,
-            "-p",
-            prompt,
-            "--output-format",
-            "stream-json",
-            "--model",
-            model,
-            "--verbose",
-        };
+        const io = std.Options.debug_io;
 
-        var child = std.process.Child.init(&argv, allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
+        // Build argv: claude -p <prompt> --output-format stream-json --model <model> --verbose
+        var argv_list = std.ArrayList([]const u8){};
+        try argv_list.append(allocator, "claude");
+        try argv_list.append(allocator, "-p");
+        try argv_list.append(allocator, prompt);
+        try argv_list.append(allocator, "--output-format");
+        try argv_list.append(allocator, "stream-json");
+        try argv_list.append(allocator, "--model");
+        try argv_list.append(allocator, model);
+        try argv_list.append(allocator, "--verbose");
 
-        try child.spawn();
-
-        // Read all stdout
-        const max_output: usize = 4 * 1024 * 1024; // 4 MB
-        const stdout_result = child.stdout.?.readToEndAlloc(allocator, max_output) catch |err| {
-            _ = child.wait() catch {};
-            return err;
-        };
-        defer allocator.free(stdout_result);
-
-        const term = try child.wait();
-        switch (term) {
-            .Exited => |code| {
-                if (code != 0) return error.CliProcessFailed;
-            },
-            else => return error.CliProcessFailed,
+        var child = try std.process.spawn(io, .{
+            .argv = argv_list.items,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
+        defer {
+            child.kill(io);
+            _ = child.wait(io) catch {};
         }
 
-        // Parse stream-json: each line is a JSON object, find type="result"
-        return parseStreamJson(allocator, stdout_result);
+        // Close stdin
+        if (child.stdin) |stdin_file| {
+            stdin_file.close(io);
+            child.stdin = null;
+        }
+
+        // Read stdout
+        const stdout_file = child.stdout orelse return error.ClaudeExecutionFailed;
+        var read_buf: [4096]u8 = undefined;
+        var reader = stdout_file.reader(io, &read_buf);
+        const output = reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024)) catch return error.ClaudeExecutionFailed;
+        defer allocator.free(output);
+
+        const term = child.wait(io) catch return error.ClaudeExecutionFailed;
+        switch (term) {
+            .exited => |code| {
+                if (code != 0) return error.ClaudeExecutionFailed;
+            },
+            else => return error.ClaudeExecutionFailed,
+        }
+
+        return try parseStreamJson(allocator, output);
     }
 
     /// Parse claude stream-json output lines for a result event.
@@ -172,43 +183,69 @@ pub const ClaudeCliProvider = struct {
 
 /// Check if a CLI tool is available in PATH using `which`.
 fn checkCliAvailable(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    const argv = [_][]const u8{ "which", cli_name };
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-    const out = child.stdout.?.readToEndAlloc(allocator, 4096) catch {
-        _ = child.wait() catch {};
-        return error.CliNotFound;
-    };
-    allocator.free(out);
-    const term = try child.wait();
+    _ = allocator;
+    const io = std.Options.debug_io;
+
+    // Try to run `which <cli_name>` to check if it exists
+    var argv = [_][]const u8{ "which", cli_name };
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch return error.NotSupported;
+
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
+
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    const term = child.wait(io) catch return error.NotSupported;
     switch (term) {
-        .Exited => |code| {
-            if (code != 0) return error.CliNotFound;
+        .exited => |code| {
+            if (code != 0) return error.NotSupported;
         },
-        else => return error.CliNotFound,
+        else => return error.NotSupported,
     }
 }
 
 /// Run `<cli> --version` and verify exit code 0.
 fn checkCliVersion(allocator: std.mem.Allocator, cli_name: []const u8) !void {
-    const argv = [_][]const u8{ cli_name, "--version" };
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-    const out = child.stdout.?.readToEndAlloc(allocator, 4096) catch {
-        _ = child.wait() catch {};
-        return error.CliNotFound;
-    };
-    allocator.free(out);
-    const term = try child.wait();
+    const io = std.Options.debug_io;
+
+    // Run `<cli> --version` to verify it works
+    const version_arg = try std.fmt.allocPrint(allocator, "--version", .{});
+    defer allocator.free(version_arg);
+
+    var argv = [_][]const u8{ cli_name, version_arg };
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch return error.NotSupported;
+
+    defer {
+        child.kill(io);
+        _ = child.wait(io) catch {};
+    }
+
+    if (child.stdin) |stdin_file| {
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    const term = child.wait(io) catch return error.NotSupported;
     switch (term) {
-        .Exited => |code| {
-            if (code != 0) return error.CliNotFound;
+        .exited => |code| {
+            if (code != 0) return error.NotSupported;
         },
-        else => return error.CliNotFound,
+        else => return error.NotSupported,
     }
 }
 
@@ -308,9 +345,9 @@ test "ClaudeCliProvider vtable has correct function pointers" {
     try std.testing.expect(!vtable.supports_vision.?(@ptrCast(&dummy)));
 }
 
-test "ClaudeCliProvider.init returns CliNotFound for missing binary" {
+test "ClaudeCliProvider.init returns NotSupported for missing binary" {
     const result = checkCliAvailable(std.testing.allocator, "nonexistent_binary_xyzzy_12345");
-    try std.testing.expectError(error.CliNotFound, result);
+    try std.testing.expectError(error.NotSupported, result);
 }
 
 test "ClaudeCliProvider default model is claude-opus-4-6" {

@@ -64,15 +64,17 @@ pub const DockerSandbox = struct {
 
     fn isAvailable(ptr: *anyopaque) bool {
         const self = resolve(ptr);
+        _ = self; // Unused in this function
         // Check if docker binary is actually reachable
-        var child = std.process.Child.init(&.{ "docker", "--version" }, self.allocator);
-        child.stderr_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stdin_behavior = .Ignore;
-        child.spawn() catch return false;
-        const term = child.wait() catch return false;
+        var child = std.process.spawn(std.Options.debug_io, .{
+            .argv = &.{"docker"},
+            .stderr = .ignore,
+            .stdout = .ignore,
+            .stdin = .ignore,
+        }) catch return false;
+        const term = child.wait(std.Options.debug_io) catch return false;
         return switch (term) {
-            .Exited => |code| code == 0,
+            .exited => |code| code == 0,
             else => false,
         };
     }
@@ -182,7 +184,7 @@ pub fn validateWorkspaceMount(path: []const u8, allowed_roots: ?[]const []const 
     if (path[0] != '/') return .not_absolute;
 
     // 4. Root check — normalize trailing slashes: treat "///" the same as "/"
-    const trimmed = std.mem.trimRight(u8, path, "/");
+    const trimmed = std.mem.trimEnd(u8, path, "/");
     if (trimmed.len == 0) return .is_root;
 
     // 5. Traversal check — look for ".." as a path component
@@ -233,7 +235,7 @@ fn isDangerousMount(trimmed: []const u8) bool {
 
 /// Check if `path` is equal to or under `root`.
 fn isUnderRoot(path: []const u8, root: []const u8) bool {
-    const trimmed_root = std.mem.trimRight(u8, root, "/");
+    const trimmed_root = std.mem.trimEnd(u8, root, "/");
     if (trimmed_root.len == 0) return false; // don't allow root "/" as an allowed root
     if (std.mem.eql(u8, path, trimmed_root)) return true;
     if (path.len > trimmed_root.len and

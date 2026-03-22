@@ -24,8 +24,8 @@ pub const CronListTool = struct {
         };
     }
 
-    pub fn execute(_: *CronListTool, allocator: std.mem.Allocator, _: JsonObjectMap) !ToolResult {
-        var scheduler = loadScheduler(allocator) catch {
+    pub fn execute(_: *CronListTool, allocator: std.mem.Allocator, _: JsonObjectMap, io: std.Io) !ToolResult {
+        var scheduler = loadScheduler(allocator, io) catch {
             return ToolResult{ .success = true, .output = try allocator.dupe(u8, "No scheduled cron jobs.") };
         };
         defer scheduler.deinit();
@@ -35,9 +35,8 @@ pub const CronListTool = struct {
             return ToolResult{ .success = true, .output = try allocator.dupe(u8, "No scheduled cron jobs.") };
         }
 
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        const w = buf.writer(allocator);
+        var buf: [4096]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
         for (jobs) |job| {
             const status: []const u8 = if (job.paused) "paused" else "enabled";
             try w.print("- {s} | {s} | {s} | next: {d} | cmd: {s}\n", .{
@@ -48,7 +47,8 @@ pub const CronListTool = struct {
                 job.command,
             });
         }
-        return ToolResult{ .success = true, .output = try buf.toOwnedSlice(allocator) };
+        const output = try allocator.dupe(u8, w.buffered());
+        return ToolResult{ .success = true, .output = output, .owns_output = true };
     }
 };
 
@@ -56,7 +56,7 @@ pub const CronListTool = struct {
 
 test "cron_list_empty" {
     // An empty scheduler should produce no formatted output
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const jobs = scheduler.listJobs();
@@ -64,16 +64,15 @@ test "cron_list_empty" {
 }
 
 test "cron_list_with_jobs" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("*/5 * * * *", "echo hello");
     try std.testing.expect(scheduler.listJobs().len == 1);
 
     // Format output the same way the tool does, to verify content
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
-    const w = buf.writer(std.testing.allocator);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
     const status: []const u8 = if (job.paused) "paused" else "enabled";
     try w.print("- {s} | {s} | {s} | next: {d} | cmd: {s}\n", .{
         job.id,
@@ -82,13 +81,13 @@ test "cron_list_with_jobs" {
         job.next_run_secs,
         job.command,
     });
-    const output = buf.items;
+    const output = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, job.id) != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "enabled") != null);
 }
 
 test "cron_list_shows_paused" {
-    var scheduler = CronScheduler.init(std.testing.allocator, 10, true);
+    var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
 
     const job = try scheduler.addJob("0 * * * *", "echo paused_test");
@@ -98,9 +97,8 @@ test "cron_list_shows_paused" {
     try std.testing.expect(jobs.len == 1);
     try std.testing.expect(jobs[0].paused);
 
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
-    const w = buf.writer(std.testing.allocator);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
     const status: []const u8 = if (jobs[0].paused) "paused" else "enabled";
     try w.print("- {s} | {s} | {s} | next: {d} | cmd: {s}\n", .{
         jobs[0].id,
@@ -109,7 +107,7 @@ test "cron_list_shows_paused" {
         jobs[0].next_run_secs,
         jobs[0].command,
     });
-    const output = buf.items;
+    const output = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "paused") != null);
 }
 
@@ -131,8 +129,8 @@ test "cron_list execute returns success" {
     const t = cl.tool();
     const parsed = try root.parseTestArgs("{}");
     defer parsed.deinit();
-    const result = try t.execute(std.testing.allocator, parsed.value.object);
-    defer if (result.output.len > 0) std.testing.allocator.free(result.output);
+    const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
+    defer result.deinit(std.testing.allocator);
     try std.testing.expect(result.success);
     // Either "No scheduled cron jobs." or a formatted job list
     try std.testing.expect(result.output.len > 0);

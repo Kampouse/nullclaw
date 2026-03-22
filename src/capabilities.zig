@@ -15,7 +15,11 @@ const core_tool_names = [_][]const u8{
     "file_edit",
     "git",
     "cargo_operations",
+    "zig_build_operations",
+    "agent_health",
+    "self_update",
     "image_info",
+    "gork",
     "memory_store",
     "memory_recall",
     "memory_list",
@@ -172,27 +176,108 @@ fn collectRuntimeToolNames(
 fn joinNames(allocator: std.mem.Allocator, names: []const []const u8) ![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
-    const w = out.writer(allocator);
 
     if (names.len == 0) {
-        try w.writeAll("(none)");
+        try out.appendSlice(allocator, "(none)");
         return try out.toOwnedSlice(allocator);
     }
 
     for (names, 0..) |name, i| {
-        if (i != 0) try w.writeAll(", ");
-        try w.writeAll(name);
+        if (i != 0) try out.appendSlice(allocator, ", ");
+        try out.appendSlice(allocator, name);
     }
     return try out.toOwnedSlice(allocator);
 }
 
-fn appendJsonStringArray(w: anytype, names: []const []const u8) !void {
-    try w.writeAll("[");
-    for (names, 0..) |name, i| {
-        if (i != 0) try w.writeAll(", ");
-        try w.print("{f}", .{std.json.fmt(name, .{})});
+fn categorizeTool(name: []const u8) []const u8 {
+    // Categorize tools based on name patterns
+    if (std.mem.eql(u8, name, "shell") or
+        std.mem.eql(u8, name, "file_read") or
+        std.mem.eql(u8, name, "file_write") or
+        std.mem.eql(u8, name, "file_edit") or
+        std.mem.eql(u8, name, "git"))
+    {
+        return "core";
     }
-    try w.writeAll("]");
+    if (std.mem.eql(u8, name, "cargo_operations") or
+        std.mem.eql(u8, name, "zig_build_operations"))
+    {
+        return "package_managers";
+    }
+    if (std.mem.eql(u8, name, "agent_health")) {
+        return "diagnostics";
+    }
+    if (std.mem.startsWith(u8, name, "memory_")) {
+        return "memory";
+    }
+    return "advanced";
+}
+
+fn formatToolCategory(allocator: std.mem.Allocator, tools: []const []const u8, category: []const u8, label: []const u8) !?[]u8 {
+    var filtered: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer filtered.deinit(allocator);
+
+    for (tools) |tool| {
+        if (std.mem.eql(u8, categorizeTool(tool), category)) {
+            try filtered.append(allocator, tool);
+        }
+    }
+
+    if (filtered.items.len == 0) return null;
+
+    const joined = try joinNames(allocator, filtered.items);
+    defer allocator.free(joined);
+    return try std.fmt.allocPrint(allocator, "  {s}: {s}\n", .{ label, joined });
+}
+
+fn buildToolsSection(allocator: std.mem.Allocator, tool_names: []const []const u8) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    try out.appendSlice(allocator, "Tools (compiled in):\n");
+
+    // Core tools
+    if (try formatToolCategory(allocator, tool_names, "core", "Core tools")) |line| {
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+    }
+
+    // Package managers
+    if (try formatToolCategory(allocator, tool_names, "package_managers", "Package managers")) |line| {
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+    }
+
+    // Diagnostics
+    if (try formatToolCategory(allocator, tool_names, "diagnostics", "Diagnostics")) |line| {
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+    }
+
+    // Memory
+    if (try formatToolCategory(allocator, tool_names, "memory", "Memory")) |line| {
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+    }
+
+    // Advanced (everything else)
+    if (try formatToolCategory(allocator, tool_names, "advanced", "Advanced")) |line| {
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+    }
+
+    return try out.toOwnedSlice(allocator);
+}
+
+fn appendJsonStringArray(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, names: []const []const u8) !void {
+    try buf.appendSlice(allocator, "[");
+    for (names, 0..) |name, i| {
+        if (i != 0) try buf.appendSlice(allocator, ", ");
+        try buf.append(allocator, '"');
+        try buf.appendSlice(allocator, name);
+        try buf.append(allocator, '"');
+    }
+    try buf.appendSlice(allocator, "]");
 }
 
 pub fn buildManifestJson(
@@ -200,83 +285,36 @@ pub fn buildManifestJson(
     cfg_opt: ?*const Config,
     runtime_tools: ?[]const Tool,
 ) ![]u8 {
-    const runtime_loaded_names = if (runtime_tools) |tools|
-        try collectRuntimeToolNames(allocator, cfg_opt, tools)
-    else
-        try allocator.alloc([]const u8, 0);
-    defer allocator.free(runtime_loaded_names);
+    const channels_enabled = try collectChannelNames(allocator, cfg_opt, .build_enabled);
+    defer allocator.free(channels_enabled);
+    const engines_enabled = try collectMemoryEngineNames(allocator, .build_enabled);
+    defer allocator.free(engines_enabled);
+    const runtime_tool_names = try collectRuntimeToolNames(allocator, cfg_opt, runtime_tools);
+    defer allocator.free(runtime_tool_names);
 
-    const estimated_tool_names = if (runtime_tools == null)
-        try collectRuntimeToolNames(allocator, cfg_opt, null)
-    else
-        try allocator.alloc([]const u8, 0);
-    defer allocator.free(estimated_tool_names);
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(allocator);
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer out.deinit(allocator);
-    const w = out.writer(allocator);
+    try buf.appendSlice(allocator, "{\n");
 
-    try w.writeAll("{\n");
-    try w.print("  \"version\": {f},\n", .{std.json.fmt(build_options.version, .{})});
+    // Channels section
+    try buf.appendSlice(allocator, "  \"channels\": ");
+    try appendJsonStringArray(&buf, allocator, channels_enabled);
+    try buf.appendSlice(allocator, ",\n");
 
-    const memory_backend = if (cfg_opt) |cfg| cfg.memory.backend else "";
-    try w.print("  \"active_memory_backend\": {f},\n", .{std.json.fmt(memory_backend, .{})});
+    // Memory engines section
+    try buf.appendSlice(allocator, "  \"memory_engines\": ");
+    try appendJsonStringArray(&buf, allocator, engines_enabled);
+    try buf.appendSlice(allocator, ",\n");
 
-    try w.writeAll("  \"channels\": [\n");
-    for (channel_catalog.known_channels, 0..) |meta, i| {
-        const enabled = channel_catalog.isBuildEnabled(meta.id);
-        const configured_count: usize = if (cfg_opt) |cfg| channel_catalog.configuredCount(cfg, meta.id) else 0;
-        const configured = enabled and configured_count > 0;
-        if (i != 0) try w.writeAll(",\n");
-        try w.print(
-            "    {{\"key\": {f}, \"label\": {f}, \"enabled_in_build\": {}, \"configured\": {}, \"configured_count\": {d}}}",
-            .{
-                std.json.fmt(meta.key, .{}),
-                std.json.fmt(meta.label, .{}),
-                enabled,
-                configured,
-                configured_count,
-            },
-        );
-    }
-    try w.writeAll("\n  ],\n");
+    // Tools section
+    try buf.appendSlice(allocator, "  \"tools\": ");
+    try appendJsonStringArray(&buf, allocator, runtime_tool_names);
+    try buf.appendSlice(allocator, "\n");
 
-    try w.writeAll("  \"memory_engines\": [\n");
-    for (memory_registry.known_backend_names, 0..) |name, i| {
-        const enabled = memory_registry.findBackend(name) != null;
-        const configured = cfg_opt != null and std.mem.eql(u8, cfg_opt.?.memory.backend, name);
-        if (i != 0) try w.writeAll(",\n");
-        try w.print(
-            "    {{\"name\": {f}, \"enabled_in_build\": {}, \"configured\": {}}}",
-            .{ std.json.fmt(name, .{}), enabled, configured },
-        );
-    }
-    try w.writeAll("\n  ],\n");
+    try buf.appendSlice(allocator, "}");
 
-    try w.writeAll("  \"tools\": {\n");
-    try w.writeAll("    \"runtime_loaded\": ");
-    try appendJsonStringArray(w, runtime_loaded_names);
-    try w.writeAll(",\n");
-
-    try w.writeAll("    \"estimated_enabled_from_config\": ");
-    try appendJsonStringArray(w, estimated_tool_names);
-    try w.writeAll(",\n");
-
-    const optional_enabled = try collectOptionalTools(allocator, cfg_opt, .enabled);
-    defer allocator.free(optional_enabled);
-    const optional_disabled = try collectOptionalTools(allocator, cfg_opt, .disabled);
-    defer allocator.free(optional_disabled);
-
-    try w.writeAll("    \"optional_enabled_by_config\": ");
-    try appendJsonStringArray(w, optional_enabled);
-    try w.writeAll(",\n");
-
-    try w.writeAll("    \"optional_disabled_by_config\": ");
-    try appendJsonStringArray(w, optional_disabled);
-    try w.writeAll("\n  }\n");
-
-    try w.writeAll("}\n");
-    return try out.toOwnedSlice(allocator);
+    return buf.toOwnedSlice(allocator);
 }
 
 pub fn buildSummaryText(
@@ -317,31 +355,42 @@ pub fn buildSummaryText(
     defer allocator.free(optional_disabled_s);
 
     const active_backend = if (cfg_opt) |cfg| cfg.memory.backend else "(unknown)";
-    const tools_label = if (runtime_tools != null) "tools (loaded)" else "tools (estimated from config)";
+
+    // Build tools section dynamically from core_tool_names
+    const core_tools_list: []const []const u8 = &core_tool_names;
+    const tools_section = try buildToolsSection(allocator, core_tools_list);
+    defer allocator.free(tools_section);
 
     return try std.fmt.allocPrint(
         allocator,
-        "Capabilities\n" ++
-            "\nAvailable in this runtime:\n" ++
-            "  channels (build): {s}\n" ++
-            "  channels (configured): {s}\n" ++
-            "  memory engines (build): {s}\n" ++
-            "  active memory backend: {s}\n" ++
-            "  {s}: {s}\n" ++
-            "\nNot available in this runtime:\n" ++
-            "  channels (disabled in build): {s}\n" ++
-            "  memory engines (disabled in build): {s}\n" ++
-            "  optional tools (disabled by config): {s}\n",
+        "NullClaw Capabilities\n" ++
+            "\n" ++
+            "Channels:\n" ++
+            "  Enabled (build):     {s}\n" ++
+            "  Configured:          {s}\n" ++
+            "  Disabled (build):    {s}\n" ++
+            "\n" ++
+            "Memory:\n" ++
+            "  Engines (build):     {s}\n" ++
+            "  Active backend:      {s}\n" ++
+            "  Disabled (build):    {s}\n" ++
+            "\n" ++
+            "{s}" ++
+            "  Optional:            {s}\n" ++
+            "  Disabled (config):   {s}\n" ++
+            "\n" ++
+            "Total tools available: {d}\n",
         .{
             channels_enabled_s,
             channels_configured_s,
+            channels_disabled_s,
             engines_enabled_s,
             active_backend,
-            tools_label,
-            runtime_tools_s,
-            channels_disabled_s,
             engines_disabled_s,
+            tools_section,
+            runtime_tools_s,
             optional_disabled_s,
+            runtime_tool_names.len,
         },
     );
 }
@@ -429,6 +478,95 @@ test "buildSummaryText includes availability sections" {
     const summary = try buildSummaryText(std.testing.allocator, null, null);
     defer std.testing.allocator.free(summary);
 
-    try std.testing.expect(std.mem.indexOf(u8, summary, "Available in this runtime") != null);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "Not available in this runtime") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "NullClaw Capabilities") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "Tools (compiled in)") != null);
+}
+
+test "categorizeTool returns correct categories" {
+    try std.testing.expectEqualStrings("core", categorizeTool("shell"));
+    try std.testing.expectEqualStrings("core", categorizeTool("file_read"));
+    try std.testing.expectEqualStrings("core", categorizeTool("git"));
+    try std.testing.expectEqualStrings("package_managers", categorizeTool("cargo_operations"));
+    try std.testing.expectEqualStrings("package_managers", categorizeTool("zig_build_operations"));
+    try std.testing.expectEqualStrings("diagnostics", categorizeTool("agent_health"));
+    try std.testing.expectEqualStrings("memory", categorizeTool("memory_store"));
+    try std.testing.expectEqualStrings("memory", categorizeTool("memory_recall"));
+    try std.testing.expectEqualStrings("advanced", categorizeTool("gork"));
+    try std.testing.expectEqualStrings("advanced", categorizeTool("delegate"));
+}
+
+test "formatToolCategory allocates and frees correctly" {
+    const tools = [_][]const u8{ "shell", "file_read", "git" };
+    const result = try formatToolCategory(std.testing.allocator, &tools, "core", "Core tools");
+    defer {
+        if (result) |r| std.testing.allocator.free(r);
+    }
+
+    try std.testing.expect(result != null);
+    if (result) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Core tools") != null);
+        try std.testing.expect(std.mem.indexOf(u8, r, "shell") != null);
+    }
+}
+
+test "formatToolCategory returns null for empty category" {
+    const tools = [_][]const u8{ "shell", "file_read" };
+    const result = try formatToolCategory(std.testing.allocator, &tools, "memory", "Memory");
+    try std.testing.expect(result == null);
+}
+
+test "buildToolsSection has no memory leaks" {
+    const tools = [_][]const u8{
+        "shell",
+        "file_read",
+        "file_write",
+        "file_edit",
+        "git",
+        "cargo_operations",
+        "zig_build_operations",
+        "agent_health",
+        "image_info",
+        "gork",
+        "memory_store",
+        "memory_recall",
+        "memory_list",
+        "memory_forget",
+        "delegate",
+        "schedule",
+        "spawn",
+    };
+
+    const result = try buildToolsSection(std.testing.allocator, &tools);
+    defer std.testing.allocator.free(result);
+
+    // Verify all categories are present
+    try std.testing.expect(std.mem.indexOf(u8, result, "Core tools") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "Package managers") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "Diagnostics") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "Memory") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "Advanced") != null);
+
+    // Verify specific tools are present
+    try std.testing.expect(std.mem.indexOf(u8, result, "gork") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "shell") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "cargo_operations") != null);
+}
+
+test "buildToolsSection handles empty tool list" {
+    const tools = [_][]const u8{};
+    const result = try buildToolsSection(std.testing.allocator, &tools);
+    defer std.testing.allocator.free(result);
+
+    // Should only have header, no categories
+    try std.testing.expect(std.mem.indexOf(u8, result, "Tools (compiled in)") != null);
+}
+
+test "buildSummaryText memory leak check" {
+    // Run multiple times to check for leaks
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        const summary = try buildSummaryText(std.testing.allocator, null, null);
+        std.testing.allocator.free(summary);
+    }
+    try std.testing.expect(true); // If we got here, no leaks
 }

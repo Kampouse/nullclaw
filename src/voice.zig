@@ -5,6 +5,7 @@
 //! transcribed text as an owned slice.
 
 const std = @import("std");
+const util = @import("util.zig");
 const builtin = @import("builtin");
 const platform = @import("platform.zig");
 const json_util = @import("json_util.zig");
@@ -100,7 +101,7 @@ pub fn transcribeFile(
     const tmp_dir = platform.getTempDir(allocator) catch return error.FileReadFailed;
     defer allocator.free(tmp_dir);
     var tmp_path_buf: [256]u8 = undefined;
-    var tmp_fbs = std.io.fixedBufferStream(&tmp_path_buf);
+    var tmp_fbs = util.fixedBufferStream(&tmp_path_buf);
     tmp_fbs.writer().print("{s}/nullclaw_voice_{d}.bin", .{ tmp_dir, getPid() }) catch
         return error.FileReadFailed;
     const tmp_path_len = tmp_fbs.pos;
@@ -110,17 +111,17 @@ pub fn transcribeFile(
     // Write multipart body directly to temp file (avoids holding file_data + body in memory)
     writeMultipartToTempFile(tmp_path, file_path, &boundary, opts) catch
         return error.FileReadFailed;
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
 
     // Build headers
     var content_type_buf: [128]u8 = undefined;
-    var ct_fbs = std.io.fixedBufferStream(&content_type_buf);
+    var ct_fbs = util.fixedBufferStream(&content_type_buf);
     ct_fbs.writer().print("Content-Type: multipart/form-data; boundary={s}", .{&boundary}) catch
         return error.BoundaryGenerationFailed;
     const content_type_hdr = ct_fbs.getWritten();
 
     var auth_buf: [256]u8 = undefined;
-    var auth_fbs = std.io.fixedBufferStream(&auth_buf);
+    var auth_fbs = util.fixedBufferStream(&auth_buf);
     auth_fbs.writer().print("Authorization: Bearer {s}", .{api_key}) catch
         return error.ApiRequestFailed;
     const auth_hdr = auth_fbs.getWritten();
@@ -141,7 +142,7 @@ pub fn transcribeFile(
 /// Generate a random 32-character hex boundary string.
 fn generateBoundary() ![32]u8 {
     var random_bytes: [16]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    util.randomBytes(&random_bytes);
     var boundary: [32]u8 = undefined;
     const hex = "0123456789abcdef";
     for (random_bytes, 0..) |b, i| {
@@ -201,47 +202,46 @@ fn writeMultipartToTempFile(
     boundary: []const u8,
     opts: TranscribeOptions,
 ) !void {
-    const tmp_file = try std.fs.createFileAbsolute(tmp_path, .{});
-    defer tmp_file.close();
+    const tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{});
+    defer tmp_file.close(std.Options.debug_io);
 
     // Write file part header
-    try tmp_file.writeAll("--");
-    try tmp_file.writeAll(boundary);
-    try tmp_file.writeAll("\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.ogg\"\r\nContent-Type: audio/ogg\r\n\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.ogg\"\r\nContent-Type: audio/ogg\r\n\r\n");
 
-    // Stream audio file directly (no intermediate buffer)
+    // Read audio file and write to multipart
     {
-        const audio_file = try std.fs.openFileAbsolute(audio_path, .{});
-        defer audio_file.close();
-        var buf: [32768]u8 = undefined;
-        while (true) {
-            const n = try audio_file.read(&buf);
-            if (n == 0) break;
-            try tmp_file.writeAll(buf[0..n]);
-        }
+        // For Zig 0.16, use Io.Dir.cwd().readFileAlloc for absolute paths too
+        const audio_data = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, audio_path, std.heap.page_allocator, .limited(10 * 1024 * 1024)) catch |err| {
+            log.err("failed to read audio file: {}", .{err});
+            return error.AudioReadFailed;
+        };
+        defer std.heap.page_allocator.free(audio_data);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, audio_data);
     }
-    try tmp_file.writeAll("\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\n");
 
     // Write model part
-    try tmp_file.writeAll("--");
-    try tmp_file.writeAll(boundary);
-    try tmp_file.writeAll("\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n");
-    try tmp_file.writeAll(opts.model);
-    try tmp_file.writeAll("\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, opts.model);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\n");
 
     // Write language part (optional)
     if (opts.language) |lang| {
-        try tmp_file.writeAll("--");
-        try tmp_file.writeAll(boundary);
-        try tmp_file.writeAll("\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n");
-        try tmp_file.writeAll(lang);
-        try tmp_file.writeAll("\r\n");
+        try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+        try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n");
+        try tmp_file.writeStreamingAll(std.Options.debug_io, lang);
+        try tmp_file.writeStreamingAll(std.Options.debug_io, "\r\n");
     }
 
     // Closing boundary
-    try tmp_file.writeAll("--");
-    try tmp_file.writeAll(boundary);
-    try tmp_file.writeAll("--\r\n");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--");
+    try tmp_file.writeStreamingAll(std.Options.debug_io, boundary);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, "--\r\n");
 }
 
 /// Parse the "text" field from a JSON response like {"text":"transcribed text here"}.
@@ -265,7 +265,7 @@ fn curlPostFromFile(
 ) ![]u8 {
     // Build data-binary arg: @/path/to/file
     var data_arg_buf: [300]u8 = undefined;
-    var data_fbs = std.io.fixedBufferStream(&data_arg_buf);
+    var data_fbs = util.fixedBufferStream(&data_arg_buf);
     try data_fbs.writer().print("@{s}", .{file_path});
     const data_arg = data_fbs.getWritten();
 
@@ -296,17 +296,21 @@ fn curlPostFromFile(
     argv_buf[argc] = url;
     argc += 1;
 
-    var child = std.process.Child.init(argv_buf[0..argc], allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    var child = try std.process.spawn(std.Options.debug_io, .{
+        .argv = argv_buf[0..argc],
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
 
-    try child.spawn();
+    // child already spawned
 
-    const stdout = child.stdout.?.readToEndAlloc(allocator, 4 * 1024 * 1024) catch return error.CurlReadError;
+    var read_buf: [4 * 1024]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(std.Options.debug_io, &read_buf);
+    const stdout = stdout_reader.interface.readAlloc(allocator, 4 * 1024 * 1024) catch return error.CurlReadError;
 
-    const term = child.wait() catch return error.CurlWaitError;
+    const term = child.wait(std.Options.debug_io) catch return error.CurlWaitError;
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             allocator.free(stdout);
             return error.CurlFailed;
         },
@@ -348,7 +352,7 @@ pub fn transcribeTelegramVoice(
     };
     defer {
         // Clean up temp file
-        std.fs.deleteFileAbsolute(local_path) catch {};
+        std.Io.Dir.cwd().deleteFile(std.Options.debug_io, local_path) catch {};
         allocator.free(local_path);
     }
 
@@ -364,7 +368,7 @@ pub fn transcribeTelegramVoice(
 /// Call Telegram getFile API and extract the file_path from the response.
 fn getFilePath(allocator: std.mem.Allocator, bot_token: []const u8, file_id: []const u8) ![]u8 {
     var url_buf: [512]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&url_buf);
+    var fbs = util.fixedBufferStream(&url_buf);
     try fbs.writer().print("https://api.telegram.org/bot{s}/getFile", .{bot_token});
     const url = fbs.getWritten();
 
@@ -392,7 +396,7 @@ fn getFilePath(allocator: std.mem.Allocator, bot_token: []const u8, file_id: []c
 /// Download a file from Telegram and save to temp dir. Returns the local path (owned).
 fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_file_path: []const u8) ![]u8 {
     var url_buf: [1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&url_buf);
+    var fbs = util.fixedBufferStream(&url_buf);
     try fbs.writer().print("https://api.telegram.org/file/bot{s}/{s}", .{ bot_token, tg_file_path });
     const url = fbs.getWritten();
 
@@ -404,7 +408,7 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_
     defer allocator.free(tmp_dir);
     const pid = getPid();
     var path_buf: [256]u8 = undefined;
-    var path_fbs = std.io.fixedBufferStream(&path_buf);
+    var path_fbs = util.fixedBufferStream(&path_buf);
     try path_fbs.writer().print("{s}/nullclaw_tg_voice_{d}.ogg", .{ tmp_dir, pid });
     const local_path = path_fbs.getWritten();
 
@@ -414,9 +418,9 @@ fn downloadTelegramFile(allocator: std.mem.Allocator, bot_token: []const u8, tg_
     const local_path_z: [:0]const u8 = z_buf[0..local_path.len :0];
 
     {
-        const f = try std.fs.createFileAbsolute(local_path_z, .{});
-        defer f.close();
-        try f.writeAll(data);
+        const f = try std.Io.Dir.cwd().createFile(std.Options.debug_io, local_path_z, .{});
+        defer f.close(std.Options.debug_io);
+        try f.writeStreamingAll(std.Options.debug_io, data);
     }
 
     return try allocator.dupe(u8, local_path);

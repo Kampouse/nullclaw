@@ -1,0 +1,13 @@
+{
+  "name": "nullclaw-test",
+  "version": "1.0.0",
+  "description": "NullClaw testing infrastructure",
+  "private": true,
+  "devDependencies": {
+    "@copilotkit/llmock": "^1.1.1"
+  },
+  "scripts": {
+    "test:mock": "llmock -p 4010 -f tests/llmock/fixtures",
+    "test:integration": "./tests/llmock/runner.sh"
+  }
+}

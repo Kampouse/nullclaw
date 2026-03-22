@@ -5,6 +5,7 @@
 //! scheduling, delegation, browser, and image tools.
 
 const std = @import("std");
+const profiling = @import("../profiling.zig");
 const memory_mod = @import("../memory/root.zig");
 const Memory = memory_mod.Memory;
 
@@ -45,8 +46,30 @@ pub fn getValue(args: JsonObjectMap, key: []const u8) ?JsonValue {
 
 /// Test helper: parse a JSON string into a Parsed(Value) for use in tool tests.
 /// The caller must `defer parsed.deinit()` and extract `.value.object` for the ObjectMap.
-pub fn parseTestArgs(json_str: []const u8) !std.json.Parsed(JsonValue) {
-    return std.json.parseFromSlice(JsonValue, std.testing.allocator, json_str, .{});
+/// Uses an arena allocator internally to avoid Zig 0.16 JSON parsing leaks.
+pub const TestArgs = struct {
+    arena: std.heap.ArenaAllocator,
+    parsed: std.json.Parsed(JsonValue),
+
+    pub fn deinit(self: *const TestArgs) void {
+        self.arena.deinit();
+    }
+};
+
+pub fn parseTestArgs(json_str: []const u8) !TestArgs {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    const parsed = try std.json.parseFromSlice(JsonValue, arena.allocator(), json_str, .{});
+    return .{
+        .arena = arena,
+        .parsed = parsed,
+    };
+}
+
+/// Test helper: parse a JSON string into an ObjectMap for use in tool tests.
+/// Uses an arena allocator internally - just use the returned object, no cleanup needed.
+pub fn parseTestArgsArena(arena_allocator: std.mem.Allocator, json_str: []const u8) !JsonObjectMap {
+    const parsed = try std.json.parseFromSlice(JsonValue, arena_allocator, json_str, .{});
+    return parsed.value.object;
 }
 
 // Sub-modules
@@ -57,6 +80,8 @@ pub const file_edit = @import("file_edit.zig");
 pub const http_request = @import("http_request.zig");
 pub const git = @import("git.zig");
 pub const cargo = @import("cargo.zig");
+pub const zig_build = @import("zig_build.zig");
+pub const self_diagnose = @import("self_diagnose.zig");
 pub const memory_store = @import("memory_store.zig");
 pub const memory_recall = @import("memory_recall.zig");
 pub const memory_list = @import("memory_list.zig");
@@ -81,6 +106,8 @@ pub const pushover = @import("pushover.zig");
 pub const schema = @import("schema.zig");
 pub const web_search = @import("web_search.zig");
 pub const web_fetch = @import("web_fetch.zig");
+// TODO: Re-enable after fixing compilation errors
+// pub const web_scrape = @import("web_scrape.zig");
 pub const file_append = @import("file_append.zig");
 pub const spawn = @import("spawn.zig");
 pub const i2c = @import("i2c.zig");
@@ -88,6 +115,7 @@ pub const spi = @import("spi.zig");
 pub const path_security = @import("path_security.zig");
 pub const process_util = @import("process_util.zig");
 pub const gork = @import("gork.zig");
+pub const self_update = @import("self_update.zig");
 
 // ── Core types ──────────────────────────────────────────────────────
 
@@ -99,20 +127,52 @@ pub const gork = @import("gork.zig");
 /// use `ToolResult.ok("")` or `ToolResult.fail("literal")` for those.
 pub const ToolResult = struct {
     success: bool,
-    /// Heap-allocated output string owned by caller. Free with allocator.free().
-    /// May be an empty literal "" for void results — do NOT free in that case.
+    /// Output string. May be heap-allocated or static literal.
+    /// Use deinit() to safely free if heap-allocated.
     output: []const u8,
-    /// Heap-allocated error message owned by caller if non-null. Free with allocator.free().
+    /// Error message if non-null. May be heap-allocated or static literal.
+    /// Use deinit() to safely free if heap-allocated.
     error_msg: ?[]const u8 = null,
+    /// Track whether strings are heap-allocated (need freeing)
+    owns_output: bool = false,
+    owns_error_msg: bool = false,
+
+    /// Free heap-allocated strings. Safe to call even with static strings.
+    pub fn deinit(self: ToolResult, allocator: std.mem.Allocator) void {
+        if (self.owns_output and self.output.len > 0) {
+            allocator.free(self.output);
+        }
+        if (self.owns_error_msg) {
+            if (self.error_msg) |e| {
+                allocator.free(e);
+            }
+        }
+    }
+
+    /// Create a success result with heap-allocated output.
+    /// Caller must call deinit() to free.
+    pub fn okAlloc(allocator: std.mem.Allocator, output: []const u8) !ToolResult {
+        const heap_output = try allocator.dupe(u8, output);
+        return .{ .success = true, .output = heap_output, .owns_output = true };
+    }
+
+    /// Create a failure result with heap-allocated error message.
+    /// Caller must call deinit() to free.
+    pub fn failAlloc(allocator: std.mem.Allocator, err: []const u8) !ToolResult {
+        const heap_err = try allocator.dupe(u8, err);
+        return .{ .success = false, .output = "", .error_msg = heap_err, .owns_error_msg = true };
+    }
 
     /// Create a success result with a static/literal output (do NOT free).
+    /// DEPRECATED: Use okAlloc() for consistency
     pub fn ok(output: []const u8) ToolResult {
-        return .{ .success = true, .output = output };
+        return .{ .success = true, .output = output, .owns_output = false };
     }
 
     /// Create a failure result with a static/literal error message (do NOT free).
+    /// DEPRECATED: Use failAlloc() for consistency
     pub fn fail(err: []const u8) ToolResult {
-        return .{ .success = false, .output = "", .error_msg = err };
+        return .{ .success = false, .output = "", .error_msg = err, .owns_error_msg = false };
     }
 };
 
@@ -130,15 +190,18 @@ pub const Tool = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        execute: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap) anyerror!ToolResult,
+        execute: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) anyerror!ToolResult,
         name: *const fn (ptr: *anyopaque) []const u8,
         description: *const fn (ptr: *anyopaque) []const u8,
         parameters_json: *const fn (ptr: *anyopaque) []const u8,
         deinit: ?*const fn (ptr: *anyopaque, allocator: std.mem.Allocator) void = null,
     };
 
-    pub fn execute(self: Tool, allocator: std.mem.Allocator, args: JsonObjectMap) !ToolResult {
-        return self.vtable.execute(self.ptr, allocator, args);
+    pub fn execute(self: Tool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
+        const zone = profiling.zone(@src());
+        defer zone.end();
+
+        return self.vtable.execute(self.ptr, allocator, args, io);
     }
 
     pub fn name(self: Tool) []const u8 {
@@ -176,13 +239,13 @@ pub const Tool = struct {
 ///   - `pub const tool_name: []const u8`
 ///   - `pub const tool_description: []const u8`
 ///   - `pub const tool_params: []const u8`
-///   - `fn execute(self: *T, allocator: Allocator, args: JsonObjectMap) anyerror!ToolResult`
+///   - `fn execute(self: *T, allocator: Allocator, args: JsonObjectMap, io: std.Io) anyerror!ToolResult`
 pub fn ToolVTable(comptime T: type) Tool.VTable {
     return .{
         .execute = &struct {
-            fn f(ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap) anyerror!ToolResult {
+            fn f(ptr: *anyopaque, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) anyerror!ToolResult {
                 const self: *T = @ptrCast(@alignCast(ptr));
-                return self.execute(allocator, args);
+                return self.execute(allocator, args, io);
             }
         }.f,
         .name = &struct {
@@ -265,6 +328,7 @@ pub fn defaultToolsWithPaths(
 pub fn allTools(
     allocator: std.mem.Allocator,
     workspace_dir: []const u8,
+    io: std.Io,
     opts: struct {
         http_enabled: bool = false,
         http_allowed_domains: []const []const u8 = &.{},
@@ -287,6 +351,7 @@ pub fn allTools(
         tools_config: @import("../config.zig").ToolsConfig = .{},
         policy: ?*const @import("../security/policy.zig").SecurityPolicy = null,
         gork_config: ?@import("../config_types.zig").GorkConfig = null,
+        repo_dir: ?[]const u8 = null,
     },
 ) ![]Tool {
     var list: std.ArrayList(Tool) = .{};
@@ -330,7 +395,23 @@ pub fn allTools(
     cargo_tool.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths };
     try list.append(allocator, cargo_tool.tool());
 
+    const zig_build_tool = try allocator.create(zig_build.ZigBuildTool);
+    zig_build_tool.* = .{ .workspace_dir = workspace_dir, .allowed_paths = opts.allowed_paths, .zig_path = opts.tools_config.zig_path };
+    try list.append(allocator, zig_build_tool.tool());
+
     // Tools without workspace_dir
+    const sdt = try allocator.create(self_diagnose.SelfDiagnoseTool);
+    sdt.* = .{};
+    try list.append(allocator, sdt.tool());
+
+    const sut = try allocator.create(self_update.SelfUpdateTool);
+    // Use configurable repository directory for self_update tool
+    // Falls back to current directory (.) if not explicitly configured
+    // The workspace_dir points to ~/.nullclaw/workspace, which is not the git repo
+    const repo_path = opts.repo_dir orelse ".";
+    sut.* = .{ .workspace_dir = repo_path, .allowed_paths = opts.allowed_paths };
+    try list.append(allocator, sut.tool());
+
     const it = try allocator.create(image.ImageInfoTool);
     it.* = .{};
     try list.append(allocator, it.tool());
@@ -390,6 +471,11 @@ pub fn allTools(
         const wft = try allocator.create(web_fetch.WebFetchTool);
         wft.* = .{ .default_max_chars = tc.web_fetch_max_chars };
         try list.append(allocator, wft.tool());
+
+        // TODO: Add web_scrape tool after fixing compilation errors
+        // const wst2 = try allocator.create(web_scrape.WebScrapeTool);
+        // wst2.* = .{ .default_max_chars = tc.web_fetch_max_chars };
+        // try list.append(allocator, wst2.tool());
     }
 
     if (opts.browser_enabled) {
@@ -449,9 +535,9 @@ pub fn allTools(
                 .enable_fallback = gc.enable_fallback,
             };
 
-            const gork_tool = try gork.GorkTool.init(allocator, gork_config);
+            const gork_tool = try gork.GorkTool.init(allocator, gork_config, io);
             errdefer allocator.destroy(gork_tool); // Free if start() fails
-            try gork_tool.start();
+            try gork_tool.start(io);
             try list.append(allocator, gork_tool.tool());
         }
     }
@@ -559,14 +645,14 @@ pub fn subagentTools(
 test "getString returns unescaped newlines and tabs" {
     const parsed = try parseTestArgs("{\"content\":\"line1\\nline2\\ttab\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "content").?;
+    const val = getString(parsed.parsed.value.object, "content").?;
     try std.testing.expectEqualStrings("line1\nline2\ttab", val);
 }
 
 test "getString returns unescaped quotes and backslashes" {
     const parsed = try parseTestArgs("{\"s\":\"say \\\"hello\\\" path\\\\dir\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "s").?;
+    const val = getString(parsed.parsed.value.object, "s").?;
     try std.testing.expectEqualStrings("say \"hello\" path\\dir", val);
 }
 
@@ -574,43 +660,43 @@ test "getString returns unescaped unicode" {
     // \u0041 = A, \u00c9 = É
     const parsed = try parseTestArgs("{\"s\":\"\\u0041BC \\u00c9\\u00f6\\u00fc\\u00e4\\u00e8\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "s").?;
+    const val = getString(parsed.parsed.value.object, "s").?;
     try std.testing.expectEqualStrings("ABC Éöüäè", val);
 }
 
 test "getString returns unescaped shell script content" {
     const parsed = try parseTestArgs("{\"content\":\"#!/bin/bash\\necho \\\"hello\\\"\\nexit 0\"}");
     defer parsed.deinit();
-    const val = getString(parsed.value.object, "content").?;
+    const val = getString(parsed.parsed.value.object, "content").?;
     try std.testing.expectEqualStrings("#!/bin/bash\necho \"hello\"\nexit 0", val);
 }
 
 test "getString returns null for missing key" {
     const parsed = try parseTestArgs("{\"other\":\"val\"}");
     defer parsed.deinit();
-    try std.testing.expect(getString(parsed.value.object, "content") == null);
+    try std.testing.expect(getString(parsed.parsed.value.object, "content") == null);
 }
 
 test "getString returns null for non-string value" {
     const parsed = try parseTestArgs("{\"count\":42}");
     defer parsed.deinit();
-    try std.testing.expect(getString(parsed.value.object, "count") == null);
+    try std.testing.expect(getString(parsed.parsed.value.object, "count") == null);
 }
 
 test "getBool extracts boolean values" {
     const parsed = try parseTestArgs("{\"a\":true,\"b\":false}");
     defer parsed.deinit();
-    try std.testing.expectEqual(@as(?bool, true), getBool(parsed.value.object, "a"));
-    try std.testing.expectEqual(@as(?bool, false), getBool(parsed.value.object, "b"));
-    try std.testing.expect(getBool(parsed.value.object, "missing") == null);
+    try std.testing.expectEqual(@as(?bool, true), getBool(parsed.parsed.value.object, "a"));
+    try std.testing.expectEqual(@as(?bool, false), getBool(parsed.parsed.value.object, "b"));
+    try std.testing.expect(getBool(parsed.parsed.value.object, "missing") == null);
 }
 
 test "getInt extracts integer values" {
     const parsed = try parseTestArgs("{\"n\":42,\"neg\":-5}");
     defer parsed.deinit();
-    try std.testing.expectEqual(@as(?i64, 42), getInt(parsed.value.object, "n"));
-    try std.testing.expectEqual(@as(?i64, -5), getInt(parsed.value.object, "neg"));
-    try std.testing.expect(getInt(parsed.value.object, "missing") == null);
+    try std.testing.expectEqual(@as(?i64, 42), getInt(parsed.parsed.value.object, "n"));
+    try std.testing.expectEqual(@as(?i64, -5), getInt(parsed.parsed.value.object, "neg"));
+    try std.testing.expect(getInt(parsed.parsed.value.object, "missing") == null);
 }
 
 test "tool result ok" {
@@ -695,27 +781,29 @@ test "tool spec generation" {
 }
 
 test "all tools includes extras when enabled" {
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{
         .http_enabled = true,
         .browser_enabled = true,
     });
     defer deinitTools(std.testing.allocator, tools);
 
-    // Order: shell, file_read, file_write, file_edit, git, cargo, image_info,
+    // Order: shell, file_read, file_write, file_edit, git, cargo, zig_build,
+    //        self_diagnose, self_update, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
     //        delegate, schedule, spawn, http_request, web_search, web_fetch,
-    //        browser = 18
-    try std.testing.expectEqual(@as(usize, 18), tools.len);
+    //        browser = 21
+    try std.testing.expectEqual(@as(usize, 21), tools.len);
 }
 
 test "all tools excludes extras when disabled" {
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{});
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{});
     defer deinitTools(std.testing.allocator, tools);
 
-    // Order: shell, file_read, file_write, file_edit, git, cargo, image_info,
+    // Order: shell, file_read, file_write, file_edit, git, cargo, zig_build,
+    //        self_diagnose, self_update, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        delegate, schedule, spawn = 14
-    try std.testing.expectEqual(@as(usize, 14), tools.len);
+    //        delegate, schedule, spawn = 17
+    try std.testing.expectEqual(@as(usize, 17), tools.len);
 }
 
 test "all tools wires http and web_search config into tool instances" {
@@ -723,7 +811,7 @@ test "all tools wires http and web_search config into tool instances" {
     const search_url = "https://searx.example.com";
     const search_fallbacks = [_][]const u8{ "jina", "duckduckgo" };
 
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{
         .http_enabled = true,
         .http_allowed_domains = &domains,
         .http_max_response_size = 321_000,
@@ -769,10 +857,10 @@ test "all tools wires subagent manager into spawn tool" {
         .config_path = "/tmp/yc_test/config.json",
         .allocator = std.testing.allocator,
     };
-    var manager = subagent_mod.SubagentManager.init(std.testing.allocator, &cfg, null, .{});
+    var manager = subagent_mod.SubagentManager.init(std.testing.allocator, std.testing.io, &cfg, null, .{});
     defer manager.deinit();
 
-    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", .{
+    const tools = try allTools(std.testing.allocator, "/tmp/yc_test", std.testing.io, .{
         .subagent_manager = &manager,
     });
     defer deinitTools(std.testing.allocator, tools);
@@ -801,7 +889,8 @@ test "bindMemoryTools matches by vtable, not by colliding tool name" {
             return .{ .ptr = @ptrCast(self), .vtable = &vtable };
         }
 
-        pub fn execute(_: *@This(), _: std.mem.Allocator, _: JsonObjectMap) anyerror!ToolResult {
+        pub fn execute(_: *@This(), _: std.mem.Allocator, _: JsonObjectMap, io: std.Io) anyerror!ToolResult {
+            _ = io;
             return ToolResult.ok("");
         }
     };

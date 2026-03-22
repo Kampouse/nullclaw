@@ -71,6 +71,10 @@ pub const DiagnosticsConfig = struct {
     /// Emit request/response payloads around provider chat calls.
     /// Intended for local debugging only (can include sensitive text).
     log_llm_io: bool = false,
+    /// Maximum number of tools to execute in parallel (0 = default 3, 1 = sequential).
+    /// Setting to 0 enables parallel execution with a default of 3 concurrent tools.
+    /// Setting to 1 disables parallel execution (sequential mode).
+    max_parallel_tools: u32 = 0,
 };
 
 pub const AutonomyConfig = struct {
@@ -143,6 +147,7 @@ pub const AgentConfig = struct {
 };
 
 pub const ToolsConfig = struct {
+    zig_path: []const u8 = "zig", // Path to zig executable (default: "zig" for PATH lookup)
     shell_timeout_secs: u64 = 60,
     shell_max_output_bytes: u32 = 1_048_576, // 1MB
     max_file_size_bytes: u32 = 10_485_760, // 10MB — shared file_read/edit/append
@@ -248,6 +253,20 @@ pub const TelegramConfig = struct {
     /// Optional SOCKS5/HTTP proxy URL for all Telegram API requests (e.g. "socks5://host:port").
     proxy: ?[]const u8 = null,
     interactive: TelegramInteractiveConfig = .{},
+
+    /// Webhook mode configuration (NEW)
+    webhook_mode: bool = false,
+    webhook_port: u16 = 8443,
+    /// Public URL that Telegram should send webhooks to (e.g., "https://mybot.example.com:8443/")
+    /// Required when webhook_mode is true.
+    webhook_url: ?[]const u8 = null,
+
+    /// Async webhook configuration
+    /// When enabled, uses kqueue/epoll for connection handling and thread pool for LLM processing.
+    /// Recommended for high-throughput scenarios or when LLM processing takes significant time.
+    async_webhook: bool = true,
+    /// Number of worker threads for async webhook (only used when async_webhook is true)
+    webhook_workers: usize = 4,
 };
 
 pub const DiscordConfig = struct {
@@ -1274,6 +1293,9 @@ pub const SessionConfig = struct {
     idle_minutes: u32 = 60,
     identity_links: []const IdentityLink = &.{},
     typing_interval_secs: u32 = 5,
+    /// Serialize messages per-session (default: false for full parallelism)
+    /// Set to true if you need strict ordering for stateful conversations
+    serialize_sessions: bool = false,
 };
 
 test "WebConfig defaults" {

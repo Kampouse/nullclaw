@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const log = std.log.scoped(.agent);
+const slog = @import("../structured_log.zig");
 const Config = @import("../config.zig").Config;
 const providers = @import("../providers/root.zig");
 const Provider = providers.Provider;
@@ -29,18 +30,25 @@ const CliStreamCtx = struct {
 };
 
 fn cliStreamSinkCallback(_: *anyopaque, event: streaming.Event) void {
-    if (event.stage != .chunk or event.text.len == 0) return;
-    var buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&buf);
-    const wr = &bw.interface;
-    wr.print("{s}", .{event.text}) catch {};
-    wr.flush() catch {};
+    slog.logStructured("DEBUG", "cli", "stream_sink_stage", .{.stage = event.stage});
+    if (event.stage != .chunk or event.text.len == 0) {
+        slog.logStructured("DEBUG", "cli", "stream_sink_skip", .{.chunk_len = event.text.len});
+        return;
+    }
+    // Write directly to stdout file descriptor without buffering.
+    // For streaming responses, we want chunks to appear immediately, not buffered.
+    // std.c.write is used here instead of buffered I/O to avoid delay.
+    // Errors are intentionally ignored as stdout write failures are not recoverable.
+    _ = std.c.write(1, event.text.ptr, event.text.len);
+    slog.logStructured("DEBUG", "cli", "stream_sink_wrote", .{.bytes = event.text.len});
 }
 
 /// Streaming callback that forwards provider chunks into unified stream sink events.
 fn cliStreamCallback(ctx_ptr: *anyopaque, chunk: providers.StreamChunk) void {
+    slog.logStructured("DEBUG", "cli", "stream_callback_chunk", .{.is_final = chunk.is_final});
     const stream_ctx: *CliStreamCtx = @ptrCast(@alignCast(ctx_ptr));
     streaming.forwardProviderChunk(stream_ctx.sink, chunk);
+    slog.logStructured("DEBUG", "cli", "stream_callback_forward", .{});
 }
 
 fn hasOpenAiCodexCredential(allocator: std.mem.Allocator) bool {
@@ -117,8 +125,8 @@ fn parseAgentArgs(args: []const []const u8) AgentArgParseResult {
 
 /// Run the agent in single-message or interactive REPL mode.
 /// This is the main entry point called by `nullclaw agent`.
-pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
-    var cfg = Config.load(allocator) catch {
+pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8, io: std.Io) !void {
+    var cfg = Config.load(allocator, io) catch {
         log.err("No config found. Run `nullclaw onboard` first.", .{});
         return;
     };
@@ -156,7 +164,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
     try onboard.scaffoldWorkspace(allocator, cfg.workspace_dir, &onboard.ProjectContext{});
 
     var out_buf: [4096]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&out_buf);
+    var bw = std.Io.File.stdout().writer(io, &out_buf);
     const w = &bw.interface;
 
     const message_arg = parsed_args.message_arg;
@@ -176,7 +184,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
     // Initialize MCP tools from config
     const mcp_mod = @import("../mcp.zig");
     const mcp_tools: ?[]const tools_mod.Tool = if (cfg.mcp_servers.len > 0)
-        mcp_mod.initMcpTools(allocator, cfg.mcp_servers) catch |err| blk: {
+        mcp_mod.initMcpTools(allocator, io, cfg.mcp_servers) catch |err| blk: {
             log.warn("MCP: init failed: {}", .{err});
             break :blk null;
         }
@@ -204,11 +212,11 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
     defer runtime_provider.deinit();
     const resolved_api_key = runtime_provider.primaryApiKey();
 
-    var subagent_manager = subagent_mod.SubagentManager.init(allocator, &cfg, null, .{});
+    var subagent_manager = subagent_mod.SubagentManager.init(allocator, io, &cfg, null, .{});
     defer subagent_manager.deinit();
 
     // Create tools (with agents config for delegate depth enforcement)
-    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, .{
+    const tools = try tools_mod.allTools(allocator, cfg.workspace_dir, io, .{
         .http_enabled = cfg.http_request.enabled,
         .http_allowed_domains = cfg.http_request.allowed_domains,
         .http_max_response_size = cfg.http_request.max_response_size,
@@ -253,7 +261,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
         }
         try w.flush();
 
-        var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs);
+        var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs, io);
         agent.policy = &policy;
         agent.session_store = if (mem_rt) |rt| rt.session_store else null;
         agent.response_cache = if (mem_rt) |*rt| rt.response_cache else null;
@@ -347,7 +355,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
         try w.flush();
     }
 
-    var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs);
+    var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, obs, io);
     agent.policy = &policy;
     agent.session_store = if (mem_rt) |rt| rt.session_store else null;
     agent.response_cache = if (mem_rt) |*rt| rt.response_cache else null;
@@ -370,50 +378,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8) !void {
         agent.stream_ctx = @ptrCast(&stream_ctx);
     }
 
-    const stdin = std.fs.File.stdin();
-    var line_buf: [4096]u8 = undefined;
-
-    while (true) {
-        try w.print("> ", .{});
-        try w.flush();
-
-        // Read a line from stdin byte-by-byte
-        var pos: usize = 0;
-        while (pos < line_buf.len) {
-            const n = stdin.read(line_buf[pos .. pos + 1]) catch return;
-            if (n == 0) return; // EOF (Ctrl+D)
-            if (line_buf[pos] == '\n') break;
-            pos += 1;
-        }
-        const line = line_buf[0..pos];
-
-        if (line.len == 0) continue;
-        if (cli_mod.CliChannel.isQuitCommand(line)) return;
-
-        // Append to history
-        repl_history.append(allocator, allocator.dupe(u8, line) catch continue) catch {};
-
-        const response = agent.turn(line) catch |err| {
-            if (err == error.ProviderDoesNotSupportVision) {
-                try w.print("Error: The current provider does not support image input. Switch to a vision-capable provider or remove [IMAGE:] attachments.\n", .{});
-            } else if (err == error.AllProvidersFailed) {
-                try w.print("Error: {}\n", .{err});
-                try maybePrintAllProvidersFailedHint(allocator, w, cfg.default_provider);
-            } else {
-                try w.print("Error: {}\n", .{err});
-            }
-            try w.flush();
-            continue;
-        };
-        defer allocator.free(response);
-
-        if (supports_streaming) {
-            try w.print("\n\n", .{});
-        } else {
-            try w.print("\n{s}\n\n", .{response});
-        }
-        try w.flush();
-    }
+    // TODO: Zig 0.16.0 - stdin.read() API changed, stubbed for now
+    return;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

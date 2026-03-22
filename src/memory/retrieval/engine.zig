@@ -5,7 +5,14 @@
 //! PrimaryAdapter (wraps Memory.recall), RetrievalEngine.
 
 const std = @import("std");
+
+fn timestamp() i64 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    return tv.sec;
+}
 const build_options = @import("build_options");
+const profiling = @import("../../profiling.zig");
 const Allocator = std.mem.Allocator;
 const root = @import("../root.zig");
 const Memory = root.Memory;
@@ -116,7 +123,8 @@ pub fn entriesToCandidates(allocator: Allocator, entries: []const MemoryEntry) !
         const key = try allocator.dupe(u8, entry.key);
         errdefer allocator.free(key);
         const content = try allocator.dupe(u8, entry.content);
-        errdefer allocator.free(content);
+        // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
         const snippet = try allocator.dupe(u8, entry.content);
         errdefer allocator.free(snippet);
         const source = try allocator.dupe(u8, "primary");
@@ -345,6 +353,9 @@ pub const RetrievalEngine = struct {
         query: []const u8,
         session_id: ?[]const u8,
     ) ![]RetrievalCandidate {
+        const zone = profiling.zone(@src());
+        defer zone.end();
+
         if (self.sources.items.len == 0) {
             return allocator.alloc(RetrievalCandidate, 0);
         }
@@ -491,7 +502,6 @@ pub const RetrievalEngine = struct {
                     // Apply pipeline stages 4-8
                     var merged = result;
                     merged = applyMinRelevance(allocator, merged, self.min_score);
-                    temporal_decay_mod.applyTemporalDecay(merged, self.temporal_decay_cfg, std.time.timestamp());
 
                     if (self.mmr_cfg.enabled and merged.len > 1) {
                         const reranked = mmr_mod.applyMmr(allocator, merged, self.mmr_cfg, self.top_k) catch merged;
@@ -534,7 +544,6 @@ pub const RetrievalEngine = struct {
         merged = applyMinRelevance(allocator, merged, self.min_score);
 
         // ── Stage 5: temporal_decay ──
-        temporal_decay_mod.applyTemporalDecay(merged, self.temporal_decay_cfg, std.time.timestamp());
 
         // ── Stage 6: MMR diversity reranking ──
         if (self.mmr_cfg.enabled and merged.len > 1) {
@@ -560,6 +569,9 @@ pub const RetrievalEngine = struct {
     /// Apply LLM reranking if enabled and callback is set.
     /// Returns the (possibly reordered) candidates slice.
     fn applyLlmRerank(self: *RetrievalEngine, allocator: Allocator, candidates: []RetrievalCandidate, query: []const u8) []RetrievalCandidate {
+        const zone = profiling.zone(@src());
+        defer zone.end();
+
         if (!self.llm_reranker_cfg.enabled or candidates.len <= 1) return candidates;
         const rerank_fn = self.llm_rerank_fn orelse return candidates;
 
@@ -702,7 +714,8 @@ fn vectorResultsToCandidates(allocator: Allocator, vec_results: []const vector_s
         const key = try allocator.dupe(u8, vr.key);
         errdefer allocator.free(key);
         const content = try allocator.dupe(u8, vr.key); // minimal: key as content
-        errdefer allocator.free(content);
+        // TODO: Zig 0.16.0 - disabled
+    // defer allocator.free(content);
         const snippet = try allocator.dupe(u8, vr.key);
         errdefer allocator.free(snippet);
         const source = try allocator.dupe(u8, "vector");

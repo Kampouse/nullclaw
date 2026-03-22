@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.Options.debug_io; // For Zig 0.16.0 I/O
 const root = @import("root.zig");
 
 const Provider = root.Provider;
@@ -284,6 +285,13 @@ pub const ReliableProvider = struct {
         self.last_error_len = copy_len;
     }
 
+    /// Reset provider state (clear error tracking, reset key rotation).
+    /// Call this on /new or /reset to give the provider a fresh start.
+    pub fn reset(self: *ReliableProvider) void {
+        self.key_index = 0;
+        self.last_error_len = 0;
+    }
+
     /// Get the last stored error message.
     fn lastErrorSlice(self: *const ReliableProvider) []const u8 {
         return self.last_error_msg[0..self.last_error_len];
@@ -305,9 +313,12 @@ pub const ReliableProvider = struct {
         .supportsNativeTools = supportsNativeToolsImpl,
         .supports_vision = supportsVisionImpl,
         .supports_vision_for_model = supportsVisionForModelImpl,
+        .supports_streaming = supportsStreamingImpl,
+        .stream_chat = streamChatImpl,
         .getName = getNameImpl,
         .deinit = deinitImpl,
         .warmup = warmupImpl,
+        .reset = resetImpl,
     };
 
     /// Create a Provider interface from this ReliableProvider.
@@ -345,7 +356,7 @@ pub const ReliableProvider = struct {
 
                 if (attempt < self.max_retries) {
                     const wait = self.computeBackoff(backoff_ms, err_slice);
-                    std.Thread.sleep(wait * std.time.ns_per_ms);
+                    std.Io.sleep(io, .{ .nanoseconds = @as(i96, wait) * std.time.ns_per_ms }, .real) catch {};
                     backoff_ms = @min(backoff_ms *| 2, 10_000);
                 }
             }
@@ -379,7 +390,7 @@ pub const ReliableProvider = struct {
 
                 if (attempt < self.max_retries) {
                     const wait = self.computeBackoff(backoff_ms, err_slice);
-                    std.Thread.sleep(wait * std.time.ns_per_ms);
+                    std.Io.sleep(io, .{ .nanoseconds = @as(i96, wait) * std.time.ns_per_ms }, .real) catch {};
                     backoff_ms = @min(backoff_ms *| 2, 10_000);
                 }
             }
@@ -427,6 +438,12 @@ pub const ReliableProvider = struct {
             }
         }
 
+        // All providers failed - reset HTTP connections for next request
+        self.inner.resetConnections();
+        for (self.extras) |entry| {
+            entry.provider.resetConnections();
+        }
+
         return self.finalFailureError();
     }
 
@@ -467,6 +484,12 @@ pub const ReliableProvider = struct {
             }
         }
 
+        // All providers failed - reset HTTP connections for next request
+        self.inner.resetConnections();
+        for (self.extras) |entry| {
+            entry.provider.resetConnections();
+        }
+
         return self.finalFailureError();
     }
 
@@ -497,6 +520,28 @@ pub const ReliableProvider = struct {
         return false;
     }
 
+    fn supportsStreamingImpl(ptr: *anyopaque) bool {
+        const self: *ReliableProvider = @ptrCast(@alignCast(ptr));
+        if (self.inner.supportsStreaming()) return true;
+        for (self.extras) |entry| {
+            if (entry.provider.supportsStreaming()) return true;
+        }
+        return false;
+    }
+
+    fn streamChatImpl(
+        ptr: *anyopaque,
+        allocator: std.mem.Allocator,
+        request: root.ChatRequest,
+        model: []const u8,
+        temperature: f64,
+        callback: root.StreamCallback,
+        callback_ctx: *anyopaque,
+    ) anyerror!root.StreamChatResult {
+        const self: *ReliableProvider = @ptrCast(@alignCast(ptr));
+        return self.inner.streamChat(allocator, request, model, temperature, callback, callback_ctx);
+    }
+
     fn getNameImpl(ptr: *anyopaque) []const u8 {
         const self: *ReliableProvider = @ptrCast(@alignCast(ptr));
         return self.inner.getName();
@@ -516,6 +561,11 @@ pub const ReliableProvider = struct {
         for (self.extras) |entry| {
             entry.provider.warmup();
         }
+    }
+
+    fn resetImpl(ptr: *anyopaque) void {
+        const self: *ReliableProvider = @ptrCast(@alignCast(ptr));
+        self.reset();
     }
 };
 

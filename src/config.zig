@@ -2,6 +2,7 @@ const std = @import("std");
 const platform = @import("platform.zig");
 pub const config_types = @import("config_types.zig");
 pub const config_parse = @import("config_parse.zig");
+const log = std.log.scoped(.config);
 /// Write a JSON-escaped string (with enclosing quotes) to any writer.
 /// Mirrors json_util.appendJsonString but works with writer-based output.
 fn writeJsonStr(w: anytype, s: []const u8) !void {
@@ -205,7 +206,18 @@ pub const Config = struct {
         self.max_actions_per_hour = self.autonomy.max_actions_per_hour;
     }
 
-    pub fn load(backing_allocator: std.mem.Allocator) !Config {
+    pub fn load(backing_allocator: std.mem.Allocator, io: std.Io) !Config {
+        const home = platform.getHomeDir(backing_allocator) catch return error.NoHomeDir;
+        defer backing_allocator.free(home);
+        const config_dir = try std.fs.path.join(backing_allocator, &.{ home, ".nullclaw" });
+        defer backing_allocator.free(config_dir);
+        const config_path = try std.fs.path.join(backing_allocator, &.{ config_dir, "config.json" });
+        defer backing_allocator.free(config_path);
+        return loadPath(backing_allocator, config_path, io);
+    }
+
+    /// Load config from a specific file path.
+    pub fn loadPath(backing_allocator: std.mem.Allocator, config_path: []const u8, io: std.Io) !Config {
         // Use an arena so deinit() can free everything in one shot.
         const arena_ptr = try backing_allocator.create(std.heap.ArenaAllocator);
         arena_ptr.* = std.heap.ArenaAllocator.init(backing_allocator);
@@ -215,24 +227,30 @@ pub const Config = struct {
         }
         const allocator = arena_ptr.allocator();
 
-        const home = platform.getHomeDir(allocator) catch return error.NoHomeDir;
+        // Duplicate config_path since we need it to outlive the caller
+        const config_path_owned = try allocator.dupe(u8, config_path);
 
-        const config_dir = try std.fs.path.join(allocator, &.{ home, ".nullclaw" });
-        const config_path = try std.fs.path.join(allocator, &.{ config_dir, "config.json" });
+        // Derive default workspace from config path
+        const config_dir = std.fs.path.dirname(config_path_owned) orelse ".";
         const default_workspace_dir = try std.fs.path.join(allocator, &.{ config_dir, "workspace" });
 
         var cfg = Config{
             .workspace_dir = default_workspace_dir, // temporarily set to default
-            .config_path = config_path,
+            .config_path = config_path_owned,
             .allocator = allocator,
             .arena = arena_ptr,
         };
 
         // Try to read existing config file
-        if (std.fs.openFileAbsolute(config_path, .{})) |file| {
-            defer file.close();
-            const content = try file.readToEndAlloc(allocator, 1024 * 64);
-            cfg.parseJson(content) catch |err| switch (err) {
+        const content: ?[]const u8 = blk: {
+            const result = std.Io.Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(1024 * 64)) catch {
+                // Config file doesn't exist or can't be read — use defaults
+                break :blk null;
+            };
+            break :blk result;
+        };
+        if (content) |c| {
+            cfg.parseJson(c) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     // Log parse errors so users can diagnose corrupted or
@@ -242,18 +260,54 @@ pub const Config = struct {
                     std.debug.print("Warning: failed to parse config.json: {s}\n", .{@errorName(err)});
                 },
             };
-        } else |_| {
-            // Config file doesn't exist yet — use defaults
         }
 
-        // Use workspace_dir_override if set, otherwise use default
+        // Use workspace_dir_override if set, otherwise check existing workspace or auto-detect
         if (cfg.workspace_dir_override != null) {
             cfg.workspace_dir = cfg.workspace_dir_override.?;
+        } else {
+            // No override in config - check if default workspace is in use
+            // Check if config.json exists in the workspace (indicates active workspace)
+            const workspace_config = try std.fs.path.join(allocator, &.{ default_workspace_dir, "config.json" });
+            const config_exists = std.Io.Dir.cwd().openFile(io, workspace_config, .{}) catch |err| blk: {
+                if (err == error.FileNotFound or err == error.NotFound) break :blk null;
+                break :blk try std.Io.Dir.cwd().openFile(io, workspace_config, .{});
+            };
+            if (config_exists) |f| {
+                f.close(io);
+                // Existing workspace has config file, use it
+                log.info("Using existing workspace: {s}", .{default_workspace_dir});
+                cfg.workspace_dir = default_workspace_dir;
+                allocator.free(workspace_config);
+            } else {
+                allocator.free(workspace_config);
+
+                // Workspace is new/empty, check for git repository to auto-detect
+                if (std.Io.Dir.cwd().openDir(io, ".git", .{})) |git_dir| {
+                    defer git_dir.close(io);
+                    // We're in a git repo! Use current directory as workspace
+                    const detected_workspace = allocator.dupe(u8, ".") catch |err| {
+                        log.warn("Failed to allocate workspace path: {}, using default", .{err});
+                        // Keep default_workspace_dir
+                        return cfg;
+                    };
+                    log.info("Auto-detected git workspace: {s}", .{"(current directory)"});
+                    cfg.workspace_dir = detected_workspace;
+                } else |err| {
+                    // No git repo or error opening .git directory
+                    if (err == error.FileNotFound or err == error.NotFound) {
+                        log.debug("No .git directory found, using default workspace", .{});
+                    } else {
+                        log.warn("Error checking for .git directory: {}", .{err});
+                    }
+                    // Use default_workspace_dir (already set)
+                }
+            }
         }
 
         // Backfill runtime-derived fields not present in JSON
         if (cfg.channels.nostr) |ns| {
-            ns.config_dir = std.fs.path.dirname(config_path) orelse ".";
+            ns.config_dir = std.fs.path.dirname(config_path_owned) orelse ".";
         }
 
         // Environment variable overrides
@@ -491,65 +545,65 @@ pub const Config = struct {
     /// Apply NULLCLAW_* environment variable overrides.
     pub fn applyEnvOverrides(self: *Config) void {
         // Provider
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_PROVIDER")) |prov| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_PROVIDER")) |prov| {
             self.default_provider = prov;
-        } else |_| {}
+        }
 
         // Model
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_MODEL")) |model| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_MODEL")) |model| {
             self.default_model = model;
-        } else |_| {}
+        }
 
         // Temperature
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_TEMPERATURE")) |temp_str| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_TEMPERATURE")) |temp_str| {
             defer self.allocator.free(temp_str);
             if (std.fmt.parseFloat(f64, temp_str)) |temp| {
                 if (temp >= 0.0 and temp <= 2.0) {
                     self.default_temperature = temp;
                 }
             } else |_| {}
-        } else |_| {}
+        }
 
         // Gateway port
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_GATEWAY_PORT")) |port_str| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_GATEWAY_PORT")) |port_str| {
             defer self.allocator.free(port_str);
             if (std.fmt.parseInt(u16, port_str, 10)) |port| {
                 self.gateway.port = port;
             } else |_| {}
-        } else |_| {}
+        }
 
         // Gateway host
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_GATEWAY_HOST")) |host| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_GATEWAY_HOST")) |host| {
             self.gateway.host = host;
-        } else |_| {}
+        }
 
         // Workspace
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_WORKSPACE")) |ws| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_WORKSPACE")) |ws| {
             self.workspace_dir = ws;
-        } else |_| {}
+        }
 
         // Allow public bind
-        if (std.process.getEnvVarOwned(self.allocator, "NULLCLAW_ALLOW_PUBLIC_BIND")) |val| {
+        if (platform.getEnvOrNull(self.allocator, "NULLCLAW_ALLOW_PUBLIC_BIND")) |val| {
             defer self.allocator.free(val);
             self.gateway.allow_public_bind = std.mem.eql(u8, val, "1") or std.mem.eql(u8, val, "true");
-        } else |_| {}
+        }
     }
 
     /// Save config as JSON to the config_path.
-    pub fn save(self: *const Config) !void {
+    pub fn save(self: *const Config, io: std.Io) !void {
         const dir = std.fs.path.dirname(self.config_path) orelse return error.InvalidConfigPath;
 
         // Ensure parent directory exists
-        std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+        std.Io.Dir.cwd().createDirPath(io, dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
 
-        const file = try std.fs.createFileAbsolute(self.config_path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(io, self.config_path, .{});
+        defer file.close(io);
 
         var buf: [8192]u8 = undefined;
-        var bw = file.writer(&buf);
+        var bw = file.writer(io, &buf);
         const w = &bw.interface;
 
         try w.print("{{\n", .{});
@@ -1211,21 +1265,26 @@ test "save includes channels section by default" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Get the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     const cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"channels\": {") != null);
@@ -1236,13 +1295,16 @@ test "save writes configured telegram channel account" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1259,11 +1321,13 @@ test "save writes configured telegram channel account" {
             },
         },
     };
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"telegram\": {") != null);
@@ -1282,13 +1346,16 @@ test "save roundtrip preserves telegram interactive settings" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1304,17 +1371,19 @@ test "save roundtrip preserves telegram interactive settings" {
             },
         },
     };
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1331,13 +1400,16 @@ test "save roundtrip preserves diagnostics logging flags" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1345,17 +1417,19 @@ test "save roundtrip preserves diagnostics logging flags" {
     cfg.diagnostics.log_message_receipts = true;
     cfg.diagnostics.log_message_payloads = true;
     cfg.diagnostics.log_llm_io = true;
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1372,9 +1446,12 @@ test "save roundtrip preserves reliability settings" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     const fallback_models = [_][]const u8{
@@ -1389,7 +1466,7 @@ test "save roundtrip preserves reliability settings" {
     };
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1402,17 +1479,19 @@ test "save roundtrip preserves reliability settings" {
     cfg.reliability.fallback_providers = &.{ "openrouter", "groq" };
     cfg.reliability.api_keys = &.{ "rk_a", "rk_b" };
     cfg.reliability.model_fallbacks = &model_fallbacks;
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1457,13 +1536,16 @@ test "save roundtrip preserves extended config sections" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1615,17 +1697,19 @@ test "save roundtrip preserves extended config sections" {
         },
     };
 
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 256 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [256 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -1679,13 +1763,16 @@ test "save escapes mcp_servers strings safely" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -1707,17 +1794,19 @@ test "save escapes mcp_servers strings safely" {
         },
     };
 
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 128 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [128 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var loaded = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = arena.allocator(),
     };
@@ -2643,11 +2732,15 @@ test "save and load roundtrip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -2656,15 +2749,17 @@ test "save and load roundtrip" {
     cfg.default_model = try allocator.dupe(u8, "glm-4.7");
     cfg.workspace_dir_override = try allocator.dupe(u8, "C:\\Users\\menger\\Desktop\\myspace");
 
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
     // load back by reading and parsing the saved file
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 1024 * 64);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [1024 * 64]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
 
     var cfg2 = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -2917,13 +3012,16 @@ test "save writes provider native_tools when false" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(base);
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{base});
+    // Use the tmpDir's absolute path using realPath with a buffer
+    var path_buf: [4096]u8 = undefined;
+    const tmp_path_len = try tmp.dir.realPath(std.testing.io, &path_buf);
+    const tmp_path = path_buf[0..tmp_path_len];
+
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{tmp_path});
     defer allocator.free(config_path);
 
     var cfg = Config{
-        .workspace_dir = base,
+        .workspace_dir = tmp_path,
         .config_path = config_path,
         .allocator = allocator,
     };
@@ -2935,11 +3033,13 @@ test "save writes provider native_tools when false" {
         },
     };
 
-    try cfg.save();
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, config_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"native_tools\": false") != null);
@@ -3921,11 +4021,16 @@ test "session config: all dm_scope values accepted" {
 
 test "save includes nostr channel when configured" {
     const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-    const tmp_path = "/tmp/nullclaw_test_nostr_save.json";
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };
@@ -3939,12 +4044,13 @@ test "save includes nostr channel when configured" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    try cfg.save(std.testing.io);
 
-    const file = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     // Must contain nostr channel fields
@@ -3968,10 +4074,16 @@ test "save includes nostr channel when configured" {
 
 test "save includes dm_relays in nostr section" {
     const allocator = std.testing.allocator;
-    const tmp_path = "/tmp/nullclaw_test_dm_relays_save.json";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };
@@ -3982,12 +4094,14 @@ test "save includes dm_relays in nostr section" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    try cfg.save(std.testing.io);
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, tmp_path) catch {};
 
-    const file = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expect(std.mem.indexOf(u8, content, "\"dm_relays\"") != null);
@@ -3997,10 +4111,16 @@ test "save includes dm_relays in nostr section" {
 
 test "dm_relays round-trips through save and load" {
     const allocator = std.testing.allocator;
-    const tmp_path = "/tmp/nullclaw_test_dm_relays_roundtrip.json";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };
@@ -4011,12 +4131,14 @@ test "dm_relays round-trips through save and load" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    try cfg.save(std.testing.io);
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, tmp_path) catch {};
 
-    const file = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, 64 * 1024);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file.close(std.testing.io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file.reader(std.testing.io, &read_buffer);
+    const content = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(content);
 
     // Use an arena so all allocations made by parseJson are freed in bulk.
@@ -4037,10 +4159,16 @@ test "dm_relays round-trips through save and load" {
 
 test "nostr display_name with special chars round-trips correctly" {
     const allocator = std.testing.allocator;
-    const tmp_path = "/tmp/nullclaw_test_nostr_escape.json";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base = try tmp.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
+    const tmp_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "config.json" });
+    defer allocator.free(tmp_path);
 
     var cfg = Config{
-        .workspace_dir = "/tmp",
+        .workspace_dir = base.ptr[0..base.len],
         .config_path = tmp_path,
         .allocator = allocator,
     };
@@ -4052,12 +4180,14 @@ test "nostr display_name with special chars round-trips correctly" {
     };
     cfg.channels.nostr = &ns_cfg;
 
-    try cfg.save();
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    try cfg.save(std.testing.io);
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, tmp_path) catch {};
 
-    const file_content = try std.fs.openFileAbsolute(tmp_path, .{});
-    defer file_content.close();
-    const raw = try file_content.readToEndAlloc(allocator, 64 * 1024);
+    const file_content = try std.Io.Dir.cwd().openFile(std.testing.io, tmp_path, .{});
+    defer file_content.close(std.testing.io);
+    var read_buffer: [64 * 1024]u8 = undefined;
+    var file_reader = file_content.reader(std.testing.io, &read_buffer);
+    const raw = try std.Io.Reader.allocRemaining(&file_reader.interface, allocator, .unlimited);
     defer allocator.free(raw);
 
     // Verify the escaping is present in the raw JSON

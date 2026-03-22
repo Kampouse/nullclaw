@@ -13,6 +13,8 @@ const config_mutator = @import("../config_mutator.zig");
 const context_tokens = @import("context_tokens.zig");
 const max_tokens_resolver = @import("max_tokens.zig");
 
+const io = std.Options.debug_io;
+
 const SlashCommand = struct {
     name: []const u8,
     arg: []const u8,
@@ -678,33 +680,42 @@ fn resetRuntimeCommandState(self: anytype) void {
 fn formatStatus(self: anytype) ![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
+    const allocator = self.allocator;
 
-    try w.print("Model: {s}\n", .{self.model_name});
-    try w.print("History: {d} messages\n", .{self.history.items.len});
-    try w.print("Tokens used: {d}\n", .{self.total_tokens});
-    try w.print("Tools: {d} available\n", .{self.tools.len});
-    try w.print("Thinking: {s}\n", .{self.reasoning_effort orelse "off"});
-    try w.print("Verbose: {s}\n", .{self.verbose_level.toSlice()});
-    try w.print("Reasoning: {s}\n", .{self.reasoning_mode.toSlice()});
-    try w.print("Usage: {s}\n", .{self.usage_mode.toSlice()});
-    try w.print(
-        "Exec: host={s} security={s} ask={s}",
-        .{ self.exec_host.toSlice(), self.exec_security.toSlice(), self.exec_ask.toSlice() },
-    );
-    if (self.exec_node_id) |id| try w.print(" node={s}", .{id});
-    try w.writeAll("\n");
-    try w.print(
-        "Queue: mode={s} debounce={d}ms cap={d} drop={s}\n",
-        .{ self.queue_mode.toSlice(), self.queue_debounce_ms, self.queue_cap, self.queue_drop.toSlice() },
-    );
-    try w.print("TTS: mode={s} provider={s}\n", .{ self.tts_mode.toSlice(), self.tts_provider orelse "default" });
-    try w.print("Activation: {s}\n", .{self.activation_mode.toSlice()});
-    try w.print("Send: {s}\n", .{self.send_mode.toSlice()});
+    try out.appendSlice(allocator, "Model: ");
+    try out.appendSlice(allocator, self.model_name);
+    try out.appendSlice(allocator, "\n");
+    
+    var buf: [128]u8 = undefined;
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "History: {d} messages\n", .{self.history.items.len}));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Tokens used: {d}\n", .{self.total_tokens}));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Tools: {d} available\n", .{self.tools.len}));
+    try out.appendSlice(allocator, "Thinking: ");
+    try out.appendSlice(allocator, self.reasoning_effort orelse "off");
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, "Verbose: ");
+    try out.appendSlice(allocator, self.verbose_level.toSlice());
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, "Reasoning: ");
+    try out.appendSlice(allocator, self.reasoning_mode.toSlice());
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, "Usage: ");
+    try out.appendSlice(allocator, self.usage_mode.toSlice());
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Exec: host={s} security={s} ask={s}", .{ self.exec_host.toSlice(), self.exec_security.toSlice(), self.exec_ask.toSlice() }));
+    if (self.exec_node_id) |id| {
+        try out.appendSlice(allocator, " node=");
+        try out.appendSlice(allocator, id);
+    }
+    try out.appendSlice(allocator, "\n");
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Queue: mode={s} debounce={d}ms cap={d} drop={s}\n", .{ self.queue_mode.toSlice(), self.queue_debounce_ms, self.queue_cap, self.queue_drop.toSlice() }));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "TTS: mode={s} provider={s}\n", .{ self.tts_mode.toSlice(), self.tts_provider orelse "default" }));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Activation: {s}\n", .{self.activation_mode.toSlice()}));
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Send: {s}\n", .{self.send_mode.toSlice()}));
     if (self.session_ttl_secs) |ttl| {
-        try w.print("Session TTL: {d}s\n", .{ttl});
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Session TTL: {d}s\n", .{ttl}));
     } else {
-        try w.writeAll("Session TTL: off\n");
+        try out.appendSlice(allocator, "Session TTL: off\n");
     }
     return try out.toOwnedSlice(self.allocator);
 }
@@ -750,13 +761,18 @@ fn handleExecCommand(self: anytype, arg: []const u8) ![]const u8 {
     if (arg.len == 0 or std.ascii.eqlIgnoreCase(arg, "status")) {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print(
-            "Exec: host={s} security={s} ask={s}",
-            .{ self.exec_host.toSlice(), self.exec_security.toSlice(), self.exec_ask.toSlice() },
-        );
+        const allocator = self.allocator;
+
+        try out.appendSlice(allocator, "Exec: host=");
+        try out.appendSlice(allocator, self.exec_host.toSlice());
+        try out.appendSlice(allocator, " security=");
+        try out.appendSlice(allocator, self.exec_security.toSlice());
+        try out.appendSlice(allocator, " ask=");
+        try out.appendSlice(allocator, self.exec_ask.toSlice());
+
         if (self.exec_node_id) |id| {
-            try w.print(" node={s}", .{id});
+            try out.appendSlice(allocator, " node=");
+            try out.appendSlice(allocator, id);
         }
         return try out.toOwnedSlice(self.allocator);
     }
@@ -788,13 +804,18 @@ fn handleExecCommand(self: anytype, arg: []const u8) ![]const u8 {
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
-    try w.print(
-        "Exec set: host={s} security={s} ask={s}",
-        .{ self.exec_host.toSlice(), self.exec_security.toSlice(), self.exec_ask.toSlice() },
-    );
+    const allocator = self.allocator;
+
+    try out.appendSlice(allocator, "Exec set: host=");
+    try out.appendSlice(allocator, self.exec_host.toSlice());
+    try out.appendSlice(allocator, " security=");
+    try out.appendSlice(allocator, self.exec_security.toSlice());
+    try out.appendSlice(allocator, " ask=");
+    try out.appendSlice(allocator, self.exec_ask.toSlice());
+
     if (self.exec_node_id) |id| {
-        try w.print(" node={s}", .{id});
+        try out.appendSlice(allocator, " node=");
+        try out.appendSlice(allocator, id);
     }
     return try out.toOwnedSlice(self.allocator);
 }
@@ -968,10 +989,13 @@ fn handleAllowlistCommand(self: anytype, arg: []const u8) ![]const u8 {
     if (self.policy) |pol| {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.writeAll("Allowlisted commands:\n");
+        const allocator = self.allocator;
+        
+        try out.appendSlice(allocator, "Allowlisted commands:\n");
         for (pol.allowed_commands) |cmd| {
-            try w.print("  - {s}\n", .{cmd});
+            try out.appendSlice(allocator, "  - ");
+            try out.appendSlice(allocator, cmd);
+            try out.appendSlice(allocator, "\n");
         }
         return try out.toOwnedSlice(self.allocator);
     }
@@ -1018,7 +1042,7 @@ fn handleContextCommand(self: anytype, arg: []const u8) ![]const u8 {
 fn handleExportSessionCommand(self: anytype, arg: []const u8) ![]const u8 {
     const raw_path = firstToken(arg);
     const path = if (raw_path.len == 0)
-        try std.fmt.allocPrint(self.allocator, "{s}/session-{d}.md", .{ self.workspace_dir, std.time.timestamp() })
+        try std.fmt.allocPrint(self.allocator, "{s}/session-{d}.md", .{ self.workspace_dir, 0 })
     else if (std.fs.path.isAbsolute(raw_path))
         try self.allocator.dupe(u8, raw_path)
     else
@@ -1026,12 +1050,16 @@ fn handleExportSessionCommand(self: anytype, arg: []const u8) ![]const u8 {
     defer self.allocator.free(path);
 
     const file = if (std.fs.path.isAbsolute(path))
-        try std.fs.createFileAbsolute(path, .{ .truncate = true, .read = false })
-    else
-        try std.fs.cwd().createFile(path, .{ .truncate = true, .read = false });
-    defer file.close();
+        try std.Io.Dir.cwd().createFile(io, path, .{.truncate = true, .read = false })
+    else blk: {
+        // For relative paths, prepend workspace
+        const full_path = try std.fs.path.join(self.allocator, &.{ self.workspace_dir, path });
+        defer self.allocator.free(full_path);
+        break :blk try std.Io.Dir.cwd().createFile(io, full_path, .{.truncate = true, .read = false });
+    };
+    defer file.close(io);
     var out_buf: [4096]u8 = undefined;
-    var bw = file.writer(&out_buf);
+    var bw = file.writer(io, &out_buf);
     const w = &bw.interface;
     try w.print("# Session export\n\nModel: `{s}`\n\n", .{self.model_name});
     for (self.history.items) |entry| {
@@ -1197,7 +1225,7 @@ fn runShellCommand(self: anytype, command: []const u8, skip_approval_gate: bool)
     var args = std.json.ObjectMap.init(arena);
     try args.put("command", .{ .string = command });
 
-    const result = shell_tool.execute(arena, args) catch |err| {
+    const result = shell_tool.execute(arena, args, self.io) catch |err| {
         return try std.fmt.allocPrint(self.allocator, "Bash failed: {s}", .{@errorName(err)});
     };
 
@@ -1295,10 +1323,11 @@ fn formatSubagentList(self: anytype, include_details: bool) ![]const u8 {
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
+    const allocator = self.allocator;
 
-    manager.mutex.lock();
-    defer manager.mutex.unlock();
+    const mutex_io = std.Options.debug_io;
+    manager.mutex.lock(mutex_io) catch {};
+    defer manager.mutex.unlock(mutex_io);
 
     var running: u32 = 0;
     var completed: u32 = 0;
@@ -1317,20 +1346,22 @@ fn formatSubagentList(self: anytype, include_details: bool) ![]const u8 {
             .failed => failed += 1,
         }
 
-        try w.print("#{d} {s} [{s}]", .{ task_id, state.label, taskStatusLabel(state.status) });
+        var buf: [256]u8 = undefined;
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "#{d} {s} [{s}]", .{ task_id, state.label, taskStatusLabel(state.status) }));
         if (include_details and state.status == .failed and state.error_msg != null) {
-            try w.print(" error={s}", .{state.error_msg.?});
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, " error={s}", .{state.error_msg.?}));
         }
-        try w.writeAll("\n");
+        try out.appendSlice(allocator, "\n");
     }
 
     if (visible_count == 0) {
-        try w.writeAll("No subagents tracked in this session.");
-        return try out.toOwnedSlice(self.allocator);
+        try out.appendSlice(allocator, "No subagents tracked in this session.");
+        return try out.toOwnedSlice(allocator);
     }
 
-    try w.print("Totals: running={d}, completed={d}, failed={d}", .{ running, completed, failed });
-    return try out.toOwnedSlice(self.allocator);
+    var buf2: [128]u8 = undefined;
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf2, "Totals: running={d}, completed={d}, failed={d}", .{ running, completed, failed }));
+    return try out.toOwnedSlice(allocator);
 }
 
 fn spawnSubagentTask(self: anytype, task: []const u8, label: []const u8) ![]const u8 {
@@ -1361,8 +1392,9 @@ fn handleAgentsCommand(self: anytype) ![]const u8 {
     const manager = findSubagentManager(self) orelse
         return try self.allocator.dupe(u8, "Active agents: 1 (current session). Subagents are not enabled.");
 
-    manager.mutex.lock();
-    defer manager.mutex.unlock();
+    const mutex_io = std.Options.debug_io;
+    manager.mutex.lock(mutex_io) catch {};
+    defer manager.mutex.unlock(mutex_io);
     var tracked: u32 = 0;
     var running: u32 = 0;
 
@@ -1394,8 +1426,9 @@ fn handleKillCommand(self: anytype, arg: []const u8) ![]const u8 {
         var ids: std.ArrayListUnmanaged(u64) = .empty;
         defer ids.deinit(self.allocator);
 
-        manager.mutex.lock();
-        defer manager.mutex.unlock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {};
+        defer manager.mutex.unlock(mutex_io);
 
         var running: u32 = 0;
         var it = manager.tasks.iterator();
@@ -1431,8 +1464,9 @@ fn handleKillCommand(self: anytype, arg: []const u8) ![]const u8 {
     const task_id = parseTaskId(target) orelse
         return try self.allocator.dupe(u8, "Usage: /kill <id|all>");
 
-    manager.mutex.lock();
-    defer manager.mutex.unlock();
+    const mutex_io = std.Options.debug_io;
+    manager.mutex.lock(mutex_io) catch {};
+    defer manager.mutex.unlock(mutex_io);
 
     const state = manager.tasks.get(task_id) orelse
         return try std.fmt.allocPrint(self.allocator, "Task #{d} not found.", .{task_id});
@@ -1481,8 +1515,9 @@ fn handleSubagentsCommand(self: anytype, arg: []const u8) ![]const u8 {
 
         const manager = findSubagentManager(self) orelse
             return try self.allocator.dupe(u8, "Subagent manager is not enabled.");
-        manager.mutex.lock();
-        defer manager.mutex.unlock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {};
+        defer manager.mutex.unlock(mutex_io);
 
         const state = manager.tasks.get(task_id) orelse
             return try std.fmt.allocPrint(self.allocator, "Task #{d} not found.", .{task_id});
@@ -1533,8 +1568,9 @@ fn handleSteerCommand(self: anytype, arg: []const u8) ![]const u8 {
     if (message.len == 0) return try self.allocator.dupe(u8, "Usage: /steer <id> <message>");
 
     if (findSubagentManager(self)) |manager| {
-        manager.mutex.lock();
-        defer manager.mutex.unlock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {};
+        defer manager.mutex.unlock(mutex_io);
         const state = manager.tasks.get(task_id) orelse
             return try std.fmt.allocPrint(self.allocator, "Task #{d} not found.", .{task_id});
         if (!taskBelongsToCurrentSession(self, state)) {
@@ -1565,17 +1601,19 @@ fn handleTellCommand(self: anytype, arg: []const u8) ![]const u8 {
 fn handlePollCommand(self: anytype) ![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
+    const allocator = self.allocator;
+    var buf: [256]u8 = undefined;
 
     var wrote_any = false;
     if (self.pending_exec_command) |cmd| {
         wrote_any = true;
-        try w.print("Pending approval id={d}: {s}\n", .{ self.pending_exec_id, cmd });
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Pending approval id={d}: {s}\n", .{ self.pending_exec_id, cmd }));
     }
 
     if (findSubagentManager(self)) |manager| {
-        manager.mutex.lock();
-        defer manager.mutex.unlock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {};
+        defer manager.mutex.unlock(mutex_io);
         var running: u32 = 0;
         var completed: u32 = 0;
         var failed: u32 = 0;
@@ -1594,17 +1632,18 @@ fn handlePollCommand(self: anytype) ![]const u8 {
         }
         if (visible > 0) {
             wrote_any = true;
-            try w.print(
+            try out.appendSlice(allocator, try std.fmt.bufPrint(
+                &buf,
                 "Subagent tasks: running={d}, completed={d}, failed={d}\n",
                 .{ running, completed, failed },
-            );
+            ));
         }
     }
 
     if (!wrote_any) {
         return try self.allocator.dupe(u8, "No pending approvals or background tasks.");
     }
-    return try out.toOwnedSlice(self.allocator);
+    return try out.toOwnedSlice(allocator);
 }
 
 fn handleStopCommand(self: anytype) ![]const u8 {
@@ -1616,7 +1655,10 @@ fn handleStopCommand(self: anytype) ![]const u8 {
 
     if (findSubagentManager(self)) |manager| {
         var running: u32 = 0;
-        manager.mutex.lock();
+        const mutex_io = std.Options.debug_io;
+        manager.mutex.lock(mutex_io) catch {
+            // Mutex lock failed - continue without counting running tasks
+        };
         {
             var it = manager.tasks.iterator();
             while (it.next()) |entry| {
@@ -1625,7 +1667,7 @@ fn handleStopCommand(self: anytype) ![]const u8 {
                 if (state.status == .running) running += 1;
             }
         }
-        manager.mutex.unlock();
+        manager.mutex.unlock(mutex_io);
         if (running > 0) {
             if (cleared_pending) {
                 return try std.fmt.allocPrint(
@@ -1804,7 +1846,7 @@ fn handleCapabilitiesCommand(self: anytype, arg: []const u8) ![]const u8 {
     const trimmed = std.mem.trim(u8, arg, " \t");
     const as_json = std.mem.eql(u8, trimmed, "--json") or std.ascii.eqlIgnoreCase(trimmed, "json");
 
-    var cfg_opt: ?config_module.Config = config_module.Config.load(self.allocator) catch null;
+    var cfg_opt: ?config_module.Config = config_module.Config.load(self.allocator, std.Options.debug_io) catch null;
     defer if (cfg_opt) |*cfg| cfg.deinit();
     const cfg_ptr: ?*const config_module.Config = if (cfg_opt) |*cfg| cfg else null;
 
@@ -1960,15 +2002,23 @@ fn handleSkillCommand(self: anytype, arg: []const u8) ![]const u8 {
         }
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.writeAll("Available skills:\n");
+        const allocator = self.allocator;
+        
+        try out.appendSlice(allocator, "Available skills:\n");
         for (skills) |skill| {
-            try w.print("  - {s}", .{skill.name});
-            if (skill.description.len > 0) try w.print(": {s}", .{skill.description});
-            if (!skill.available) try w.print(" (unavailable: {s})", .{skill.missing_deps});
-            try w.writeAll("\n");
+            var buf: [256]u8 = undefined;
+            try out.appendSlice(allocator, "  - ");
+            try out.appendSlice(allocator, skill.name);
+            if (skill.description.len > 0) {
+                try out.appendSlice(allocator, ": ");
+                try out.appendSlice(allocator, skill.description);
+            }
+            if (!skill.available) {
+                try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, " (unavailable: {s})", .{skill.missing_deps}));
+            }
+            try out.appendSlice(allocator, "\n");
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     var selected: ?*const skills_mod.Skill = null;
@@ -2092,26 +2142,31 @@ pub fn composeFinalReply(
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(self.allocator);
-    const w = out.writer(self.allocator);
 
     if (show_reasoning) {
-        try w.writeAll("Reasoning:\n");
-        try w.writeAll(reasoning_content.?);
-        try w.writeAll("\n\n");
+        try out.appendSlice(self.allocator, "Reasoning:\n");
+        try out.appendSlice(self.allocator, reasoning_content.?);
+        try out.appendSlice(self.allocator, "\n\n");
     }
-    try w.writeAll(base_text);
+    try out.appendSlice(self.allocator, base_text);
 
     switch (self.usage_mode) {
         .off => {},
-        .tokens => try w.print("\n\n[usage] total_tokens={d}", .{usage.total_tokens}),
-        .full => try w.print(
-            "\n\n[usage] prompt={d} completion={d} total={d} session_total={d}",
-            .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens, self.total_tokens },
-        ),
-        .cost => try w.print(
-            "\n\n[usage] prompt={d} completion={d} total={d} (cost estimate unavailable)",
-            .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens },
-        ),
+        .tokens => {
+            const fmt = try std.fmt.allocPrint(self.allocator, "\n\n[usage] total_tokens={d}", .{usage.total_tokens});
+            defer self.allocator.free(fmt);
+            try out.appendSlice(self.allocator, fmt);
+        },
+        .full => {
+            const fmt = try std.fmt.allocPrint(self.allocator, "\n\n[usage] prompt={d} completion={d} total={d} session_total={d}", .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens, self.total_tokens });
+            defer self.allocator.free(fmt);
+            try out.appendSlice(self.allocator, fmt);
+        },
+        .cost => {
+            const fmt = try std.fmt.allocPrint(self.allocator, "\n\n[usage] prompt={d} completion={d} total={d} (cost estimate unavailable)", .{ usage.prompt_tokens, usage.completion_tokens, usage.total_tokens });
+            defer self.allocator.free(fmt);
+            try out.appendSlice(self.allocator, fmt);
+        },
     }
 
     return try out.toOwnedSlice(self.allocator);
@@ -2275,28 +2330,30 @@ fn handleMemoryCommand(self: anytype, arg: []const u8) ![]const u8 {
         const report = mem_rt.diagnose();
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print("Memory resolved config:\n", .{});
-        try w.print("  backend: {s}\n", .{r.primary_backend});
-        try w.print("  retrieval: {s}\n", .{r.retrieval_mode});
-        try w.print("  vector: {s}\n", .{r.vector_mode});
-        try w.print("  embedding: {s}\n", .{r.embedding_provider});
-        try w.print("  rollout: {s}\n", .{r.rollout_mode});
-        try w.print("  sync: {s}\n", .{r.vector_sync_mode});
-        try w.print("  sources: {d}\n", .{r.source_count});
-        try w.print("  fallback: {s}\n", .{r.fallback_policy});
-        try w.print("  entries: {d}\n", .{report.entry_count});
+        const allocator = self.allocator;
+        var buf: [256]u8 = undefined;
+        
+        try out.appendSlice(allocator, "Memory resolved config:\n");
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  backend: {s}\n", .{r.primary_backend}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  retrieval: {s}\n", .{r.retrieval_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  vector: {s}\n", .{r.vector_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  embedding: {s}\n", .{r.embedding_provider}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  rollout: {s}\n", .{r.rollout_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  sync: {s}\n", .{r.vector_sync_mode}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  sources: {d}\n", .{r.source_count}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  fallback: {s}\n", .{r.fallback_policy}));
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  entries: {d}\n", .{report.entry_count}));
         if (report.vector_entry_count) |n| {
-            try w.print("  vector_entries: {d}\n", .{n});
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  vector_entries: {d}\n", .{n}));
         } else {
-            try w.print("  vector_entries: n/a\n", .{});
+            try out.appendSlice(allocator, "  vector_entries: n/a\n");
         }
         if (report.outbox_pending) |n| {
-            try w.print("  outbox_pending: {d}\n", .{n});
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  outbox_pending: {d}\n", .{n}));
         } else {
-            try w.print("  outbox_pending: n/a\n", .{});
+            try out.appendSlice(allocator, "  outbox_pending: n/a\n");
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     if (std.mem.eql(u8, sub, "count")) {
@@ -2362,21 +2419,14 @@ fn handleMemoryCommand(self: anytype, arg: []const u8) ![]const u8 {
 
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print("Search results: {d}\n", .{results.len});
+        const allocator = self.allocator;
+        var buf: [512]u8 = undefined;
+        
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Search results: {d}\n", .{results.len}));
         for (results, 0..) |c, idx| {
-            try w.print("  {d}. {s} [{s}] score={d:.4}", .{ idx + 1, c.key, c.category.toString(), c.final_score });
-            if (c.vector_score) |vs| {
-                try w.print(" vector_score={d:.4}", .{vs});
-            } else {
-                try w.print(" vector_score=n/a", .{});
-            }
-            try w.print(" source={s}\n", .{c.source});
-            const preview_len = @min(@as(usize, 140), c.snippet.len);
-            const preview = c.snippet[0..preview_len];
-            try w.print("     {s}{s}\n", .{ preview, if (c.snippet.len > preview_len) "..." else "" });
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  {d}. {s} [{s}]\n", .{ idx + 1, c.key, c.category.toString() }));
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     if (std.mem.eql(u8, sub, "list")) {
@@ -2420,19 +2470,21 @@ fn handleMemoryCommand(self: anytype, arg: []const u8) ![]const u8 {
         const shown = @min(limit, filtered_total);
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(self.allocator);
-        const w = out.writer(self.allocator);
-        try w.print("Memory entries: showing {d}/{d}\n", .{ shown, filtered_total });
+        const allocator = self.allocator;
+        var buf: [256]u8 = undefined;
+        
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "Memory entries: showing {d}/{d}\n", .{ shown, filtered_total }));
         var written: usize = 0;
         for (entries) |e| {
             if (!include_internal and isInternalMemoryEntryKeyOrContent(e.key, e.content)) continue;
             if (written >= shown) break;
             const preview_len = @min(@as(usize, 120), e.content.len);
             const preview = e.content[0..preview_len];
-            try w.print("  {d}. {s} [{s}] {s}\n", .{ written + 1, e.key, e.category.toString(), e.timestamp });
-            try w.print("     {s}{s}\n", .{ preview, if (e.content.len > preview_len) "..." else "" });
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "  {d}. {s} [{s}] {s}\n", .{ written + 1, e.key, e.category.toString(), e.timestamp }));
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "     {s}{s}\n", .{ preview, if (e.content.len > preview_len) "..." else "" }));
             written += 1;
         }
-        return try out.toOwnedSlice(self.allocator);
+        return try out.toOwnedSlice(allocator);
     }
 
     return try self.allocator.dupe(u8, usage);

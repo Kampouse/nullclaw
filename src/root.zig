@@ -5,6 +5,11 @@
 //!   hardware, health, heartbeat, memory, observability,
 //!   onboard, providers, security, skills, tools
 
+// Tracing system
+pub const trace = @import("trace.zig");
+pub const trace_simple = @import("trace_simple.zig");
+pub const profiling = @import("profiling.zig");
+
 // Shared utilities
 pub const json_util = @import("json_util.zig");
 pub const http_util = @import("http_util.zig");
@@ -35,6 +40,8 @@ pub const update = @import("update.zig");
 // Phase 2: Agent core
 pub const agent = @import("agent.zig");
 pub const session = @import("session.zig");
+pub const async_session = @import("async_session.zig");
+pub const session_git = @import("session_git.zig");
 pub const providers = @import("providers/root.zig");
 pub const memory = @import("memory/root.zig");
 
