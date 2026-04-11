@@ -4,6 +4,7 @@ const factory = @import("factory.zig");
 const ProviderHolder = factory.ProviderHolder;
 const reliable = @import("reliable.zig");
 const api_key = @import("api_key.zig");
+const secrets = @import("../security/secrets.zig");
 
 /// Runtime provider wiring with optional reliability wrapper.
 ///
@@ -26,15 +27,35 @@ pub const RuntimeProviderBundle = struct {
     reliable_entries: ?[]reliable.ProviderEntry = null,
     model_fallbacks: ?[]reliable.ModelFallbackEntry = null,
 
+    /// Decrypt an enc2:-prefixed API key using the machine-local SecretStore.
+    /// Passes plaintext keys through as-is. Returns null if key is null.
+    fn decryptKey(allocator: std.mem.Allocator, config_dir: []const u8, key: ?[]u8) !?[]u8 {
+        const k = key orelse return null;
+        const store = secrets.SecretStore.init(config_dir, true);
+        const decrypted = try store.decryptSecret(allocator, k);
+        return decrypted;
+    }
+
+    /// Derive the config directory from the config file path.
+    fn configDir(cfg: *const Config) []const u8 {
+        return std.fs.path.dirname(cfg.config_path) orelse ".";
+    }
+
     pub fn init(allocator: std.mem.Allocator, cfg: *const Config) !RuntimeProviderBundle {
         var bundle = RuntimeProviderBundle{ .allocator = allocator };
         errdefer bundle.deinit();
 
-        bundle.primary_key = api_key.resolveApiKeyFromConfig(
+        const cdir = configDir(cfg);
+
+        bundle.primary_key = try decryptKey(
             allocator,
-            cfg.default_provider,
-            cfg.providers,
-        ) catch null;
+            cdir,
+            api_key.resolveApiKeyFromConfig(
+                allocator,
+                cfg.default_provider,
+                cfg.providers,
+            ) catch null,
+        );
 
         const primary_holder = try allocator.create(ProviderHolder);
         bundle.primary_holder = primary_holder;
@@ -76,11 +97,15 @@ pub const RuntimeProviderBundle = struct {
             var extra_i: usize = 0;
 
             for (cfg.reliability.fallback_providers) |provider_name| {
-                const fb_key = api_key.resolveApiKeyFromConfig(
+                const fb_key = try decryptKey(
                     allocator,
-                    provider_name,
-                    cfg.providers,
-                ) catch null;
+                    cdir,
+                    api_key.resolveApiKeyFromConfig(
+                        allocator,
+                        provider_name,
+                        cfg.providers,
+                    ) catch null,
+                );
                 bundle.extra_keys.?[extra_i] = fb_key;
                 bundle.extra_holders.?[extra_i] = ProviderHolder.fromConfig(
                     allocator,
@@ -105,7 +130,11 @@ pub const RuntimeProviderBundle = struct {
                         if (std.mem.eql(u8, primary_key, trimmed)) continue;
                     }
 
-                    const key_copy = try allocator.dupe(u8, trimmed);
+                    const key_copy = try decryptKey(
+                        allocator,
+                        cdir,
+                        try allocator.dupe(u8, trimmed),
+                    );
                     bundle.extra_keys.?[extra_i] = key_copy;
                     bundle.extra_holders.?[extra_i] = ProviderHolder.fromConfig(
                         allocator,
