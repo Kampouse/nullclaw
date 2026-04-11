@@ -434,7 +434,7 @@ pub const AsyncSessionManager = struct {
             session.agent.stream_callback = prev_stream_callback;
             session.agent.stream_ctx = prev_stream_ctx;
             session.turn_count += 1;
-            session.last_active = @intCast(@divTrunc(util.nanoTimestamp(), 1_000_000_000));
+            session.last_active = @intCast(@divFloor(util.nanoTimestamp(), 1_000_000_000));
             // Copy new messages content while mutex is still held
             // This prevents race condition with syncHistoryToAgent clearing history
             var user_content: ?[]const u8 = null;
