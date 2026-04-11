@@ -22,6 +22,7 @@ pub const ChannelId = enum {
     onebot,
     maixcam,
     nostr,
+    nostr_public,
     web,
 };
 
@@ -61,6 +62,7 @@ pub const known_channels = [_]ChannelMeta{
     .{ .id = .onebot, .key = "onebot", .label = "OneBot", .configured_message = "OneBot configured", .listener_mode = .gateway_loop },
     .{ .id = .maixcam, .key = "maixcam", .label = "MaixCam", .configured_message = "MaixCam configured", .listener_mode = .send_only },
     .{ .id = .nostr, .key = "nostr", .label = "Nostr", .configured_message = "Nostr configured", .listener_mode = .gateway_loop },
+    .{ .id = .nostr_public, .key = "nostr_public", .label = "Nostr Public", .configured_message = "Nostr public feed configured", .listener_mode = .gateway_loop },
     .{ .id = .web, .key = "web", .label = "Web", .configured_message = "Web configured", .listener_mode = .gateway_loop },
 };
 
@@ -85,6 +87,7 @@ pub fn isBuildEnabled(channel_id: ChannelId) bool {
         .onebot => build_options.enable_channel_onebot,
         .maixcam => build_options.enable_channel_maixcam,
         .nostr => build_options.enable_channel_nostr,
+        .nostr_public => build_options.enable_channel_nostr_public,
         .web => build_options.enable_channel_web,
     };
 }
@@ -109,6 +112,7 @@ pub fn isBuildEnabledByKey(comptime key: []const u8) bool {
     if (comptime std.mem.eql(u8, key, "onebot")) return build_options.enable_channel_onebot;
     if (comptime std.mem.eql(u8, key, "maixcam")) return build_options.enable_channel_maixcam;
     if (comptime std.mem.eql(u8, key, "nostr")) return build_options.enable_channel_nostr;
+    if (comptime std.mem.eql(u8, key, "nostr_public")) return build_options.enable_channel_nostr_public;
     if (comptime std.mem.eql(u8, key, "web")) return build_options.enable_channel_web;
     return true;
 }
@@ -134,6 +138,7 @@ pub fn configuredCount(cfg: *const Config, channel_id: ChannelId) usize {
         .onebot => cfg.channels.onebot.len,
         .maixcam => cfg.channels.maixcam.len,
         .nostr => if (cfg.channels.nostr != null) 1 else 0,
+        .nostr_public => if (cfg.channels.nostr_public != null) 1 else 0,
         .web => cfg.channels.web.len,
     };
 }

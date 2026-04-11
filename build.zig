@@ -110,6 +110,7 @@ const ChannelSelection = struct {
     enable_channel_maixcam: bool = false,
     enable_channel_signal: bool = false,
     enable_channel_nostr: bool = false,
+    enable_channel_nostr_public: bool = false,
     enable_channel_web: bool = false,
 
     fn enableAll(self: *ChannelSelection) void {
@@ -131,6 +132,7 @@ const ChannelSelection = struct {
         self.enable_channel_maixcam = true;
         self.enable_channel_signal = true;
         self.enable_channel_nostr = true;
+        self.enable_channel_nostr_public = true;
         self.enable_channel_web = true;
     }
 };
@@ -201,6 +203,8 @@ fn parseChannelsOption(raw: []const u8) !ChannelSelection {
             selection.enable_channel_signal = true;
         } else if (std.mem.eql(u8, token, "nostr")) {
             selection.enable_channel_nostr = true;
+        } else if (std.mem.eql(u8, token, "nostr_public")) {
+            selection.enable_channel_nostr_public = true;
         } else if (std.mem.eql(u8, token, "web")) {
             selection.enable_channel_web = true;
         } else {
@@ -438,6 +442,7 @@ pub fn build(b: *std.Build) void {
     const enable_channel_maixcam = channels.enable_channel_maixcam;
     const enable_channel_signal = channels.enable_channel_signal;
     const enable_channel_nostr = channels.enable_channel_nostr;
+    const enable_channel_nostr_public = channels.enable_channel_nostr_public;
     const enable_channel_web = channels.enable_channel_web;
 
     const effective_enable_memory_sqlite = enable_sqlite and enable_memory_sqlite;
@@ -509,6 +514,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_channel_maixcam", enable_channel_maixcam);
     build_options.addOption(bool, "enable_channel_signal", enable_channel_signal);
     build_options.addOption(bool, "enable_channel_nostr", enable_channel_nostr);
+    build_options.addOption(bool, "enable_channel_nostr_public", enable_channel_nostr_public);
     build_options.addOption(bool, "enable_channel_web", enable_channel_web);
     build_options.addOption(bool, "enable_tracy", enable_tracy);
     const build_options_module = build_options.createModule();

@@ -660,6 +660,30 @@ pub const NostrConfig = struct {
     config_dir: []const u8 = ".",
 };
 
+/// Nostr public feed channel — listens to public notes and coordination events.
+/// Separate from NostrConfig (which handles DMs only).
+pub const NostrPublicConfig = struct {
+    /// enc2:-encrypted private key for signing replies.
+    /// Decrypted at runtime via SecretStore.
+    private_key: []const u8 = "",
+    /// Relay URLs for listening and publishing.
+    relays: []const []const u8 = &.{
+        "wss://nostr-relay-production.up.railway.app",
+    },
+    /// Which event kinds to listen to (default: public notes + coordination).
+    listen_kinds: []const u16 = &.{ 1, 7201, 7203, 7204 },
+    /// Only process notes containing at least one of these keywords (empty = all).
+    keywords: []const []const u8 = &.{},
+    /// Only process notes mentioning this display name (empty = no mention filter).
+    mention_name: []const u8 = "",
+    /// Only process notes from these pubkeys (empty = allow all senders).
+    allowed_pubkeys: []const []const u8 = &.{},
+    /// Path to the nak binary.
+    nak_path: []const u8 = "nak",
+    /// Directory containing the config file and .secret_key.
+    config_dir: []const u8 = ".",
+};
+
 pub const ChannelsConfig = struct {
     cli: bool = true,
     telegram: []const TelegramConfig = &.{},
@@ -681,6 +705,7 @@ pub const ChannelsConfig = struct {
     maixcam: []const MaixCamConfig = &.{},
     web: []const WebConfig = &.{},
     nostr: ?*NostrConfig = null,
+    nostr_public: ?*NostrPublicConfig = null,
 
     fn primaryAccount(comptime T: type, items: []const T) ?T {
         if (items.len == 0) return null;
