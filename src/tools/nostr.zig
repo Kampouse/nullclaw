@@ -34,6 +34,13 @@ const WELL_KNOWN_RELAYS = [_][]const u8{
     "wss://relay.spacetomatoes.net",
     "wss://dev.relay.stream",
     "wss://relay.nostrverse.net",
+    "wss://cdn.czas.xyz",
+    "wss://dm.czas.xyz",
+    "wss://relay.og.coop",
+    "wss://nostr.wine",
+    "wss://relay.44billion.net",
+    "wss://relay.cloistr.xyz",
+    "wss://henhouse.social/relay",
 };
 
 /// Relays confirmed to support NIP-50 full-text search.
@@ -57,6 +64,11 @@ const SEARCH_RELAYS = [_][]const u8{
     "wss://henhouse.social/relay",
     "wss://social.protest.net/relay",
     "wss://relay.nostrverse.net",
+    "wss://cdn.czas.xyz",
+    "wss://dm.czas.xyz",
+    "wss://relay.og.coop",
+    "wss://relay.44billion.net",
+    "wss://relay.cloistr.xyz",
 };
 
 pub const NostrTool = struct {
@@ -66,7 +78,7 @@ pub const NostrTool = struct {
     pub const tool_name = "nostr";
     pub const tool_description = "Native Nostr operations. Actions: post (kind 1 note), read (subscribe + fetch events from multiple relays, deduplicated), search (NIP-50 full-text search across relay events), profile (kind 0 metadata), react (kind 7 reaction). Supports full NIP-01 filters (kinds, authors, #p, #e, #t, since, until, limit). Uses direct WebSocket relay connections with BIP-340 Schnorr signing.";
     pub const tool_params =
-        \\{"type":"object","properties":{"action":{"type":"string","enum":["post","read","search","profile","react"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"}},"required":["action"]}
+        \\{"type":"object","properties":{"action":{"type":"string","enum":["post","read","search","profile","react"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"},"deep_search":{"type":"boolean","description":"For read/search: when true, fire all relays in parallel and return as soon as 5 respond with events. Default false returns after the first relay responds (fastest response wins)."}},"required":["action"]}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -171,16 +183,32 @@ pub const NostrTool = struct {
         relays: []const []const u8,
         /// One result per relay (written by worker, read after join).
         results: []RelayResult,
+        /// Set to true by main thread when enough results collected — workers should exit early.
+        stop_flag: std.atomic.Value(bool),
+        /// Number of workers that have finished (connected or failed).
+        completed_count: std.atomic.Value(usize),
+        /// Number of workers that returned at least 1 event.
+        event_count: std.atomic.Value(usize),
     };
 
     /// Worker thread function — queries a single relay and stores result.
+    /// Each thread owns its own `std.Io.Threaded` instance to avoid TLS
+    /// bus errors from concurrent access to the global singleton.
     fn relayQueryThread(ctx: *RelayQueryContext, relay_index: usize) void {
         const relay = ctx.relays[relay_index];
         const allocator = ctx.allocator;
 
-        var client = nostr.RelayClient.connect(allocator, relay) catch |err| {
+        // Create a per-thread Io instance for TLS handshake isolation.
+        var threaded = std.Io.Threaded.init(allocator, .{
+            .stack_size = 8 * 1024 * 1024,
+        });
+        defer threaded.deinit();
+        const io = threaded.io();
+
+        var client = nostr.RelayClient.connect(allocator, relay, io) catch |err| {
             const msg = std.fmt.allocPrint(allocator, "{s}: {}", .{ relay, err }) catch relay;
             ctx.results[relay_index] = .{ .relay = relay, .events = &.{}, .error_msg = msg };
+            _ = ctx.completed_count.fetchAdd(1, .monotonic);
             return;
         };
         defer client.deinit();
@@ -188,6 +216,7 @@ pub const NostrTool = struct {
         const sub_id = client.subscribe(ctx.filter_json) catch |err| {
             const msg = std.fmt.allocPrint(allocator, "{s}: subscribe {}", .{ relay, err }) catch relay;
             ctx.results[relay_index] = .{ .relay = relay, .events = &.{}, .error_msg = msg };
+            _ = ctx.completed_count.fetchAdd(1, .monotonic);
             return;
         };
         defer allocator.free(sub_id);
@@ -197,7 +226,7 @@ pub const NostrTool = struct {
         const start = util.nanoTimestamp();
         var eose_received = false;
 
-        while (!eose_received) {
+        while (!eose_received and !ctx.stop_flag.load(.monotonic)) {
             if (util.nanoTimestamp() - start > timeout_ns) break;
             const raw = client.readMessage() catch null orelse break;
             defer allocator.free(raw);
@@ -224,11 +253,23 @@ pub const NostrTool = struct {
             .events = events.items,
             .error_msg = null,
         };
+
+        // Update atomics — main thread polls these for early exit.
+        const had_events = events.items.len > 0;
+        _ = ctx.completed_count.fetchAdd(1, .monotonic);
+        if (had_events) {
+            _ = ctx.event_count.fetchAdd(1, .monotonic);
+        }
     }
 
     /// Query multiple relays in parallel, merge results, deduplicate by event ID.
-    /// Returns merged events (caller must free) and error messages.
-    fn queryRelaysParallel(allocator: std.mem.Allocator, relays: []const []const u8, filter_json: []const u8) !struct {
+    /// Each relay gets its own thread with a dedicated `std.Io.Threaded` instance
+    /// so TLS handshakes don't corrupt shared global Io state.
+    ///
+    /// When `min_results` > 0, returns as soon as that many relays have responded
+    /// with events (a "deep search" mode). Remaining workers are signalled to stop
+    /// via stop_flag. Set to 0 to wait for all relays (default).
+    fn queryRelaysParallel(allocator: std.mem.Allocator, relays: []const []const u8, filter_json: []const u8, min_results: usize) !struct {
         events: std.ArrayListUnmanaged(nostr.Event),
         errors: std.ArrayListUnmanaged(u8),
     } {
@@ -242,12 +283,52 @@ pub const NostrTool = struct {
             .filter_json = filter_json,
             .relays = relays,
             .results = results,
+            .stop_flag = std.atomic.Value(bool).init(false),
+            .completed_count = std.atomic.Value(usize).init(0),
+            .event_count = std.atomic.Value(usize).init(0),
         };
 
-        // Query relays sequentially (Zig 0.16 std.Io/TLS is not thread-safe
-        // for socket connections from spawned threads — bus error on TLS init).
+        // Spawn one thread per relay. Each thread creates its own Io.Threaded
+        // instance inside relayQueryThread for TLS isolation.
+        const threads = try allocator.alloc(std.Thread, relays.len);
+        defer allocator.free(threads);
+
         for (relays, 0..) |_, i| {
-            relayQueryThread(&ctx, i);
+            if (std.Thread.spawn(.{}, relayQueryThread, .{ &ctx, i })) |t| {
+                threads[i] = t;
+            } else |err| {
+                log.warn("failed to spawn thread for relay {d}: {}", .{ i, err });
+                // Run sequentially as fallback
+                relayQueryThread(&ctx, i);
+            }
+        }
+
+        // Wait loop: poll atomics until we have enough results or all done.
+        // When min_results is set, return early once N relays answer with events.
+        if (min_results > 0 and min_results < relays.len) {
+            while (true) {
+                const completed = ctx.completed_count.load(.monotonic);
+                const event_responders = ctx.event_count.load(.monotonic);
+                // Got enough relays with events — signal workers to stop
+                if (event_responders >= min_results) {
+                    log.info("deep search: {d}/{d} relays responded with events, stopping remaining", .{
+                        event_responders, min_results,
+                    });
+                    ctx.stop_flag.store(true, .monotonic);
+                    break;
+                }
+                // All relays finished (success or failure) — can't get more
+                if (completed >= relays.len) {
+                    break;
+                }
+                // Still waiting — yield CPU to let workers progress
+                std.Thread.yield() catch {};
+            }
+        }
+
+        // Join all threads (fast if stop_flag was set — workers exit their read loop).
+        for (threads) |t| {
+            t.join();
         }
 
         // Merge results, deduplicate by event ID
@@ -427,8 +508,10 @@ pub const NostrTool = struct {
         }) catch return ToolResult.fail("Failed to build filter JSON.");
         defer allocator.free(filter_json);
 
-        // Query all relays in parallel
-        const query_result = try queryRelaysParallel(allocator, relays, filter_json);
+        // Query all relays in parallel (deep_search: race to 5, default: race to 1)
+        const deep = root.getBool(args, "deep_search") orelse false;
+        const min_results: usize = if (deep) 5 else 1;
+        const query_result = try queryRelaysParallel(allocator, relays, filter_json, min_results);
         var all_events = query_result.events;
         defer { for (all_events.items) |ev| nostr.freeEvent(ev, allocator); all_events.deinit(allocator); }
         var relay_errors = query_result.errors;
@@ -513,8 +596,10 @@ pub const NostrTool = struct {
 
         log.info("searching for: {s}", .{query[0..@min(query.len, 80)]});
 
-        // Query all relays in parallel
-        const query_result = try queryRelaysParallel(allocator, relays, filter_json);
+        // Query all relays in parallel (deep_search: race to 5, default: race to 1)
+        const deep = root.getBool(args, "deep_search") orelse false;
+        const min_results: usize = if (deep) 5 else 1;
+        const query_result = try queryRelaysParallel(allocator, relays, filter_json, min_results);
         var all_events = query_result.events;
         defer { for (all_events.items) |ev| nostr.freeEvent(ev, allocator); all_events.deinit(allocator); }
         var relay_errors = query_result.errors;
@@ -656,7 +741,7 @@ pub const NostrTool = struct {
 
     fn publishToRelay(self: *NostrTool, allocator: std.mem.Allocator, relay: []const u8, event_json: []const u8) ?[]const u8 {
         _ = self;
-        var client = nostr.RelayClient.connect(allocator, relay) catch return null;
+        var client = nostr.RelayClient.connect(allocator, relay, null) catch return null;
         defer client.deinit();
 
         return client.publish(event_json) catch null;
