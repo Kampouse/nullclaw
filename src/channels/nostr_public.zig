@@ -183,14 +183,113 @@ pub const NostrPublicChannel = struct {
         return false;
     }
 
-    /// Check if the content mentions the configured display name.
-    fn passesMentionFilter(self: *const NostrPublicChannel, content: []const u8) bool {
+    /// Check if the event mentions us. Detects mentions in three standard formats:
+    ///   a) Text mention: `name` or `@name` (case-insensitive) in content
+    ///   b) NIP-01 p-tag: `"p","<our_hex_pubkey>"` in the event's tags
+    ///   c) NIP-19 npub mention: `npub1...` encoding our pubkey in content
+    fn passesMentionFilter(self: *NostrPublicChannel, content: []const u8, event_json: []const u8) bool {
         if (self.config.mention_name.len == 0) return true;
+
+        // (b) Check NIP-01 p-tags — if any p-tag matches our pubkey, always accept.
+        if (self.own_pubkey_hex) |own_pk| {
+            if (hasPTagMatchingPubkey(event_json, own_pk)) {
+                log.info("nostr_public: mention matched via p-tag (our pubkey)", .{});
+                return true;
+            }
+        }
+
+        // (a) Text mention: case-insensitive check for `name` or `@name`
         const lower_content = toLower(self.allocator, content) catch return true;
         defer self.allocator.free(lower_content);
         const lower_name = toLower(self.allocator, self.config.mention_name) catch return true;
         defer self.allocator.free(lower_name);
-        return std.mem.indexOf(u8, lower_content, lower_name) != null;
+        if (std.mem.indexOf(u8, lower_content, lower_name) != null) {
+            return true;
+        }
+        // Also check @name
+        if (std.fmt.allocPrint(self.allocator, "@{s}", .{lower_name})) |at_name| {
+            defer self.allocator.free(at_name);
+            if (std.mem.indexOf(u8, lower_content, at_name) != null) {
+                return true;
+            }
+        } else |_| {}
+
+        // (c) NIP-19 npub mention: check if our own npub1... prefix appears in content.
+        // We build the npub bech32 encoding of our pubkey and check for a prefix match.
+        if (self.own_pubkey_hex) |own_pk| {
+            if (own_pubkey_npub_prefix(own_pk)) |npub_prefix| {
+                if (std.mem.indexOf(u8, content, npub_prefix) != null) {
+                    log.info("nostr_public: mention matched via npub prefix in content", .{});
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// Check if any p-tag in the event JSON matches the given pubkey hex.
+    /// Scans for `"p","<hex64>"` patterns in the tags array.
+    fn hasPTagMatchingPubkey(event_json: []const u8, own_pubkey_hex: []const u8) bool {
+        // The tags array in JSON looks like: "tags":[["p","hex..."],["e","hex..."],...]
+        // We scan for the pattern "p","<64 hex chars>" after the tags key.
+        var search_from: usize = 0;
+        while (search_from < event_json.len) {
+            const idx = std.mem.indexOfPos(u8, event_json, search_from, "\"p\",\"") orelse return false;
+            // Advance past "p","
+            const val_start = idx + 5; // len of "\"p\",\""
+            if (val_start + own_pubkey_hex.len > event_json.len) return false;
+            const val = event_json[val_start .. val_start + own_pubkey_hex.len];
+            // The value should end with a quote
+            if (val_start + own_pubkey_hex.len < event_json.len and event_json[val_start + own_pubkey_hex.len] == '"') {
+                if (std.mem.eql(u8, val, own_pubkey_hex)) return true;
+            }
+            search_from = val_start;
+        }
+        return false;
+    }
+
+    /// Compute the first ~20 chars of the bech32 npub encoding of a hex pubkey.
+    /// Returns a pointer into a static buffer. Npub encoding: bech32 with HRP "npub",
+    /// data = 0x00 (version byte) || pubkey_bytes (33 bytes converted from x-only 32 bytes
+    /// by prepending 0x02 prefix). We only need enough prefix to uniquely match in content.
+    fn own_pubkey_npub_prefix(hex_pubkey: []const u8) ?[]const u8 {
+        if (hex_pubkey.len != 64) return null;
+        // Decode hex pubkey to bytes
+        const pk_bytes = nostr.hexDecodeFixed(32, hex_pubkey) catch return null;
+        // Build npub data: 1 version byte (0) + 32 pubkey bytes = 33 bytes
+        // Then convert to 5-bit groups and bech32 encode
+        // For a prefix match, we just need ~20 chars of the bech32 output
+        var data8: [33]u8 = undefined;
+        data8[0] = 0x00; // version byte for npub
+        @memcpy(data8[1..33], &pk_bytes);
+        // Convert 8-bit to 5-bit groups: 33 bytes -> ceil(33*8/5) = 53 five-bit groups
+        var data5: [53]u5 = undefined;
+        var acc: u32 = 0;
+        var bits: u5 = 0;
+        var di: usize = 0;
+        for (data8) |b| {
+            acc = (acc << 8) | b;
+            bits += 8;
+            while (bits >= 5) {
+                bits -= 5;
+                data5[di] = @intCast((acc >> bits) & 0x1F);
+                di += 1;
+            }
+        }
+        if (bits > 0) {
+            data5[di] = @intCast((acc << (5 - bits)) & 0x1F);
+            di += 1;
+        }
+        // Bech32 encode: "npub1" + 53 five-bit chars (no checksum needed for prefix match)
+        const bech32_charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+        // Build prefix: "npub1" + first 16 data chars = 21 chars (enough to match in content)
+        var buf: [21]u8 = undefined;
+        @memcpy(buf[0..5], "npub1");
+        for (0..16) |i| {
+            buf[5 + i] = bech32_charset[data5[i]];
+        }
+        return buf[0..21];
     }
 
     /// Check if the sender is in the allowed pubkeys list.
@@ -281,6 +380,67 @@ pub const NostrPublicChannel = struct {
         log.info("nostr_public: reader loop stopped", .{});
     }
 
+    /// Build metadata JSON with full event context (e-tags, p-tags, event_id, kind, full pubkey).
+    /// This gives the agent enough context to formulate proper replies with thread references.
+    fn buildEventMetadata(self: *NostrPublicChannel, event_json: []const u8, event_id: []const u8, kind: u16, sender_pubkey: []const u8) !?[]u8 {
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer buf.deinit(self.allocator);
+
+        try buf.appendSlice(self.allocator, "{\"event_id\":\"");
+        try buf.appendSlice(self.allocator, event_id);
+        try buf.appendSlice(self.allocator, "\",\"kind\":");
+        var int_buf: [20]u8 = undefined;
+        const kind_str = std.fmt.bufPrint(&int_buf, "{d}", .{kind}) catch unreachable;
+        try buf.appendSlice(self.allocator, kind_str);
+        try buf.appendSlice(self.allocator, ",\"sender\":\"");
+        try buf.appendSlice(self.allocator, sender_pubkey);
+        try buf.appendSlice(self.allocator, "\"");
+
+        // Extract e-tags (reply/thread references)
+        var e_tags_found: usize = 0;
+        try buf.appendSlice(self.allocator, ",\"reply_to\":[");
+        var search_from: usize = 0;
+        while (search_from < event_json.len) {
+            const idx = std.mem.indexOfPos(u8, event_json, search_from, "\"e\",\"") orelse break;
+            const val_start = idx + 5;
+            // Find closing quote for the event ID
+            const end_quote = std.mem.indexOfScalarPos(u8, event_json, val_start, '"') orelse break;
+            const e_id = event_json[val_start..end_quote];
+            if (e_id.len > 0) {
+                if (e_tags_found > 0) try buf.appendSlice(self.allocator, ",");
+                try buf.appendSlice(self.allocator, "\"");
+                try buf.appendSlice(self.allocator, e_id);
+                try buf.appendSlice(self.allocator, "\"");
+                e_tags_found += 1;
+            }
+            search_from = val_start;
+        }
+        try buf.appendSlice(self.allocator, "]");
+
+        // Extract p-tags (mentioned pubkeys)
+        var p_tags_found: usize = 0;
+        try buf.appendSlice(self.allocator, ",\"mentions\":[");
+        search_from = 0;
+        while (search_from < event_json.len) {
+            const idx = std.mem.indexOfPos(u8, event_json, search_from, "\"p\",\"") orelse break;
+            const val_start = idx + 5;
+            const end_quote = std.mem.indexOfScalarPos(u8, event_json, val_start, '"') orelse break;
+            const p_id = event_json[val_start..end_quote];
+            if (p_id.len > 0) {
+                if (p_tags_found > 0) try buf.appendSlice(self.allocator, ",");
+                try buf.appendSlice(self.allocator, "\"");
+                try buf.appendSlice(self.allocator, p_id);
+                try buf.appendSlice(self.allocator, "\"");
+                p_tags_found += 1;
+            }
+            search_from = val_start;
+        }
+        try buf.appendSlice(self.allocator, "]}");
+
+        const slice = try buf.toOwnedSlice(self.allocator);
+        return slice;
+    }
+
     /// Process a single event JSON from the relay.
     fn processEvent(self: *NostrPublicChannel, event_json: []const u8, eb: *bus.Bus) void {
         // Extract event ID for dedup.
@@ -354,8 +514,8 @@ pub const NostrPublicChannel = struct {
             log.info("nostr_public: DROP keyword filter — content: {s}", .{content[0..@min(content.len, 80)]});
             return;
         }
-        if (!self.passesMentionFilter(content)) {
-            log.info("nostr_public: DROP mention filter — '{s}' not found in content", .{self.config.mention_name});
+        if (!self.passesMentionFilter(content, event_json)) {
+            log.info("nostr_public: DROP mention filter — '{s}' not found in content/tags", .{self.config.mention_name});
             return;
         }
 
@@ -367,16 +527,27 @@ pub const NostrPublicChannel = struct {
         var session_buf: [83]u8 = undefined;
         const session_key = buildSessionKey(pubkey, &session_buf);
 
+        // Build metadata JSON with full event context for the agent.
+        const metadata_json: ?[]u8 = if (self.buildEventMetadata(event_json, event_id, kind, pubkey)) |md|
+            md
+        else |err| blk: {
+            log.warn("nostr_public: failed to build event metadata: {}", .{err});
+            break :blk null;
+        };
+
         // Build inbound message and publish to bus.
-        const msg = bus.makeInbound(
+        const msg = bus.makeInboundFull(
             self.allocator,
             "nostr_public",
             sender_display,
             pubkey, // chat_id = pubkey (for reply routing)
             content,
             session_key,
+            &[_][]const u8{}, // no media
+            metadata_json,
         ) catch |err| {
             log.warn("nostr_public: failed to create inbound message: {}", .{err});
+            if (metadata_json) |md| self.allocator.free(md);
             return;
         };
 
@@ -527,36 +698,106 @@ pub const NostrPublicChannel = struct {
 
     // ── Channel vtable ─────────────────────────────────────────────
 
+    /// Check if the .nostr_key file exists at config_dir/.nostr_key.
+    fn nostrKeyFileExists(config_dir: []const u8) bool {
+        var key_file_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const key_file_name = "/.nostr_key";
+        const path_total = @min(config_dir.len + key_file_name.len, key_file_path_buf.len);
+        @memcpy(key_file_path_buf[0..config_dir.len], config_dir);
+        @memcpy(key_file_path_buf[config_dir.len..][0..key_file_name.len], key_file_name);
+        const key_file_path = key_file_path_buf[0..path_total];
+        const io = std.Options.debug_io;
+        const file = std.Io.Dir.cwd().openFile(io, key_file_path, .{}) catch return false;
+        file.close(io);
+        return true;
+    }
+
+    /// Migrate an existing secret key (from config) to the encrypted .nostr_key file.
+    /// This encrypts the key and writes it so future starts use the encrypted file.
+    fn migrateKeyToNostrKeyFile(self: *NostrPublicChannel) !void {
+        const sk = self.secret_key_bytes orelse return;
+        const store = secrets.SecretStore.init(self.config.config_dir, true);
+        const sk_hex = nostr.hexEncode32(sk);
+        const io = std.Options.debug_io;
+
+        // Encrypt the hex secret
+        const encrypted = store.encryptSecret(self.allocator, &sk_hex) catch |err| {
+            log.warn("nostr_public: migration encrypt failed: {}", .{err});
+            return err;
+        };
+        defer self.allocator.free(encrypted);
+
+        // Build path
+        var key_file_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const key_file_name = "/.nostr_key";
+        const path_total = @min(self.config.config_dir.len + key_file_name.len, key_file_path_buf.len);
+        @memcpy(key_file_path_buf[0..self.config.config_dir.len], self.config.config_dir);
+        @memcpy(key_file_path_buf[self.config.config_dir.len..][0..key_file_name.len], key_file_name);
+        const key_file_path = key_file_path_buf[0..path_total];
+
+        // Write to file
+        const file = std.Io.Dir.cwd().createFile(io, key_file_path, .{}) catch |err| {
+            log.warn("nostr_public: migration write failed: {}", .{err});
+            return err;
+        };
+        defer file.close(io);
+        if (@import("builtin").os.tag != .windows) {
+            file.setPermissions(io, @enumFromInt(0o600)) catch {};
+        }
+        file.writeStreamingAll(io, encrypted) catch |err| {
+            log.warn("nostr_public: migration write content failed: {}", .{err});
+            return err;
+        };
+
+        log.info("nostr_public: migrated key from config to encrypted .nostr_key file", .{});
+    }
+
     fn vtableStart(ptr: *anyopaque) anyerror!void {
         const self: *NostrPublicChannel = @ptrCast(@alignCast(ptr));
 
-        // 1. Load secret key (priority: config > .nostr_key file > auto-generate).
-        if (self.secret_key_bytes == null and self.config.private_key.len > 0) {
-            // User-provided key takes priority.
-            const store = secrets.SecretStore.init(self.config.config_dir, true);
-            // Try hex decode first (raw 32-byte hex key without enc2: prefix).
-            if (self.config.private_key.len == 64) {
-                // Raw hex secret key (no encryption).
-                if (nostr.hexDecodeFixed(32, self.config.private_key)) |sk_bytes| {
-                    self.secret_key_bytes = sk_bytes;
-                } else |_| {
-                    log.warn("nostr_public: private_key is 64 chars but not valid hex, trying encrypted...", .{});
-                    // Try encrypted.
+        // 1. Load secret key.
+        // Priority: .nostr_key file (encrypted) > config private_key (with migration) > auto-generate.
+        if (self.secret_key_bytes == null) {
+            // Check if .nostr_key file exists first (encrypted, secure).
+            const nostr_key_exists = nostrKeyFileExists(self.config.config_dir);
+            if (nostr_key_exists) {
+                log.info("nostr_public: loading key from encrypted .nostr_key file", .{});
+                self.secret_key_bytes = loadOrGenerateKey(self.allocator, self.config.config_dir) catch |err| {
+                    log.err("nostr_public: failed to load .nostr_key: {}", .{err});
+                    return err;
+                };
+            } else if (self.config.private_key.len > 0) {
+                // No .nostr_key file but config has private_key — load from config.
+                log.info("nostr_public: loading key from config (plaintext), will migrate to .nostr_key", .{});
+                const store = secrets.SecretStore.init(self.config.config_dir, true);
+                // Try hex decode first (raw 32-byte hex key without enc2: prefix).
+                if (self.config.private_key.len == 64) {
+                    // Raw hex secret key (no encryption).
+                    if (nostr.hexDecodeFixed(32, self.config.private_key)) |sk_bytes| {
+                        self.secret_key_bytes = sk_bytes;
+                    } else |_| {
+                        log.warn("nostr_public: private_key is 64 chars but not valid hex, trying encrypted...", .{});
+                        // Try encrypted.
+                        const sec_str = try store.decryptSecret(self.allocator, self.config.private_key);
+                        defer self.allocator.free(sec_str);
+                        self.secret_key_bytes = nostr.hexDecodeFixed(32, sec_str) catch
+                            return error.InvalidSecretKey;
+                    }
+                } else {
+                    // Encrypted key (enc2:...).
                     const sec_str = try store.decryptSecret(self.allocator, self.config.private_key);
                     defer self.allocator.free(sec_str);
                     self.secret_key_bytes = nostr.hexDecodeFixed(32, sec_str) catch
                         return error.InvalidSecretKey;
                 }
+                // Migrate: save the loaded key to .nostr_key for future encrypted use.
+                self.migrateKeyToNostrKeyFile() catch |err| {
+                    log.warn("nostr_public: failed to migrate key to .nostr_key: {} — continuing with config key", .{err});
+                };
             } else {
-                // Encrypted key (enc2:...).
-                const sec_str = try store.decryptSecret(self.allocator, self.config.private_key);
-                defer self.allocator.free(sec_str);
-                self.secret_key_bytes = nostr.hexDecodeFixed(32, sec_str) catch
-                    return error.InvalidSecretKey;
+                // Neither .nostr_key nor config key — auto-generate.
+                self.secret_key_bytes = try loadOrGenerateKey(self.allocator, self.config.config_dir);
             }
-        } else if (self.secret_key_bytes == null) {
-            // No key in config — try loading from .nostr_key file, or auto-generate.
-            self.secret_key_bytes = try loadOrGenerateKey(self.allocator, self.config.config_dir);
         }
 
         // 2. Derive own pubkey for self-echo filtering.
@@ -575,7 +816,7 @@ pub const NostrPublicChannel = struct {
 
         const relay_url = self.config.relays[0];
         log.info("nostr_public: connecting to relay {s}...", .{relay_url});
-        const relay = nostr.RelayClient.connect(self.allocator, relay_url, null) catch |err| {
+        const relay = nostr.RelayClient.connect(self.allocator, relay_url) catch |err| {
             log.err("nostr_public: relay connect failed: {}", .{err});
             return err;
         };
@@ -690,7 +931,7 @@ pub const NostrPublicChannel = struct {
 
         // Connect, publish, disconnect (one-shot per send).
         // TODO: keep a persistent relay for publishing too.
-        var pub_relay = nostr.RelayClient.connect(self.allocator, self.config.relays[0], null) catch |err| {
+        var pub_relay = nostr.RelayClient.connect(self.allocator, self.config.relays[0]) catch |err| {
             log.err("nostr_public: publish relay connect failed: {}", .{err});
             return err;
         };

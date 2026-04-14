@@ -1,10 +1,14 @@
 // Nostr Tool — native Nostr operations for the agent.
 //
 // Actions:
-//   post    — Publish a kind 1 text note to relay(s)
-//   read    — Subscribe to relay(s) and read events matching filters
-//   profile — Publish a kind 0 metadata event (name, about, picture)
-//   react   — Publish a kind 7 reaction to an event
+//   post           — Publish a kind 1 text note to relay(s)
+//   read           — Subscribe to relay(s) and read events matching filters
+//   search         — NIP-50 full-text search across relay events
+//   profile        — Publish a kind 0 metadata event (name, about, picture)
+//   react          — Publish a kind 7 reaction to an event
+//   channel_create — NIP-28: Create a channel (kind 40)
+//   channel_send   — NIP-28: Send a message to a channel (kind 42)
+//   channel_read   — NIP-28: Read messages from a channel (kinds 41, 42)
 //
 // Uses BIP-340 Schnorr signing + WebSocket relay connections — zero nak dependency.
 
@@ -76,9 +80,9 @@ pub const NostrTool = struct {
     allocator: std.mem.Allocator,
 
     pub const tool_name = "nostr";
-    pub const tool_description = "Native Nostr operations. Actions: post (kind 1 note), read (subscribe + fetch events from multiple relays, deduplicated), search (NIP-50 full-text search across relay events), profile (kind 0 metadata), react (kind 7 reaction). Supports full NIP-01 filters (kinds, authors, #p, #e, #t, since, until, limit). Uses direct WebSocket relay connections with BIP-340 Schnorr signing.";
+    pub const tool_description = "Native Nostr operations. Actions: post (kind 1 note), read (subscribe + fetch events from multiple relays, deduplicated), search (NIP-50 full-text search across relay events), profile (kind 0 metadata), react (kind 7 reaction), channel_create (NIP-28 create channel, kind 40), channel_send (NIP-28 send message to channel, kind 42), channel_read (NIP-28 read channel messages, kinds 41/42). Supports full NIP-01 filters (kinds, authors, #p, #e, #t, since, until, limit). Uses direct WebSocket relay connections with BIP-340 Schnorr signing.";
     pub const tool_params =
-        \\{"type":"object","properties":{"action":{"type":"string","enum":["post","read","search","profile","react"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"},"deep_search":{"type":"boolean","description":"For read/search: when true, fire all relays in parallel and return as soon as 5 respond with events. Default false returns after the first relay responds (fastest response wins)."}},"required":["action"]}
+        \\{"type":"object","properties":{"action":{"type":"string","enum":["post","read","search","profile","react","channel_create","channel_send","channel_read"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react/channel_send"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"},"deep_search":{"type":"boolean","description":"For read/search: when true, fire all relays in parallel and return as soon as 5 respond with events. Default false returns after the first relay responds (fastest response wins)."},"name":{"type":"string","description":"For channel_create: channel name"},"about":{"type":"string","description":"For channel_create: channel description/about text"},"channel_id":{"type":"string","description":"For channel_send/channel_read: event ID of the kind 40 channel creation event"}},"required":["action"]}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -162,8 +166,16 @@ pub const NostrTool = struct {
         } else if (std.mem.eql(u8, action, "react")) {
             if (!has_sk) return ToolResult.fail("Private key required for reactions. Provide 'private_key' parameter or configure channels.nostr_public.private_key.");
             return self.actionReact(allocator, sk_buf, relay_urls.items, args);
+        } else if (std.mem.eql(u8, action, "channel_create")) {
+            if (!has_sk) return ToolResult.fail("Private key required for channel creation. Provide 'private_key' parameter or configure channels.nostr_public.private_key.");
+            return self.actionChannelCreate(allocator, sk_buf, relay_urls.items, args);
+        } else if (std.mem.eql(u8, action, "channel_send")) {
+            if (!has_sk) return ToolResult.fail("Private key required for channel messages. Provide 'private_key' parameter or configure channels.nostr_public.private_key.");
+            return self.actionChannelSend(allocator, sk_buf, relay_urls.items, args);
+        } else if (std.mem.eql(u8, action, "channel_read")) {
+            return self.actionChannelRead(allocator, relay_urls.items, args);
         } else {
-            return ToolResult.fail("Unknown action. Use: post, read, profile, react.");
+            return ToolResult.fail("Unknown action. Use: post, read, search, profile, react, channel_create, channel_send, channel_read.");
         }
     }
 
@@ -499,7 +511,7 @@ pub const NostrTool = struct {
             return ToolResult.fail("Failed to serialize event.");
         defer allocator.free(event_json);
 
-        const pk_hex = nostr.hexEncode32(kp.public_key);
+        const event_id_hex = nostr.hexEncode32(event.id);
         log.info("posting note: {s}...", .{content[0..@min(content.len, 50)]});
 
         var results: std.ArrayListUnmanaged(u8) = .empty;
@@ -511,7 +523,7 @@ pub const NostrTool = struct {
             }
         }.print;
         try w(&results, allocator, "Posted kind 1 note\n", .{});
-        try w(&results, allocator, "Event ID: {s}\n", .{&pk_hex});
+        try w(&results, allocator, "Event ID: {s}\n", .{&event_id_hex});
         try w(&results, allocator, "Relays:\n", .{});
 
         for (relays) |relay| {
@@ -799,6 +811,235 @@ pub const NostrTool = struct {
             } else {
                 try w(&results, allocator, "FAILED\n", .{});
             }
+        }
+
+        return ToolResult.okAlloc(allocator, results.items);
+    }
+
+    fn actionChannelCreate(self: *NostrTool, allocator: std.mem.Allocator, sk: [32]u8, relays: []const []const u8, args: JsonObjectMap) !ToolResult {
+        const name = root.getString(args, "name") orelse
+            return ToolResult.fail("Missing 'name' parameter for channel_create.");
+        const about = root.getString(args, "about") orelse "";
+
+        const kp = nostr.keyPairFromSecret(sk) catch
+            return ToolResult.fail("Invalid private key (must be a valid secp256k1 scalar).");
+
+        // Build content: name + about if provided
+        const content = if (about.len > 0)
+            try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ name, about })
+        else
+            name;
+
+        const now = util.timestampUnix();
+        var event: nostr.Event = .{
+            .id = [_]u8{0} ** 32,
+            .pubkey = kp.public_key,
+            .created_at = now,
+            .kind = 40,
+            .tags = &.{},
+            .content = content,
+            .sig = [_]u8{0} ** 64,
+        };
+        nostr.signEvent(&event, sk, allocator) catch
+            return ToolResult.fail("Failed to sign channel creation event.");
+
+        const event_json = nostr.eventToJson(event, allocator) catch
+            return ToolResult.fail("Failed to serialize event.");
+        defer allocator.free(event_json);
+
+        if (about.len > 0) allocator.free(content);
+
+        const event_id_hex = nostr.hexEncode32(event.id);
+        log.info("creating channel: {s}", .{name});
+
+        var results: std.ArrayListUnmanaged(u8) = .empty;
+        const w = struct {
+            fn print(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, ap: anytype) !void {
+                const line = try std.fmt.allocPrint(alloc, fmt, ap);
+                defer alloc.free(line);
+                try buf.appendSlice(alloc, line);
+            }
+        }.print;
+        try w(&results, allocator, "Created channel (kind 40)\n", .{});
+        try w(&results, allocator, "Channel ID: {s}\n", .{&event_id_hex});
+        try w(&results, allocator, "Name: {s}\n", .{name});
+        try w(&results, allocator, "Relays:\n", .{});
+
+        for (relays) |relay| {
+            try w(&results, allocator, "  {s}: ", .{relay});
+            const result = self.publishToRelay(allocator, relay, event_json);
+            if (result) |resp| {
+                defer allocator.free(resp);
+                try w(&results, allocator, "{s}\n", .{resp[0..@min(resp.len, 100)]});
+            } else {
+                try w(&results, allocator, "FAILED\n", .{});
+            }
+        }
+
+        return ToolResult.okAlloc(allocator, results.items);
+    }
+
+    fn actionChannelSend(self: *NostrTool, allocator: std.mem.Allocator, sk: [32]u8, relays: []const []const u8, args: JsonObjectMap) !ToolResult {
+        const channel_id = root.getString(args, "channel_id") orelse
+            return ToolResult.fail("Missing 'channel_id' parameter for channel_send.");
+        const content = root.getString(args, "content") orelse
+            return ToolResult.fail("Missing 'content' parameter for channel_send.");
+
+        const kp = nostr.keyPairFromSecret(sk) catch
+            return ToolResult.fail("Invalid private key (must be a valid secp256k1 scalar).");
+
+        const now = util.timestampUnix();
+
+        // Build e-tag: ["e", "<channel_id>", "", "root"]
+        const e_tag_fields = try allocator.alloc([]const u8, 4);
+        e_tag_fields[0] = try allocator.dupe(u8, "e");
+        e_tag_fields[1] = try allocator.dupe(u8, channel_id);
+        e_tag_fields[2] = try allocator.dupe(u8, "");
+        e_tag_fields[3] = try allocator.dupe(u8, "root");
+        const e_tag = nostr.Tag{ .fields = e_tag_fields };
+
+        var event: nostr.Event = .{
+            .id = [_]u8{0} ** 32,
+            .pubkey = kp.public_key,
+            .created_at = now,
+            .kind = 42,
+            .tags = &.{e_tag},
+            .content = content,
+            .sig = [_]u8{0} ** 64,
+        };
+        nostr.signEvent(&event, sk, allocator) catch
+            return ToolResult.fail("Failed to sign channel message event.");
+
+        const event_json = nostr.eventToJson(event, allocator) catch
+            return ToolResult.fail("Failed to serialize event.");
+        defer allocator.free(event_json);
+
+        // Cleanup e-tag
+        for (e_tag_fields) |f| allocator.free(f);
+        allocator.free(e_tag_fields);
+
+        log.info("sending message to channel {s}: {s}", .{ channel_id[0..@min(channel_id.len, 16)], content[0..@min(content.len, 50)] });
+
+        var results: std.ArrayListUnmanaged(u8) = .empty;
+        const w = struct {
+            fn print(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, ap: anytype) !void {
+                const line = try std.fmt.allocPrint(alloc, fmt, ap);
+                defer alloc.free(line);
+                try buf.appendSlice(alloc, line);
+            }
+        }.print;
+        try w(&results, allocator, "Sent message to channel (kind 42)\n", .{});
+        try w(&results, allocator, "Channel ID: {s}\n", .{channel_id});
+        try w(&results, allocator, "Relays:\n", .{});
+
+        for (relays) |relay| {
+            try w(&results, allocator, "  {s}: ", .{relay});
+            const result = self.publishToRelay(allocator, relay, event_json);
+            if (result) |resp| {
+                defer allocator.free(resp);
+                try w(&results, allocator, "{s}\n", .{resp[0..@min(resp.len, 100)]});
+            } else {
+                try w(&results, allocator, "FAILED\n", .{});
+            }
+        }
+
+        return ToolResult.okAlloc(allocator, results.items);
+    }
+
+    fn actionChannelRead(self: *NostrTool, allocator: std.mem.Allocator, relays: []const []const u8, args: JsonObjectMap) !ToolResult {
+        _ = self;
+
+        const channel_id = root.getString(args, "channel_id") orelse
+            return ToolResult.fail("Missing 'channel_id' parameter for channel_read.");
+
+        const limit: u32 = if (root.getInt(args, "filter_limit")) |l|
+            @intCast(l)
+        else
+            50;
+
+        // Build filter: {"kinds": [41, 42], "#e": ["<channel_id>"], "limit": <limit>}
+        const filter_json = nostr.buildFilter(allocator, .{
+            .kinds = &[_]u16{ 41, 42 },
+            .e_tags = &[_][]const u8{channel_id},
+            .limit = limit,
+        }) catch return ToolResult.fail("Failed to build channel filter JSON.");
+        defer allocator.free(filter_json);
+
+        log.info("reading channel {s} (limit={d})", .{ channel_id[0..@min(channel_id.len, 16)], limit });
+
+        // Query all relays in parallel (race to 1)
+        const query_result = try queryRelaysParallel(allocator, relays, filter_json, 1);
+        var all_events = query_result.events;
+        defer {
+            for (all_events.items) |ev| nostr.freeEvent(ev, allocator);
+            all_events.deinit(allocator);
+        }
+        var relay_errors = query_result.errors;
+        defer relay_errors.deinit(allocator);
+
+        // Sort by created_at ascending (oldest first for chat history)
+        std.mem.sort(nostr.Event, all_events.items, {}, struct {
+            fn lessThan(_: void, a: nostr.Event, b: nostr.Event) bool {
+                return a.created_at < b.created_at;
+            }
+        }.lessThan);
+
+        // Format output with channel-specific formatting
+        var results: std.ArrayListUnmanaged(u8) = .empty;
+        const w = struct {
+            fn print(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, ap: anytype) !void {
+                const line = try std.fmt.allocPrint(alloc, fmt, ap);
+                defer alloc.free(line);
+                try buf.appendSlice(alloc, line);
+            }
+            fn writeAll(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, data: []const u8) !void {
+                try buf.appendSlice(alloc, data);
+            }
+        };
+
+        try w.print(&results, allocator, "Channel {s} — {d} messages from {d} relay(s)\n", .{
+            channel_id[0..@min(channel_id.len, 20)],
+            all_events.items.len,
+            relays.len,
+        });
+        if (relay_errors.items.len > 0) {
+            try w.writeAll(&results, allocator, "Errors: ");
+            try w.writeAll(&results, allocator, relay_errors.items);
+            try w.writeAll(&results, allocator, "\n");
+        }
+        try w.writeAll(&results, allocator, "\n");
+
+        for (all_events.items, 0..) |ev, i| {
+            const pk_hex = nostr.hexEncode32(ev.pubkey);
+            const ago = util.timestampUnix() - ev.created_at;
+            if (ev.kind == 42) {
+                // Channel message
+                try w.print(&results, allocator, "[{d}] <{s}> {d}s ago\n", .{
+                    i + 1, pk_hex[0..12], ago,
+                });
+                const display_len = @min(ev.content.len, 300);
+                try w.writeAll(&results, allocator, "    ");
+                try w.writeAll(&results, allocator, ev.content[0..display_len]);
+                if (ev.content.len > 300) try w.writeAll(&results, allocator, "...");
+                try w.writeAll(&results, allocator, "\n\n");
+            } else if (ev.kind == 41) {
+                // Channel metadata update
+                try w.print(&results, allocator, "[{d}] [metadata] <{s}> {d}s ago\n", .{
+                    i + 1, pk_hex[0..12], ago,
+                });
+                const display_len = @min(ev.content.len, 200);
+                try w.writeAll(&results, allocator, "    ");
+                try w.writeAll(&results, allocator, ev.content[0..display_len]);
+                if (ev.content.len > 200) try w.writeAll(&results, allocator, "...");
+                try w.writeAll(&results, allocator, "\n\n");
+            }
+        }
+
+        if (all_events.items.len == 0) {
+            try w.writeAll(&results, allocator, "No messages found in channel.\n");
+            log.info("channel read returned 0 events", .{});
+        } else {
+            log.info("channel read returned {} events", .{all_events.items.len});
         }
 
         return ToolResult.okAlloc(allocator, results.items);
