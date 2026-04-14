@@ -3,14 +3,16 @@ const Allocator = std.mem.Allocator;
 const config_types = @import("../config_types.zig");
 const bus = @import("../bus.zig");
 const secrets = @import("../security/secrets.zig");
+const util = @import("../util.zig");
+const nostr = @import("../nostr.zig");
 
-const io = std.Options.debug_io;
 const log = std.log.scoped(.nostr_public);
 
 /// Nostr public feed channel — listens to public notes and coordination events,
 /// routing them into the agent's event bus as primary input context.
 ///
-/// Unlike the nostr channel (DMs only, NIP-17/NIP-04), this handles:
+/// Uses native WebSocket relay client (nostr.zig + websocket.zig) instead of
+/// shelling out to nak. Supports:
 /// - Kind 1: public text notes (mentions, replies)
 /// - Kinds 7201, 7203, 7204: agent coordination events (dispatch, result, claim)
 ///
@@ -18,13 +20,15 @@ const log = std.log.scoped(.nostr_public);
 pub const NostrPublicChannel = struct {
     allocator: Allocator,
     config: config_types.NostrPublicConfig,
-    /// Decrypted private key for signing. Zeroed before free.
-    signing_sec: ?[]u8,
-    /// nak req --stream subprocess for listening to relay events.
-    listener: ?std.process.Child,
+    /// Raw 32-byte secret key for signing (heap, zeroed before free).
+    secret_key_bytes: ?[32]u8,
+    /// Derived public key hex (for self-echo filtering).
+    own_pubkey_hex: ?[]u8,
+    /// Native relay client for listening.
+    relay: ?nostr.RelayClient,
     /// Event bus for publishing inbound messages to the agent.
     event_bus: ?*bus.Bus,
-    /// Reader thread that processes incoming events from the listener subprocess.
+    /// Reader thread that processes incoming events from the relay.
     reader_thread: ?std.Thread,
     /// Atomic flag to signal the reader thread to stop.
     running: std.atomic.Value(bool),
@@ -32,32 +36,42 @@ pub const NostrPublicChannel = struct {
     seen_ids: std.StringHashMapUnmanaged(void),
     /// Whether the channel has been started.
     started: bool,
+    /// Map of sender pubkey -> last inbound event_id, for reply threading (e-tag).
+    last_event_ids: std.StringHashMapUnmanaged([]u8),
 
     pub fn init(allocator: Allocator, config: config_types.NostrPublicConfig) NostrPublicChannel {
         return .{
             .allocator = allocator,
             .config = config,
-            .signing_sec = null,
-            .listener = null,
+            .secret_key_bytes = null,
+            .own_pubkey_hex = null,
+            .relay = null,
             .event_bus = null,
             .reader_thread = null,
             .running = std.atomic.Value(bool).init(false),
             .seen_ids = .empty,
             .started = false,
+            .last_event_ids = .empty,
         };
     }
 
     pub fn initFromConfig(allocator: Allocator, config: config_types.NostrPublicConfig) NostrPublicChannel {
+        // Debug: log parsed listen_kinds to catch u16 parsing bugs
+        std.log.info("nostr_public: listen_kinds.len={}, kinds={any}", .{
+            config.listen_kinds.len,
+            config.listen_kinds,
+        });
         return init(allocator, config);
     }
 
     pub fn deinit(self: *NostrPublicChannel) void {
         self.running.store(false, .release);
-        self.stopListener();
+        // Join reader before closing relay — same race as vtableStop.
         if (self.reader_thread) |t| {
             t.join();
             self.reader_thread = null;
         }
+        self.stopRelay();
 
         // Free seen_ids keys.
         var it = self.seen_ids.keyIterator();
@@ -66,89 +80,59 @@ pub const NostrPublicChannel = struct {
         }
         self.seen_ids.deinit(self.allocator);
 
-        // Zero and free signing credential.
-        if (self.signing_sec) |sec| {
-            @memset(sec, 0);
-            self.allocator.free(sec);
-            self.signing_sec = null;
+        // Zero and free secret key.
+        if (self.secret_key_bytes) |*sk| {
+            @memset(sk, 0);
+            self.secret_key_bytes = null;
         }
+
+        // Free own pubkey hex.
+        if (self.own_pubkey_hex) |pk| {
+            self.allocator.free(pk);
+            self.own_pubkey_hex = null;
+        }
+
+        // Free last_event_ids.
+        var it2 = self.last_event_ids.iterator();
+        while (it2.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.last_event_ids.deinit(self.allocator);
     }
 
     // ── Constants ──────────────────────────────────────────────────
 
-    const MAX_RELAYS = 10;
+    /// Max event IDs to track for dedup before clearing the set.
+    /// At ~100 bytes/event, this caps memory at ~1MB.
+    const MAX_SEEN_IDS: usize = 10_000;
 
-    // ── Listener args ──────────────────────────────────────────────
+    // ── Relay lifecycle ────────────────────────────────────────────
 
-    /// Build listener args at runtime with formatted kind numbers.
-    /// Returns a slice of string pointers (no nulls) suitable for std.process.spawn.
-    fn buildListenerArgsRuntime(self: *const NostrPublicChannel) Allocator.Error![]const []const u8 {
-        // Count: nak + req + --stream + 2 per kind + relays
-        const total = 3 + 2 * self.config.listen_kinds.len + self.config.relays.len;
-        const args = try self.allocator.alloc([]const u8, total);
-        var i: usize = 0;
-        args[i] = self.config.nak_path; i += 1;
-        args[i] = "req"; i += 1;
-        args[i] = "--stream"; i += 1;
-        for (self.config.listen_kinds) |kind| {
-            const kind_str = try std.fmt.allocPrint(self.allocator, "{d}", .{kind});
-            args[i] = "-k"; i += 1;
-            args[i] = kind_str; i += 1;
-        }
-        for (self.config.relays) |relay| {
-            args[i] = relay; i += 1;
-        }
-        return args[0..i];
-    }
-
-    /// Build argv for `nak event -k 1 --sec <sec> -t p=<pubkey> -c <content> <relays...>`.
-    fn buildSendArgs(
-        self: *NostrPublicChannel,
-        recipient_pubkey: []const u8,
-        content: []const u8,
-    ) ![]const []const u8 {
-        // nak event -k 1 --sec <sec> -t p=<hex> -c <content> <relays...>
-        const sec = self.signing_sec orelse return error.NoSigningKey;
-        const total = 3 + 2 + 2 + 2 + self.config.relays.len;
-        const args = try self.allocator.alloc([]const u8, total);
-        var i: usize = 0;
-
-        args[i] = self.config.nak_path; i += 1;
-        args[i] = "event"; i += 1;
-        args[i] = "-k"; i += 1;
-        args[i] = "1"; i += 1;
-        args[i] = "--sec"; i += 1;
-        args[i] = sec; i += 1;
-        args[i] = "-t"; i += 1;
-        const p_tag = try std.fmt.allocPrint(self.allocator, "p={s}", .{recipient_pubkey});
-        args[i] = p_tag; i += 1;
-        args[i] = "-c"; i += 1;
-        args[i] = content; i += 1;
-        for (self.config.relays) |relay| {
-            args[i] = relay; i += 1;
-        }
-        return args[0..i];
-    }
-
-    // ── Listener lifecycle ─────────────────────────────────────────
-
-    fn stopListener(self: *NostrPublicChannel) void {
-        if (self.listener) |*child| {
-            child.kill(io);
-            _ = child.wait(io) catch {};
-            self.listener = null;
+    fn stopRelay(self: *NostrPublicChannel) void {
+        if (self.relay) |*r| {
+            r.deinit();
+            self.relay = null;
         }
     }
 
     // ── JSON parsing helpers ───────────────────────────────────────
 
-    /// Extract a JSON string value given a prefix like `"key":"`.
+    /// Extract a JSON string value given a prefix like `\"key\":\"`.
     fn extractJsonString(json: []const u8, prefix: []const u8) ?[]const u8 {
         const start_idx = (std.mem.indexOf(u8, json, prefix) orelse return null) + prefix.len;
         var i: usize = start_idx;
         while (i < json.len) {
             if (json[i] == '\\') {
-                i += 2;
+                if (i + 1 < json.len) {
+                    if (json[i + 1] == 'u' and i + 6 <= json.len) {
+                        i += 6;
+                    } else {
+                        i += 2;
+                    }
+                } else {
+                    i += 1;
+                }
                 continue;
             }
             if (json[i] == '"') {
@@ -189,7 +173,6 @@ pub const NostrPublicChannel = struct {
     /// Check if the content passes keyword filtering.
     fn passesKeywordFilter(self: *const NostrPublicChannel, content: []const u8) bool {
         if (self.config.keywords.len == 0) return true;
-        // Case-insensitive search for any keyword
         const lower_content = toLower(self.allocator, content) catch return true;
         defer self.allocator.free(lower_content);
         for (self.config.keywords) |keyword| {
@@ -242,67 +225,139 @@ pub const NostrPublicChannel = struct {
     // ── Reader loop ────────────────────────────────────────────────
 
     fn readerLoop(self: *NostrPublicChannel) void {
-        defer self.running.store(false, .release);
-        const stdout_file = if (self.listener) |*l| (l.stdout orelse return) else return;
-        const eb = self.event_bus orelse return;
+        defer {
+            log.warn("nostr_public: reader loop exiting", .{});
+            self.running.store(false, .release);
+        }
+        const eb = self.event_bus orelse {
+            log.warn("nostr_public: reader loop — event_bus is null", .{});
+            return;
+        };
 
-        var buf: [65536]u8 = undefined;
-        var filled: usize = 0;
-        var reader_buf: [4096]u8 = undefined;
-        var reader = stdout_file.reader(io, &reader_buf);
+        log.info("nostr_public: reader loop started — native websocket mode", .{});
 
         while (self.running.load(.acquire)) {
-            var dest: [1][]u8 = .{buf[filled..]};
-            const n = reader.interface.readVec(dest[0..]) catch break;
-            if (n == 0) break; // EOF
-            filled += n;
+            // readMessage returns null on close/error.
+            const raw = self.relay.?.readMessage() catch |err| {
+                log.warn("nostr_public: readMessage error: {}", .{err});
+                break;
+            } orelse {
+                log.info("nostr_public: relay connection closed", .{});
+                break;
+            };
+            defer self.allocator.free(raw);
 
-            // Process complete lines.
-            var start: usize = 0;
-            while (std.mem.indexOfPos(u8, buf[0..filled], start, "\n")) |nl| {
-                const line = buf[start..nl];
-                start = nl + 1;
-                if (line.len == 0) continue;
-                self.processLine(line, eb);
+            // Parse the relay message to check type.
+            const msg = nostr.parseRelayMessage(self.allocator, raw) catch {
+                log.warn("nostr_public: failed to parse relay message ({d} bytes)", .{raw.len});
+                continue;
+            };
+            defer {
+                if (msg.event_json) |ej| self.allocator.free(ej);
+                self.allocator.free(msg.raw);
             }
 
-            // Move remaining partial line to front.
-            if (start > 0) {
-                const remaining = filled - start;
-                std.mem.copyForwards(u8, buf[0..remaining], buf[start..filled]);
-                filled = remaining;
-            } else if (filled == buf.len) {
-                log.warn("nostr_public: discarding oversized line ({d} bytes)", .{filled});
-                filled = 0;
+            switch (msg.msg_type) {
+                .event => {
+                    if (msg.event_json) |event_json| {
+                        self.processEvent(event_json, eb);
+                    }
+                },
+                .eose => {
+                    log.info("nostr_public: received EOSE — live subscription active", .{});
+                },
+                .ok => {
+                    log.info("nostr_public: received OK: {s}", .{msg.raw[0..@min(msg.raw.len, 120)]});
+                },
+                .notice => {
+                    log.info("nostr_public: received NOTICE: {s}", .{msg.raw[0..@min(msg.raw.len, 200)]});
+                },
+                .unknown => {
+                    // Ignore other relay messages (CLOSED, etc.)
+                },
             }
         }
+
+        log.info("nostr_public: reader loop stopped", .{});
     }
 
-    /// Process a single JSON event line from the listener.
-    fn processLine(self: *NostrPublicChannel, line: []const u8, eb: *bus.Bus) void {
+    /// Process a single event JSON from the relay.
+    fn processEvent(self: *NostrPublicChannel, event_json: []const u8, eb: *bus.Bus) void {
         // Extract event ID for dedup.
-        const event_id = extractJsonString(line, "\"id\":\"") orelse return;
+        const event_id = extractJsonString(event_json, "\"id\":\"") orelse {
+            log.info("nostr_public: event has no id, skipping ({d} bytes)", .{event_json.len});
+            return;
+        };
         // Check dedup.
-        if (self.seen_ids.contains(event_id)) return;
+        if (self.seen_ids.contains(event_id)) {
+            log.info("nostr_public: dedup skip event {s}...", .{event_id[0..@min(event_id.len, 12)]});
+            return;
+        }
         // Store the ID (duped so it outlives the line buffer).
         const id_copy = self.allocator.dupe(u8, event_id) catch return;
         self.seen_ids.put(self.allocator, id_copy, {}) catch {
             self.allocator.free(id_copy);
             return;
         };
+        // Evict oldest entries when set grows too large.
+        if (self.seen_ids.count() > MAX_SEEN_IDS) {
+            log.info("nostr_public: seen_ids hit {d} cap, clearing", .{self.seen_ids.count()});
+            var it = self.seen_ids.keyIterator();
+            while (it.next()) |key_ptr| {
+                self.allocator.free(key_ptr.*);
+            }
+            self.seen_ids.deinit(self.allocator);
+            self.seen_ids = .empty;
+        }
 
         // Extract kind and check if we care.
-        const kind = extractEventKind(line) orelse return;
-        if (!self.isKindWanted(kind)) return;
+        const kind = extractEventKind(event_json) orelse {
+            log.info("nostr_public: event {s}... has no kind, skipping", .{event_id[0..@min(event_id.len, 12)]});
+            return;
+        };
+        if (!self.isKindWanted(kind)) {
+            log.info("nostr_public: event {s}... kind {d} not in listen list, skipping", .{ event_id[0..@min(event_id.len, 12)], kind });
+            return;
+        }
 
         // Extract pubkey and content.
-        const pubkey = extractJsonString(line, "\"pubkey\":\"") orelse return;
-        const content = extractJsonString(line, "\"content\":\"") orelse return;
+        const pubkey = extractJsonString(event_json, "\"pubkey\":\"") orelse {
+            log.info("nostr_public: event {s}... kind {d} has no pubkey, skipping", .{ event_id[0..@min(event_id.len, 12)], kind });
+            return;
+        };
+        const content = extractJsonString(event_json, "\"content\":\"") orelse {
+            log.info("nostr_public: event {s}... kind {d} from {s}... has no content, skipping", .{ event_id[0..@min(event_id.len, 12)], kind, pubkey[0..@min(pubkey.len, 12)] });
+            return;
+        };
+
+        log.info("nostr_public: event {s}... kind {d} from {s}... content={d} chars", .{
+            event_id[0..@min(event_id.len, 12)],
+            kind,
+            pubkey[0..@min(pubkey.len, 12)],
+            content.len,
+        });
+
+        // Filter out own events to prevent self-echo loops.
+        if (self.own_pubkey_hex) |own_pk| {
+            if (std.mem.eql(u8, own_pk, pubkey)) {
+                log.info("nostr_public: DROP self-echo — own event {s}...", .{event_id[0..@min(event_id.len, 12)]});
+                return;
+            }
+        }
 
         // Apply filters.
-        if (!self.passesPubkeyFilter(pubkey)) return;
-        if (!self.passesKeywordFilter(content)) return;
-        if (!self.passesMentionFilter(content)) return;
+        if (!self.passesPubkeyFilter(pubkey)) {
+            log.info("nostr_public: DROP pubkey filter — {s}... not in allowed_pubkeys", .{pubkey[0..@min(pubkey.len, 12)]});
+            return;
+        }
+        if (!self.passesKeywordFilter(content)) {
+            log.info("nostr_public: DROP keyword filter — content: {s}", .{content[0..@min(content.len, 80)]});
+            return;
+        }
+        if (!self.passesMentionFilter(content)) {
+            log.info("nostr_public: DROP mention filter — '{s}' not found in content", .{self.config.mention_name});
+            return;
+        }
 
         // Build sender display name (first 12 hex chars).
         const display_len = @min(pubkey.len, 12);
@@ -311,9 +366,6 @@ pub const NostrPublicChannel = struct {
         // Build session key.
         var session_buf: [83]u8 = undefined;
         const session_key = buildSessionKey(pubkey, &session_buf);
-
-        // Unescape JSON string escapes in content for display.
-        // nak outputs content with JSON escapes — we publish as-is, the agent handles it.
 
         // Build inbound message and publish to bus.
         const msg = bus.makeInbound(
@@ -328,6 +380,23 @@ pub const NostrPublicChannel = struct {
             return;
         };
 
+        // Store event_id for reply threading (e-tag). Replace any previous entry.
+        const event_id_copy = self.allocator.dupe(u8, event_id) catch return;
+        const pubkey_copy = self.allocator.dupe(u8, pubkey) catch {
+            self.allocator.free(event_id_copy);
+            return;
+        };
+        if (self.last_event_ids.getPtr(pubkey_copy)) |existing| {
+            self.allocator.free(existing.*);
+            existing.* = event_id_copy;
+            self.allocator.free(pubkey_copy); // key already exists
+        } else {
+            self.last_event_ids.put(self.allocator, pubkey_copy, event_id_copy) catch {
+                self.allocator.free(event_id_copy);
+                self.allocator.free(pubkey_copy);
+            };
+        }
+
         eb.publishInbound(msg) catch |err| {
             log.warn("nostr_public: failed to publish to bus: {}", .{err});
             msg.deinit(self.allocator);
@@ -340,48 +409,204 @@ pub const NostrPublicChannel = struct {
         });
     }
 
+    // ── Key management ────────────────────────────────────────────
+
+    /// Load nostr secret key from .nostr_key file, or auto-generate a new one.
+    /// Priority: .nostr_key file exists and is readable → load it; otherwise → generate, save, return.
+    /// Returns the 32-byte secret key.
+    fn loadOrGenerateKey(allocator: Allocator, config_dir: []const u8) ![32]u8 {
+        const store = secrets.SecretStore.init(config_dir, true);
+        const io = std.Options.debug_io;
+
+        // Build path: config_dir/.nostr_key
+        var key_file_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const key_file_name = "/.nostr_key";
+        const path_total = @min(config_dir.len + key_file_name.len, key_file_path_buf.len);
+        @memcpy(key_file_path_buf[0..config_dir.len], config_dir);
+        @memcpy(key_file_path_buf[config_dir.len..][0..key_file_name.len], key_file_name);
+        const key_file_path = key_file_path_buf[0..path_total];
+
+        // Try reading existing .nostr_key file
+        const file = std.Io.Dir.cwd().openFile(io, key_file_path, .{}) catch |err| {
+            if (err != error.FileNotFound) {
+                log.warn("nostr_public: error reading .nostr_key: {}", .{err});
+            }
+            // File doesn't exist (or unreadable) — generate a new key
+            return generateAndSaveKey(allocator, store, key_file_path);
+        };
+        defer file.close(io);
+
+        // Read file content via reader
+        var buf: [512]u8 = undefined;
+        var reader = file.reader(io, &buf);
+        const content = reader.interface.readAlloc(allocator, 512) catch |err| {
+            log.warn("nostr_public: error reading .nostr_key content: {}", .{err});
+            return generateAndSaveKey(allocator, store, key_file_path);
+        };
+        defer allocator.free(content);
+
+        // Trim whitespace/newlines
+        const trimmed = std.mem.trim(u8, content, " \t\r\n");
+        if (trimmed.len == 0) {
+            return generateAndSaveKey(allocator, store, key_file_path);
+        }
+
+        // Decrypt the stored key
+        const decrypted = store.decryptSecret(allocator, trimmed) catch |err| {
+            log.warn("nostr_public: failed to decrypt .nostr_key: {} — regenerating", .{err});
+            return generateAndSaveKey(allocator, store, key_file_path);
+        };
+        defer allocator.free(decrypted);
+
+        const sk_bytes = nostr.hexDecodeFixed(32, decrypted) catch |err| {
+            log.warn("nostr_public: invalid hex in .nostr_key: {} — regenerating", .{err});
+            return generateAndSaveKey(allocator, store, key_file_path);
+        };
+
+        // Validate key is usable
+        const kp = nostr.keyPairFromSecret(sk_bytes) catch |err| {
+            log.warn("nostr_public: invalid key in .nostr_key: {} — regenerating", .{err});
+            return generateAndSaveKey(allocator, store, key_file_path);
+        };
+        const pk_hex = nostr.hexEncode32(kp.public_key);
+        log.info("nostr_public: loaded key from .nostr_key — pubkey: {s}...", .{pk_hex[0..16]});
+
+        return sk_bytes;
+    }
+
+    /// Generate a fresh nostr keypair, encrypt it, and save to .nostr_key file.
+    fn generateAndSaveKey(allocator: Allocator, store: secrets.SecretStore, key_file_path: []const u8) ![32]u8 {
+        const io = std.Options.debug_io;
+
+        // Generate random 32-byte secret (retry if invalid scalar)
+        var sk_bytes: [32]u8 = undefined;
+        var kp: nostr.KeyPair = undefined;
+        var attempts: u8 = 0;
+        while (attempts < 5) : (attempts += 1) {
+            util.randomBytes(&sk_bytes);
+            if (nostr.keyPairFromSecret(sk_bytes)) |ok| {
+                kp = ok;
+                break;
+            } else |_| {
+                continue;
+            }
+        } else {
+            return error.KeyGenerationFailed;
+        }
+
+        const pk_hex = nostr.hexEncode32(kp.public_key);
+        const sk_hex = nostr.hexEncode32(sk_bytes);
+
+        // Encrypt the hex secret and write to .nostr_key
+        const encrypted = store.encryptSecret(allocator, &sk_hex) catch |err| {
+            log.err("nostr_public: failed to encrypt generated key: {}", .{err});
+            // Fall back to writing raw hex (less secure but functional)
+            return sk_bytes;
+        };
+        defer allocator.free(encrypted);
+
+        // Write to file
+        const file = std.Io.Dir.cwd().createFile(io, key_file_path, .{}) catch |err| {
+            log.warn("nostr_public: failed to write .nostr_key: {} — key will not persist across restarts", .{err});
+            return sk_bytes;
+        };
+        defer file.close(io);
+        if (@import("builtin").os.tag != .windows) {
+            file.setPermissions(io, @enumFromInt(0o600)) catch {};
+        }
+        file.writeStreamingAll(io, encrypted) catch |err| {
+            log.warn("nostr_public: failed to write .nostr_key content: {} — key will not persist across restarts", .{err});
+        };
+
+        log.info("nostr_public: AUTO-GENERATED new nostr keypair", .{});
+        log.info("nostr_public:   pubkey (hex): {s}", .{&pk_hex});
+        log.info("nostr_public:   saved to: {s}", .{key_file_path});
+
+        return sk_bytes;
+    }
+
     // ── Channel vtable ─────────────────────────────────────────────
 
     fn vtableStart(ptr: *anyopaque) anyerror!void {
         const self: *NostrPublicChannel = @ptrCast(@alignCast(ptr));
 
-        // 1. Decrypt signing key.
-        if (self.config.private_key.len > 0) {
+        // 1. Load secret key (priority: config > .nostr_key file > auto-generate).
+        if (self.secret_key_bytes == null and self.config.private_key.len > 0) {
+            // User-provided key takes priority.
             const store = secrets.SecretStore.init(self.config.config_dir, true);
-            self.signing_sec = try store.decryptSecret(self.allocator, self.config.private_key);
-        } else {
-            log.warn("nostr_public: no private_key configured — replies will be disabled", .{});
+            // Try hex decode first (raw 32-byte hex key without enc2: prefix).
+            if (self.config.private_key.len == 64) {
+                // Raw hex secret key (no encryption).
+                if (nostr.hexDecodeFixed(32, self.config.private_key)) |sk_bytes| {
+                    self.secret_key_bytes = sk_bytes;
+                } else |_| {
+                    log.warn("nostr_public: private_key is 64 chars but not valid hex, trying encrypted...", .{});
+                    // Try encrypted.
+                    const sec_str = try store.decryptSecret(self.allocator, self.config.private_key);
+                    defer self.allocator.free(sec_str);
+                    self.secret_key_bytes = nostr.hexDecodeFixed(32, sec_str) catch
+                        return error.InvalidSecretKey;
+                }
+            } else {
+                // Encrypted key (enc2:...).
+                const sec_str = try store.decryptSecret(self.allocator, self.config.private_key);
+                defer self.allocator.free(sec_str);
+                self.secret_key_bytes = nostr.hexDecodeFixed(32, sec_str) catch
+                    return error.InvalidSecretKey;
+            }
+        } else if (self.secret_key_bytes == null) {
+            // No key in config — try loading from .nostr_key file, or auto-generate.
+            self.secret_key_bytes = try loadOrGenerateKey(self.allocator, self.config.config_dir);
         }
-        errdefer {
-            if (self.signing_sec) |sec| {
-                @memset(sec, 0);
-                self.allocator.free(sec);
-                self.signing_sec = null;
+
+        // 2. Derive own pubkey for self-echo filtering.
+        if (self.secret_key_bytes) |sk| {
+            if (nostr.keyPairFromSecret(sk)) |kp| {
+                const pk_hex = nostr.hexEncode32(kp.public_key);
+                self.own_pubkey_hex = self.allocator.dupe(u8, &pk_hex) catch return error.OutOfMemory;
+                log.info("nostr_public: own pubkey derived: {s}... (self-echo filter active)", .{self.own_pubkey_hex.?[0..12]});
+            } else |err| {
+                log.warn("nostr_public: failed to derive keypair: {} — self-echo filter disabled", .{err});
             }
         }
 
-        // 2. Build listener args and spawn nak req --stream.
-        const args = try self.buildListenerArgsRuntime();
+        // 3. Connect to relay via native WebSocket.
+        if (self.config.relays.len == 0) return error.NoRelays;
 
-        if (args.len < 4) return error.ListenerStartFailed;
+        const relay_url = self.config.relays[0];
+        log.info("nostr_public: connecting to relay {s}...", .{relay_url});
+        const relay = nostr.RelayClient.connect(self.allocator, relay_url, null) catch |err| {
+            log.err("nostr_public: relay connect failed: {}", .{err});
+            return err;
+        };
+        self.relay = relay;
+        errdefer self.stopRelay();
 
-        const child = try std.process.spawn(io, .{
-            .argv = args,
-            .stdout = .pipe,
-            .stderr = .inherit,
+        // 4. Subscribe with filter for configured kinds.
+        const filter = try nostr.buildFilter(self.allocator, .{
+            .kinds = self.config.listen_kinds,
+            .since = util.timestampUnix(),
         });
-        self.listener = child;
-        errdefer self.stopListener();
+        defer self.allocator.free(filter);
 
-        // 3. Spawn reader thread.
+        _ = self.relay.?.subscribe(filter) catch |err| {
+            log.err("nostr_public: subscribe failed: {}", .{err});
+            return err;
+        };
+        log.info("nostr_public: subscribed to {d} kinds on {s}", .{
+            self.config.listen_kinds.len,
+            relay_url,
+        });
+
+        // 5. Spawn reader thread.
         self.running.store(true, .release);
-        self.reader_thread = std.Thread.spawn(.{ .stack_size = 128 * 1024 }, readerLoop, .{self}) catch {
+        self.reader_thread = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, readerLoop, .{self}) catch {
             self.running.store(false, .release);
             return error.ReaderThreadFailed;
         };
 
         self.started = true;
-        log.info("nostr_public: started — listening on {d} kinds across {d} relays", .{
+        log.info("nostr_public: started — native websocket, listening on {d} kinds across {d} relays", .{
             self.config.listen_kinds.len,
             self.config.relays.len,
         });
@@ -390,20 +615,20 @@ pub const NostrPublicChannel = struct {
     fn vtableStop(ptr: *anyopaque) void {
         const self: *NostrPublicChannel = @ptrCast(@alignCast(ptr));
 
+        // Signal reader thread to stop FIRST.
         self.running.store(false, .release);
-        self.stopListener();
 
+        // Join reader thread BEFORE closing the relay — the reader may still
+        // be mid-read on the TLS stream. Closing the fd under it corrupts
+        // the global Io's TLS state and causes a segfault on next connect.
         if (self.reader_thread) |t| {
             t.join();
             self.reader_thread = null;
         }
 
-        if (self.signing_sec) |sec| {
-            @memset(sec, 0);
-            self.allocator.free(sec);
-            self.signing_sec = null;
-        }
-
+        // Now safe to close relay (no need to unsubscribe — if we're here
+        // the reader loop already exited due to disconnect or stop signal).
+        self.stopRelay();
         self.started = false;
         log.info("nostr_public: stopped", .{});
     }
@@ -412,44 +637,74 @@ pub const NostrPublicChannel = struct {
         _ = media;
         const self: *NostrPublicChannel = @ptrCast(@alignCast(ptr));
 
-        // target is the pubkey (stored as chat_id in inbound messages).
-        log.info("nostr_public: sending reply to {s}", .{target[0..@min(target.len, 12)]});
+        log.info("nostr_public: sending reply to {s} ({d} chars)", .{ target[0..@min(target.len, 12)], message.len });
 
-        const args = try self.buildSendArgs(target, message);
-        defer self.allocator.free(args);
+        // Pre-flight checks.
+        const sk = self.secret_key_bytes orelse {
+            log.err("nostr_public: cannot send - no secret key", .{});
+            return error.NoSigningKey;
+        };
+        if (self.config.relays.len == 0) {
+            log.err("nostr_public: cannot send - no relays configured", .{});
+            return error.NoRelays;
+        }
 
-        var child = std.process.spawn(io, .{
-            .argv = args,
-            .stdout = .pipe,
-            .stderr = .inherit,
-        }) catch |err| {
-            log.err("nostr_public: nak event spawn failed: {}", .{err});
+        // Build tags: p-tag for recipient, e-tag for threading.
+        var tags_buf: [4]nostr.Tag = undefined;
+        var tags_len: usize = 0;
+
+        // p-tag
+        tags_buf[tags_len] = try nostr.pTag(self.allocator, target);
+        tags_len += 1;
+
+        // e-tag for threading if we have the original event ID.
+        if (self.last_event_ids.get(target)) |event_id| {
+            tags_buf[tags_len] = try nostr.eTag(self.allocator, event_id);
+            tags_len += 1;
+        }
+
+        const tags = tags_buf[0..tags_len];
+
+        // Build and sign the event.
+        const kp = try nostr.keyPairFromSecret(sk);
+        const now = util.timestampUnix();
+
+        var event: nostr.Event = .{
+            .id = [_]u8{0} ** 32,
+            .pubkey = kp.public_key,
+            .created_at = now,
+            .kind = 1,
+            .tags = tags,
+            .content = message,
+            .sig = [_]u8{0} ** 64,
+        };
+        try nostr.signEvent(&event, sk, self.allocator);
+
+        const event_json = try nostr.eventToJson(event, self.allocator);
+        defer self.allocator.free(event_json);
+
+        log.info("nostr_public: publishing kind 1 event to {s} ({d} bytes)", .{
+            self.config.relays[0],
+            event_json.len,
+        });
+
+        // Connect, publish, disconnect (one-shot per send).
+        // TODO: keep a persistent relay for publishing too.
+        var pub_relay = nostr.RelayClient.connect(self.allocator, self.config.relays[0], null) catch |err| {
+            log.err("nostr_public: publish relay connect failed: {}", .{err});
             return err;
         };
-        errdefer {
-            child.kill(io);
-            _ = child.wait(io) catch {};
-        }
+        defer pub_relay.deinit();
 
-        // Read and discard stdout.
-        const stdout_file = child.stdout orelse return error.NakCommandFailed;
-        var read_buf: [4096]u8 = undefined;
-        var reader = stdout_file.reader(io, &read_buf);
-        const stdout_data = reader.interface.allocRemaining(self.allocator, .unlimited) catch return error.NakCommandFailed;
-        defer self.allocator.free(stdout_data);
+        const response = pub_relay.publish(event_json) catch |err| {
+            log.err("nostr_public: publish failed: {}", .{err});
+            return err;
+        };
+        defer self.allocator.free(response);
 
-        const term = child.wait(io) catch return error.NakCommandFailed;
-        switch (term) {
-            .exited => |code| {
-                if (code != 0) {
-                    log.warn("nostr_public: nak event exited with {d}", .{code});
-                    return error.NakCommandFailed;
-                }
-            },
-            else => return error.NakCommandFailed,
-        }
-
-        log.info("nostr_public: reply published ({d} bytes)", .{message.len});
+        log.info("nostr_public: reply published — relay response: {s}", .{
+            response[0..@min(response.len, 120)],
+        });
     }
 
     fn vtableName(ptr: *anyopaque) []const u8 {
@@ -460,8 +715,129 @@ pub const NostrPublicChannel = struct {
     fn vtableHealthCheck(ptr: *anyopaque) bool {
         const self: *NostrPublicChannel = @ptrCast(@alignCast(ptr));
         if (!self.running.load(.acquire)) return false;
-        if (self.listener == null) return false;
+        if (self.relay == null) return false;
         return true;
+    }
+
+    // ── NIP-50 search ──────────────────────────────────────────────
+
+    /// Search result: a single matching event from the relay.
+    pub const SearchResult = struct {
+        /// Event ID (hex).
+        id: []u8,
+        /// Author pubkey (hex).
+        pubkey: []u8,
+        /// Event kind.
+        kind: u16,
+        /// Created_at unix timestamp.
+        created_at: i64,
+        /// Event content (heap-allocated).
+        content: []u8,
+    };
+
+    /// Perform a NIP-50 full-text search on the configured relay.
+    /// Opens a one-shot connection, sends a REQ with the search filter,
+    /// collects events until EOSE, then closes.
+    ///
+    /// Returns a slice of SearchResult. Caller owns the returned slice and
+    /// each SearchResult's fields (all heap-allocated).
+    pub fn searchNostr(self: *NostrPublicChannel, query: []const u8, limit: u32) ![]SearchResult {
+        if (self.config.relays.len == 0) return error.NoRelays;
+
+        const relay_url = self.config.relays[0];
+        log.info("nostr_public: NIP-50 search for \"{s}\" on {s} (limit={d})", .{ query, relay_url, limit });
+
+        // Connect.
+        var client = nostr.RelayClient.connect(self.allocator, relay_url, null) catch |err| {
+            log.err("nostr_public: search relay connect failed: {}", .{err});
+            return err;
+        };
+        defer client.deinit();
+
+        // Build NIP-50 search filter.
+        const filter = try nostr.buildFilter(self.allocator, .{
+            .kinds = self.config.listen_kinds,
+            .search = query,
+            .limit = limit,
+        });
+        defer self.allocator.free(filter);
+
+        // Subscribe (sends REQ with hardcoded "sub" sub_id).
+        _ = client.subscribe(filter) catch |err| {
+            log.err("nostr_public: search subscribe failed: {}", .{err});
+            return err;
+        };
+
+        // Collect events until EOSE or timeout.
+        var results = std.ArrayListUnmanaged(SearchResult).empty;
+        const deadline = std.time.nanoTimestamp() + 10 * std.time.ns_per_s; // 10s timeout
+
+        while (std.time.nanoTimestamp() < deadline) {
+            const raw = client.readMessage() catch |err| {
+                log.warn("nostr_public: search readMessage error: {}", .{err});
+                break;
+            } orelse {
+                log.info("nostr_public: search relay closed", .{});
+                break;
+            };
+            defer self.allocator.free(raw);
+
+            const msg = nostr.parseRelayMessage(self.allocator, raw) catch continue;
+            defer {
+                if (msg.event_json) |ej| self.allocator.free(ej);
+                self.allocator.free(msg.raw);
+            }
+
+            switch (msg.msg_type) {
+                .eose => {
+                    log.info("nostr_public: search EOSE received", .{});
+                    break;
+                },
+                .event => {
+                    if (msg.event_json) |event_json| {
+                        const result = parseSearchResult(self.allocator, event_json) catch |err| {
+                            log.warn("nostr_public: search result parse failed: {}", .{err});
+                            continue;
+                        };
+                        try results.append(self.allocator, result);
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // Unsubscribe and close.
+        client.unsubscribe("sub");
+
+        log.info("nostr_public: search returned {d} results", .{results.items.len});
+        return results.toOwnedSlice(self.allocator);
+    }
+
+    /// Parse a relay event JSON into a SearchResult.
+    fn parseSearchResult(allocator: Allocator, event_json: []const u8) !SearchResult {
+        const id = extractJsonString(event_json, "\"id\":\"") orelse return error.MissingEventId;
+        const pubkey = extractJsonString(event_json, "\"pubkey\":\"") orelse return error.MissingPubkey;
+        const content = extractJsonString(event_json, "\"content\":\"") orelse return error.MissingContent;
+        const kind = extractEventKind(event_json) orelse 1;
+        const created_at = extractJsonInt(event_json, "\"created_at\":") orelse 0;
+
+        return .{
+            .id = try allocator.dupe(u8, id),
+            .pubkey = try allocator.dupe(u8, pubkey),
+            .kind = kind,
+            .created_at = created_at,
+            .content = try allocator.dupe(u8, content),
+        };
+    }
+
+    /// Free a slice of SearchResult.
+    pub fn freeSearchResults(self: *NostrPublicChannel, results: []SearchResult) void {
+        for (results) |*r| {
+            self.allocator.free(r.id);
+            self.allocator.free(r.pubkey);
+            self.allocator.free(r.content);
+        }
+        self.allocator.free(results);
     }
 
     // ── Bus integration ────────────────────────────────────────────

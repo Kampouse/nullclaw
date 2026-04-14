@@ -748,7 +748,21 @@ pub const NostrTool = struct {
     }
 
     /// Load private key from nullclaw config.
+    /// Priority: config channels.nostr_public.private_key > .nostr_key file.
     fn loadPrivateKey(self: *NostrTool, allocator: std.mem.Allocator, io: std.Io) !?[32]u8 {
+        // 1. Try config.json channels.nostr_public.private_key
+        const from_config = try self.loadPrivateKeyFromConfig(allocator, io);
+        if (from_config) |sk| return sk;
+
+        // 2. Try .nostr_key file
+        const from_file = try self.loadPrivateKeyFromFile(allocator, io);
+        if (from_file) |sk| return sk;
+
+        return null;
+    }
+
+    /// Load private key from config.json channels.nostr_public.private_key.
+    fn loadPrivateKeyFromConfig(self: *NostrTool, allocator: std.mem.Allocator, io: std.Io) !?[32]u8 {
         const config_path = std.fmt.allocPrint(allocator, "{s}/config.json", .{self.config_dir}) catch
             return null;
         defer allocator.free(config_path);
@@ -781,7 +795,47 @@ pub const NostrTool = struct {
         const pk_val = nostr_public.object.get("private_key") orelse return null;
         if (pk_val != .string) return null;
 
-        const sk = nostr.hexDecodeFixed(32, pk_val.string) catch return null;
+        // Try hex decode first, then encrypted
+        if (pk_val.string.len == 64) {
+            if (nostr.hexDecodeFixed(32, pk_val.string)) |sk| return sk else |_| {}
+        }
+
+        // Try encrypted (enc2:...)
+        const secrets_mod = @import("../security/secrets.zig");
+        const store = secrets_mod.SecretStore.init(self.config_dir, true);
+        const decrypted = store.decryptSecret(allocator, pk_val.string) catch return null;
+        defer allocator.free(decrypted);
+        const sk = nostr.hexDecodeFixed(32, decrypted) catch return null;
+        return sk;
+    }
+
+    /// Load private key from .nostr_key file (auto-generated keys).
+    fn loadPrivateKeyFromFile(self: *NostrTool, allocator: std.mem.Allocator, io: std.Io) !?[32]u8 {
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const key_file_name = "/.nostr_key";
+        const path_total = @min(self.config_dir.len + key_file_name.len, path_buf.len);
+        @memcpy(path_buf[0..self.config_dir.len], self.config_dir);
+        @memcpy(path_buf[self.config_dir.len..][0..key_file_name.len], key_file_name);
+        const key_file_path = path_buf[0..path_total];
+
+        const file = std.Io.Dir.cwd().openFile(io, key_file_path, .{}) catch return null;
+        defer file.close(io);
+
+        var buf: [512]u8 = undefined;
+        var reader = file.reader(io, &buf);
+        const content = reader.interface.readAlloc(allocator, 512) catch return null;
+        defer allocator.free(content);
+
+        const trimmed = std.mem.trim(u8, content, " \t\r\n");
+        if (trimmed.len == 0) return null;
+
+        // Decrypt
+        const secrets_mod = @import("../security/secrets.zig");
+        const store = secrets_mod.SecretStore.init(self.config_dir, true);
+        const decrypted = store.decryptSecret(allocator, trimmed) catch return null;
+        defer allocator.free(decrypted);
+
+        const sk = nostr.hexDecodeFixed(32, decrypted) catch return null;
         return sk;
     }
 
