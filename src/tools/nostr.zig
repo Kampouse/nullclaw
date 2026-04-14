@@ -188,7 +188,7 @@ pub const NostrTool = struct {
         errors: std.ArrayListUnmanaged(u8),
     } {
         // Prepare per-relay result slots
-        var results = try allocator.alloc(RelayResult, relays.len);
+        const results = try allocator.alloc(RelayResult, relays.len);
         defer allocator.free(results);
         @memset(results, RelayResult{ .relay = "", .events = &.{}, .error_msg = null });
 
@@ -199,23 +199,10 @@ pub const NostrTool = struct {
             .results = results,
         };
 
-        // Spawn one thread per relay
-        var threads = try allocator.alloc(std.Thread, relays.len);
-        defer allocator.free(threads);
-
-        var thread_count: usize = 0;
+        // Query relays sequentially (Zig 0.16 std.Io/TLS is not thread-safe
+        // for socket connections from spawned threads — bus error on TLS init).
         for (relays, 0..) |_, i| {
-            threads[thread_count] = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, relayQueryThread, .{ &ctx, i }) catch |err| {
-                const msg = std.fmt.allocPrint(allocator, "{s}: spawn {}", .{ relays[i], err }) catch relays[i];
-                results[i] = .{ .relay = relays[i], .events = &.{}, .error_msg = msg };
-                continue;
-            };
-            thread_count += 1;
-        }
-
-        // Wait for all threads
-        for (threads[0..thread_count]) |thread| {
-            thread.join();
+            relayQueryThread(&ctx, i);
         }
 
         // Merge results, deduplicate by event ID
