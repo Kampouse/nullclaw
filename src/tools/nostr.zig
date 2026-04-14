@@ -21,19 +21,23 @@ const log = std.log.scoped(.nostr_tool);
 /// Default relay if none configured.
 const DEFAULT_RELAY = "wss://nostr-relay-production.up.railway.app";
 
-/// Well-known public relays used when no relays are configured.
+/// Well-known public relays for read/post (no NIP-50 required).
 /// Selected for reliability, speed, and open write access (no auth/payment).
 const WELL_KNOWN_RELAYS = [_][]const u8{
-    "wss://relay.damus.io",
     "wss://nos.lol",
-    "wss://relay.nostr.band",
-    "wss://nostr.wine",
     "wss://relay.nostr.net",
     "wss://relay.allsocial.me",
-    "wss://relay.mark0st.xyz",
     "wss://nostr-pub.wellorder.net",
     "wss://relay.nostriches.club",
+    "wss://relay.mark0st.xyz",
+    "wss://relay.nostr.io",
     "wss://nostr-relay-production.up.railway.app",
+};
+
+/// Relays known to support NIP-50 full-text search.
+const SEARCH_RELAYS = [_][]const u8{
+    "wss://relay.nostr.band",
+    "wss://relay.noswhere.com",
 };
 
 pub const NostrTool = struct {
@@ -104,8 +108,12 @@ pub const NostrTool = struct {
             }
         }
         if (relay_urls.items.len == 0) {
-            // Use well-known public relays as fallback
-            for (WELL_KNOWN_RELAYS) |r| {
+            // Use appropriate fallback relays based on action
+            const fallback_relays = if (std.mem.eql(u8, action, "search"))
+                &SEARCH_RELAYS
+            else
+                &WELL_KNOWN_RELAYS;
+            for (fallback_relays) |r| {
                 try relay_urls.append(allocator, try allocator.dupe(u8, r));
             }
         }
@@ -290,6 +298,9 @@ pub const NostrTool = struct {
 
         if (events.len == 0) {
             try w.writeAll(&results, allocator, "No events found.\n");
+            log.info("query returned 0 events", .{});
+        } else {
+            log.info("query returned {} events", .{events.len});
         }
 
         return results.toOwnedSlice(allocator);
