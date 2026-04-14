@@ -1435,6 +1435,7 @@ fn isRecoverableCronStoreError(err: anyerror) bool {
         error.UnexpectedEndOfInput,
         error.SyntaxError,
         error.InvalidCronStoreFormat,
+        error.UnexpectedToken,
         => true,
         else => false,
     };
