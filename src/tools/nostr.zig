@@ -36,7 +36,6 @@ const WELL_KNOWN_RELAYS = [_][]const u8{
 
 /// Relays known to support NIP-50 full-text search.
 const SEARCH_RELAYS = [_][]const u8{
-    "wss://relay.nostr.band",
     "wss://relay.noswhere.com",
 };
 
