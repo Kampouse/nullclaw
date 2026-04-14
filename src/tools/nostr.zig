@@ -759,8 +759,10 @@ test "nostr tool unknown action returns error" {
 }
 
 // ── Integration tests (require network) ─────────────────────────────
+// Set NULLCLAW_TEST_RELAYS=1 to enable (ws TLS library ABRTs in sandboxed envs)
 
 test "nostr tool search across multiple relays in parallel" {
+    if (std.c.getenv("NULLCLAW_TEST_RELAYS") == null) return error.SkipZigTest;
     var nt = NostrTool{ .config_dir = "/tmp", .allocator = std.testing.allocator };
     const t = nt.tool();
     const parsed = try root.parseTestArgs(
@@ -776,6 +778,7 @@ test "nostr tool search across multiple relays in parallel" {
 }
 
 test "nostr tool read from relay" {
+    if (std.c.getenv("NULLCLAW_TEST_RELAYS") == null) return error.SkipZigTest;
     var nt = NostrTool{ .config_dir = "/tmp", .allocator = std.testing.allocator };
     const t = nt.tool();
     const parsed = try root.parseTestArgs("{\"action\":\"read\",\"relays\":[\"wss://relay.damus.io\"],\"filter_kinds\":[1],\"filter_limit\":3}");
