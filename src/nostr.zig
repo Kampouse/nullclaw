@@ -126,62 +126,80 @@ pub fn keyPairFromSecret(secret: [32]u8) !KeyPair {
 }
 
 /// BIP-340 Schnorr sign. Returns 64-byte signature.
-pub fn schnorrSign(secret_key: [32]u8, public_key: [32]u8, msg: [32]u8) ![64]u8 {
+/// If aux_rand is null, random bytes are generated for nonce hardening.
+pub fn schnorrSign(secret_key: [32]u8, public_key: [32]u8, msg: [32]u8, aux_rand: ?*[32]u8) ![64]u8 {
     const d_prime = std.mem.readInt(u256, &secret_key, .big);
     if (d_prime == 0 or d_prime >= N) return error.InvalidSecretKey;
 
-    // lift_x(public_key) with even y
+    // Compute P = d' * G to determine actual y parity
+    const P_actual = Secp256k1.mul(Secp256k1.basePoint, secret_key, .big) catch
+        return error.InvalidSecretKey;
+    const p_actual_sec1 = Secp256k1.toCompressedSec1(P_actual);
+    // Normalize: d = d' if even_y(P_actual), else n - d'
+    const d: u256 = if (p_actual_sec1[0] == 0x02) d_prime else N - d_prime;
+
+    // lift_x(public_key) with even y for the canonical P used in the protocol
     var sec1_buf: [33]u8 = [_]u8{0x02} ++ [_]u8{0} ** 32;
     @memcpy(sec1_buf[1..33], &public_key);
     const P = Secp256k1.fromSec1(&sec1_buf) catch
         return error.InvalidPublicKey;
 
-    // Normalize: d = d' if even_y(P), else n - d'
+    // P.x should match the x-coordinate from P_actual
     const p_sec1 = Secp256k1.toCompressedSec1(P);
-    const d: u256 = if (p_sec1[0] == 0x02) d_prime else N - d_prime;
+    const p_x = p_sec1[1..33].*;
 
-    // t = xor(bytes32(d), tagged_hash("BIP340aux", secret_key))
+    // Generate aux_rand if not provided
+    var default_aux: [32]u8 = undefined;
+    const aux = if (aux_rand) |ar| ar.* else blk: {
+        util.randomBytes(&default_aux);
+        break :blk default_aux;
+    };
+
+    // t = xor(bytes32(d), tagged_hash("BIP0340/aux", aux_rand))
     var d_bytes: [32]u8 = undefined;
     std.mem.writeInt(u256, &d_bytes, d, .big);
-    const aux_hash = taggedHash("BIP340aux", &secret_key);
+    const aux_hash = taggedHash("BIP0340/aux", &aux);
     var t: [32]u8 = undefined;
     for (0..32) |i| t[i] = d_bytes[i] ^ aux_hash[i];
 
-    // rand = tagged_hash("BIP340nonce", t || bytes32(P.x) || msg)
-    const p_x = p_sec1[1..33].*;
+    // rand = tagged_hash("BIP0340/nonce", t || bytes32(P.x) || msg)
     var nonce_input: [32 + 32 + 32]u8 = undefined;
     @memcpy(nonce_input[0..32], &t);
     @memcpy(nonce_input[32..64], &p_x);
     @memcpy(nonce_input[64..96], &msg);
-    const rand = taggedHash("BIP340nonce", &nonce_input);
+    const rand = taggedHash("BIP0340/nonce", &nonce_input);
 
-    // r' = int(rand) mod n
-    const r_prime = @mod(std.mem.readInt(u256, &rand, .big), N);
-    if (r_prime == 0) return error.SigningNonceZero;
+    // k0 = int(rand) mod n
+    const k0 = @mod(std.mem.readInt(u256, &rand, .big), N);
+    if (k0 == 0) return error.SigningNonceZero;
 
-    // R = r' * G
-    var r_bytes: [32]u8 = undefined;
-    std.mem.writeInt(u256, &r_bytes, r_prime, .big);
-    const R = Secp256k1.mul(Secp256k1.basePoint, r_bytes, .big) catch
+    // R = k0 * G
+    var k0_bytes: [32]u8 = undefined;
+    std.mem.writeInt(u256, &k0_bytes, k0, .big);
+    const R = Secp256k1.mul(Secp256k1.basePoint, k0_bytes, .big) catch
         return error.SigningFailed;
 
-    // e = int(tagged_hash("BIP340challenge", bytes32(R.x) || bytes32(P.x) || msg)) mod n
+    // Negate k if R has odd y (BIP-340: k = n - k0 if not has_even_y(R))
     const r_sec1 = Secp256k1.toCompressedSec1(R);
+    const k: u256 = if (r_sec1[0] == 0x02) k0 else N - k0;
+
+    // e = int(tagged_hash("BIP0340/challenge", bytes32(R.x) || bytes32(P.x) || msg)) mod n
     const r_x = r_sec1[1..33].*;
     var challenge_input: [32 + 32 + 32]u8 = undefined;
     @memcpy(challenge_input[0..32], &r_x);
     @memcpy(challenge_input[32..64], &p_x);
     @memcpy(challenge_input[64..96], &msg);
-    const e = @mod(std.mem.readInt(u256, &taggedHash("BIP340challenge", &challenge_input), .big), N);
+    const e = @mod(std.mem.readInt(u256, &taggedHash("BIP0340/challenge", &challenge_input), .big), N);
 
-    // k' = (r' + e * d) mod n
-    const k_prime = @mod(r_prime + @as(u256, @truncate((@as(u512, e) * @as(u512, d)) % @as(u512, N))), N);
-    if (k_prime == 0) return error.SigningNonceZero;
+    // sig = bytes32(R.x) || bytes32((k + e * d) mod n)
+    // Compute in u512 to avoid overflow: k and (e*d mod n) are both < N ≈ 2^256,
+    // so their sum can exceed u256 range.
+    const s: u256 = @truncate((@as(u512, k) + @as(u512, e) * @as(u512, d)) % @as(u512, N));
+    if (s == 0) return error.SigningNonceZero;
 
-    // sig = bytes32(r') || bytes32(k')
     var sig: [64]u8 = undefined;
-    std.mem.writeInt(u256, sig[0..32], r_prime, .big);
-    std.mem.writeInt(u256, sig[32..64], k_prime, .big);
+    @memcpy(sig[0..32], &r_x);
+    std.mem.writeInt(u256, sig[32..64], s, .big);
 
     return sig;
 }
@@ -197,7 +215,7 @@ pub fn schnorrVerify(public_key: [32]u8, msg: [32]u8, sig: [64]u8) bool {
     const k_prime = std.mem.readInt(u256, sig[32..64], .big);
     if (k_prime >= N) return false;
 
-    // e = int(tagged_hash("BIP340challenge", bytes32(r) || bytes32(P.x) || msg)) mod n
+    // e = int(tagged_hash("BIP0340/challenge", bytes32(r) || bytes32(P.x) || msg)) mod n
     const p_sec1 = Secp256k1.toCompressedSec1(P);
     const p_x = p_sec1[1..33].*;
     var r_bytes: [32]u8 = undefined;
@@ -206,7 +224,7 @@ pub fn schnorrVerify(public_key: [32]u8, msg: [32]u8, sig: [64]u8) bool {
     @memcpy(challenge_input[0..32], &r_bytes);
     @memcpy(challenge_input[32..64], &p_x);
     @memcpy(challenge_input[64..96], &msg);
-    const e = @mod(std.mem.readInt(u256, &taggedHash("BIP340challenge", &challenge_input), .big), N);
+    const e = @mod(std.mem.readInt(u256, &taggedHash("BIP0340/challenge", &challenge_input), .big), N);
 
     // R = k'*G - e*P
     var k_bytes: [32]u8 = undefined;
@@ -329,7 +347,7 @@ pub fn computeEventId(
 /// Sign an event in-place: computes ID, then signs with Schnorr.
 pub fn signEvent(event: *Event, secret_key: [32]u8, allocator: Allocator) !void {
     event.id = try computeEventId(event.pubkey, event.created_at, event.kind, event.tags, event.content, allocator);
-    event.sig = try schnorrSign(secret_key, event.pubkey, event.id);
+    event.sig = try schnorrSign(secret_key, event.pubkey, event.id, null);
 }
 
 /// Serialize a full event to JSON (for publishing to relay).
@@ -851,8 +869,8 @@ test "hex encode lowercase" {
 }
 
 test "tagged hash known vector" {
-    // BIP-340 test vector 0: tagged_hash("BIP340/challenge", ...)
-    const tag = "BIP340/challenge";
+    // BIP-340 test vector 0: tagged_hash("BIP0340/challenge", ...)
+    const tag = "BIP0340/challenge";
     const data = [_]u8{
         0x04, 0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB,
         0xAC, 0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B,
@@ -886,12 +904,21 @@ test "keypair from secret key 1" {
 }
 
 test "schnorr sign + verify roundtrip" {
+    // BIP-340 test vector 0
+    // secret key: 000...0003, pubkey: F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9
     var sk: [32]u8 = [_]u8{0} ** 32;
-    sk[31] = 1;
+    sk[31] = 3;
     const kp = try keyPairFromSecret(sk);
-    const msg: [32]u8 = [_]u8{0x42} ** 32;
+    const msg: [32]u8 = [_]u8{0} ** 32;
+    var aux: [32]u8 = [_]u8{0} ** 32;
 
-    const sig = try schnorrSign(kp.secret_key, kp.public_key, msg);
+    const sig = try schnorrSign(kp.secret_key, kp.public_key, msg, &aux);
+
+    // Expected signature from BIP-340 test vector 0
+    const expected_r = [_]u8{ 0xE9, 0x07, 0x83, 0x1F, 0x80, 0x84, 0x8D, 0x10, 0x69, 0xA5, 0x37, 0x1B, 0x40, 0x24, 0x10, 0x36, 0x4B, 0xDF, 0x1C, 0x5F, 0x83, 0x07, 0xB0, 0x08, 0x4C, 0x55, 0xF1, 0xCE, 0x2D, 0xCA, 0x82, 0x15 };
+    const expected_k = [_]u8{ 0x25, 0xF6, 0x6A, 0x4A, 0x85, 0xEA, 0x8B, 0x71, 0xE4, 0x82, 0xA7, 0x4F, 0x38, 0x2D, 0x2C, 0xE5, 0xEB, 0xEE, 0xE8, 0xFD, 0xB2, 0x17, 0x2F, 0x47, 0x7D, 0xF4, 0x90, 0x0D, 0x31, 0x05, 0x36, 0xC0 };
+    try std.testing.expectEqualSlices(u8, &expected_r, sig[0..32]);
+    try std.testing.expectEqualSlices(u8, &expected_k, sig[32..64]);
     try std.testing.expect(schnorrVerify(kp.public_key, msg, sig));
 
     // Wrong message should fail
@@ -913,8 +940,10 @@ test "schnorr sign + verify with random key" {
         sk[31] = 1; // fallback to valid key
     }
     const kp = try keyPairFromSecret(sk);
-    const msg: [32]u8 = [_]u8{0xDE, 0xAD, 0xBE, 0xEF} ++ [_]u8{0} ** 28;
-    const sig = try schnorrSign(kp.secret_key, kp.public_key, msg);
+    var msg: [32]u8 = undefined;
+    util.randomBytes(&msg);
+
+    const sig = try schnorrSign(kp.secret_key, kp.public_key, msg, null);
     try std.testing.expect(schnorrVerify(kp.public_key, msg, sig));
 }
 
@@ -993,18 +1022,24 @@ test "event to json roundtrip" {
 test "parse relay url" {
     const url1 = "wss://relay.example.com";
     const parsed1 = try parseRelayUrl(std.testing.allocator, url1);
+    defer std.testing.allocator.free(parsed1.host);
+    defer std.testing.allocator.free(parsed1.path);
     try std.testing.expectEqualStrings("relay.example.com", parsed1.host);
     try std.testing.expectEqual(@as(u16, 443), parsed1.port);
     try std.testing.expectEqualStrings("/", parsed1.path);
 
     const url2 = "wss://relay.example.com:8080/ws";
     const parsed2 = try parseRelayUrl(std.testing.allocator, url2);
+    defer std.testing.allocator.free(parsed2.host);
+    defer std.testing.allocator.free(parsed2.path);
     try std.testing.expectEqualStrings("relay.example.com", parsed2.host);
     try std.testing.expectEqual(@as(u16, 8080), parsed2.port);
     try std.testing.expectEqualStrings("/ws", parsed2.path);
 
     const url3 = "ws://localhost:8080";
     const parsed3 = try parseRelayUrl(std.testing.allocator, url3);
+    defer std.testing.allocator.free(parsed3.host);
+    defer std.testing.allocator.free(parsed3.path);
     try std.testing.expectEqualStrings("localhost", parsed3.host);
     try std.testing.expectEqual(@as(u16, 8080), parsed3.port);
 }
