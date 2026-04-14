@@ -21,6 +21,21 @@ const log = std.log.scoped(.nostr_tool);
 /// Default relay if none configured.
 const DEFAULT_RELAY = "wss://nostr-relay-production.up.railway.app";
 
+/// Well-known public relays used when no relays are configured.
+/// Selected for reliability, speed, and open write access (no auth/payment).
+const WELL_KNOWN_RELAYS = [_][]const u8{
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+    "wss://nostr.wine",
+    "wss://relay.nostr.net",
+    "wss://relay.allsocial.me",
+    "wss://relay.mark0st.xyz",
+    "wss://nostr-pub.wellorder.net",
+    "wss://relay.nostriches.club",
+    "wss://nostr-relay-production.up.railway.app",
+};
+
 pub const NostrTool = struct {
     config_dir: []const u8,
     allocator: std.mem.Allocator,
@@ -89,7 +104,10 @@ pub const NostrTool = struct {
             }
         }
         if (relay_urls.items.len == 0) {
-            try relay_urls.append(allocator, try allocator.dupe(u8, DEFAULT_RELAY));
+            // Use well-known public relays as fallback
+            for (WELL_KNOWN_RELAYS) |r| {
+                try relay_urls.append(allocator, try allocator.dupe(u8, r));
+            }
         }
 
         if (std.mem.eql(u8, action, "post")) {
