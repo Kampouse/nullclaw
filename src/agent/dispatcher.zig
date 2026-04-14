@@ -760,7 +760,7 @@ pub fn buildAssistantHistoryWithToolCalls(
     }
 
     for (parsed_calls) |call| {
-        try buf.appendSlice(allocator, " \n");
+        try buf.appendSlice(allocator, "<tool_call>\n");
         const name_json = try std.json.Stringify.valueAlloc(allocator, call.name, .{});
         defer allocator.free(name_json);
         try buf.appendSlice(allocator, "{\"name\": ");
@@ -768,7 +768,7 @@ pub fn buildAssistantHistoryWithToolCalls(
         try buf.appendSlice(allocator, ", \"arguments\": ");
         try buf.appendSlice(allocator, call.arguments_json);
         try buf.append(allocator, '}');
-        try buf.appendSlice(allocator, "\n \n");
+        try buf.appendSlice(allocator, "\n</tool_call>");
     }
 
     return try buf.toOwnedSlice(allocator);

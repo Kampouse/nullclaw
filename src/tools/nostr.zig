@@ -269,17 +269,77 @@ pub const NostrTool = struct {
     /// When `min_results` > 0, returns as soon as that many relays have responded
     /// with events (a "deep search" mode). Remaining workers are signalled to stop
     /// via stop_flag. Set to 0 to wait for all relays (default).
+    /// Mutex-protected allocator wrapper for use in spawned threads.
+    /// Zig's GPA (including std.testing.allocator) is NOT thread-safe;
+    /// this wrapper serializes all allocations through a spin-lock mutex.
+    const ThreadSafeAllocator = struct {
+        mutex: std.atomic.Mutex = .unlocked,
+        backing: std.mem.Allocator,
+
+        fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+            const self: *ThreadSafeAllocator = @ptrCast(@alignCast(ctx));
+            while (!self.mutex.tryLock()) {
+                std.Thread.yield() catch {};
+            }
+            defer self.mutex.unlock();
+            return self.backing.rawAlloc(len, alignment, ret_addr);
+        }
+
+        fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+            const self: *ThreadSafeAllocator = @ptrCast(@alignCast(ctx));
+            while (!self.mutex.tryLock()) {
+                std.Thread.yield() catch {};
+            }
+            defer self.mutex.unlock();
+            return self.backing.rawResize(memory, alignment, new_len, ret_addr);
+        }
+
+        fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+            const self: *ThreadSafeAllocator = @ptrCast(@alignCast(ctx));
+            while (!self.mutex.tryLock()) {
+                std.Thread.yield() catch {};
+            }
+            defer self.mutex.unlock();
+            return self.backing.rawRemap(memory, alignment, new_len, ret_addr);
+        }
+
+        fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+            const self: *ThreadSafeAllocator = @ptrCast(@alignCast(ctx));
+            while (!self.mutex.tryLock()) {
+                std.Thread.yield() catch {};
+            }
+            defer self.mutex.unlock();
+            self.backing.rawFree(memory, alignment, ret_addr);
+        }
+
+        fn allocator(self: *ThreadSafeAllocator) std.mem.Allocator {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .alloc = ThreadSafeAllocator.alloc,
+                    .resize = ThreadSafeAllocator.resize,
+                    .remap = ThreadSafeAllocator.remap,
+                    .free = ThreadSafeAllocator.free,
+                },
+            };
+        }
+    };
+
     fn queryRelaysParallel(allocator: std.mem.Allocator, relays: []const []const u8, filter_json: []const u8, min_results: usize) !struct {
         events: std.ArrayListUnmanaged(nostr.Event),
         errors: std.ArrayListUnmanaged(u8),
     } {
+        // Wrap allocator in mutex for thread safety (GPA is not thread-safe).
+        var safe_alloc: ThreadSafeAllocator = .{ .backing = allocator };
+        const thread_alloc = safe_alloc.allocator();
+
         // Prepare per-relay result slots
-        const results = try allocator.alloc(RelayResult, relays.len);
-        defer allocator.free(results);
+        const results = try thread_alloc.alloc(RelayResult, relays.len);
+        defer thread_alloc.free(results);
         @memset(results, RelayResult{ .relay = "", .events = &.{}, .error_msg = null });
 
         var ctx = RelayQueryContext{
-            .allocator = allocator,
+            .allocator = thread_alloc,
             .filter_json = filter_json,
             .relays = relays,
             .results = results,
@@ -290,12 +350,16 @@ pub const NostrTool = struct {
 
         // Spawn one thread per relay. Each thread creates its own Io.Threaded
         // instance inside relayQueryThread for TLS isolation.
-        const threads = try allocator.alloc(std.Thread, relays.len);
-        defer allocator.free(threads);
+        const threads = try thread_alloc.alloc(std.Thread, relays.len);
+        defer thread_alloc.free(threads);
+        var thread_spawned = try thread_alloc.alloc(bool, relays.len);
+        defer thread_alloc.free(thread_spawned);
+        @memset(thread_spawned, false);
 
         for (relays, 0..) |_, i| {
             if (std.Thread.spawn(.{}, relayQueryThread, .{ &ctx, i })) |t| {
                 threads[i] = t;
+                thread_spawned[i] = true;
             } else |err| {
                 log.warn("failed to spawn thread for relay {d}: {}", .{ i, err });
                 // Run sequentially as fallback
@@ -326,36 +390,39 @@ pub const NostrTool = struct {
             }
         }
 
-        // Join all threads (fast if stop_flag was set — workers exit their read loop).
-        for (threads) |t| {
-            t.join();
+        // Join only threads that were actually spawned (skip indices where
+        // spawn failed and relayQueryThread ran as synchronous fallback).
+        for (threads, 0..) |t, i| {
+            if (thread_spawned[i]) {
+                t.join();
+            }
         }
 
-        // Merge results, deduplicate by event ID
+        // Merge results, deduplicate by event ID (back on main thread)
         var all_events: std.ArrayListUnmanaged(nostr.Event) = .empty;
         var seen_ids: std.ArrayListUnmanaged([32]u8) = .empty;
-        defer seen_ids.deinit(allocator);
+        defer seen_ids.deinit(thread_alloc);
 
         var relay_errors: std.ArrayListUnmanaged(u8) = .empty;
 
         for (results) |result| {
             if (result.error_msg) |err_msg| {
-                try relay_errors.appendSlice(allocator, err_msg);
-                try relay_errors.appendSlice(allocator, "; ");
-                allocator.free(err_msg);
+                try relay_errors.appendSlice(thread_alloc, err_msg);
+                try relay_errors.appendSlice(thread_alloc, "; ");
+                thread_alloc.free(err_msg);
             }
             for (result.events) |event| {
                 var already_seen = false;
                 for (seen_ids.items) |sid| {
                     if (std.mem.eql(u8, &sid, &event.id)) {
                         already_seen = true;
-                        nostr.freeEvent(event, allocator);
+                        nostr.freeEvent(event, thread_alloc);
                         break;
                     }
                 }
                 if (!already_seen) {
-                    try seen_ids.append(allocator, event.id);
-                    try all_events.append(allocator, event);
+                    try seen_ids.append(thread_alloc, event.id);
+                    try all_events.append(thread_alloc, event);
                 }
             }
         }

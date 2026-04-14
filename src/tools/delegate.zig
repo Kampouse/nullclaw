@@ -168,7 +168,6 @@ test "delegate executes gracefully without config" {
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
-    defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
         try std.testing.expect(result.error_msg != null);
     }
@@ -224,7 +223,6 @@ test "delegate with valid params handles missing provider gracefully" {
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
-    defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
         try std.testing.expect(result.error_msg != null);
     }
@@ -265,7 +263,6 @@ test "delegate with context field handles missing provider gracefully" {
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
-    defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     if (!result.success) {
         try std.testing.expect(result.error_msg != null);
     }
@@ -310,7 +307,6 @@ test "delegate depth within limit proceeds" {
     defer parsed.deinit();
     const result = try t.execute(std.testing.allocator, parsed.parsed.value.object, std.testing.io);
     defer result.deinit(std.testing.allocator);
-    defer if (result.error_msg) |e| if (e.len > 0) std.testing.allocator.free(e);
     // Should fail at provider level, not depth
     if (!result.success) {
         try std.testing.expect(std.mem.indexOf(u8, result.error_msg.?, "depth") == null);
