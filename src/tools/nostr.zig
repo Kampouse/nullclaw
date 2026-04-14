@@ -19,24 +19,44 @@ const util = @import("../util.zig");
 const log = std.log.scoped(.nostr_tool);
 
 /// Default relay if none configured.
-const DEFAULT_RELAY = "wss://nostr-relay-production.up.railway.app";
+const DEFAULT_RELAY = "wss://relay.ditto.pub";
 
 /// Well-known public relays for read/post (no NIP-50 required).
 /// Selected for reliability, speed, and open write access (no auth/payment).
 const WELL_KNOWN_RELAYS = [_][]const u8{
+    "wss://relay.ditto.pub",
     "wss://nos.lol",
     "wss://relay.nostr.net",
-    "wss://relay.allsocial.me",
-    "wss://nostr-pub.wellorder.net",
-    "wss://relay.nostriches.club",
-    "wss://relay.mark0st.xyz",
-    "wss://relay.nostr.io",
-    "wss://nostr-relay-production.up.railway.app",
+    "wss://relay.crostr.com",
+    "wss://private.nostr.bar",
+    "wss://relay.gulugulu.moe",
+    "wss://nostr-relay.moe.gift",
+    "wss://relay.spacetomatoes.net",
+    "wss://dev.relay.stream",
+    "wss://relay.nostrverse.net",
 };
 
-/// Relays known to support NIP-50 full-text search.
+/// Relays confirmed to support NIP-50 full-text search.
+/// Tested live — all returned search results for "bitcoin" queries.
 const SEARCH_RELAYS = [_][]const u8{
     "wss://relay.noswhere.com",
+    "wss://nostrja-kari-nip50.heguro.com",
+    "wss://relay.ditto.pub",
+    "wss://cobrafuma.com/relay",
+    "wss://relay.gulugulu.moe",
+    "wss://relay.spacetomatoes.net",
+    "wss://orly-relay.imwald.eu",
+    "wss://relay2.veganostr.com",
+    "wss://nostr.wine",
+    "wss://us.nostr.wine",
+    "wss://nostr.me/relay",
+    "wss://librepress.libretechsystems.xyz",
+    "wss://aeon.libretechsystems.xyz",
+    "wss://relay.staging.plebeian.market",
+    "wss://relay.cxplay.org",
+    "wss://henhouse.social/relay",
+    "wss://social.protest.net/relay",
+    "wss://relay.nostrverse.net",
 };
 
 pub const NostrTool = struct {
