@@ -613,8 +613,14 @@ pub const OpenAiCompatibleProvider = struct {
         const resp_body = if (auth) |a| blk: {
             var auth_hdr_buf: [512]u8 = undefined;
             const auth_hdr = std.fmt.bufPrint(&auth_hdr_buf, "{s}: {s}", .{ a.name, a.value }) catch return error.CompatibleApiError;
-            break :blk self.httpPost(allocator, url, body, &.{auth_hdr}, request.timeout_secs) catch return error.CompatibleApiError;
-        } else self.httpPost(allocator, url, body, &.{}, request.timeout_secs) catch return error.CompatibleApiError;
+            break :blk self.httpPost(allocator, url, body, &.{auth_hdr}, request.timeout_secs) catch |post_err| {
+                log.err("compatible chatImpl httpPost failed: {} url={s} body_len={d}", .{ post_err, url, body.len });
+                return error.CompatibleApiError;
+            };
+        } else self.httpPost(allocator, url, body, &.{}, request.timeout_secs) catch |post_err| {
+            log.err("compatible chatImpl httpPost failed (no auth): {} url={s} body_len={d}", .{ post_err, url, body.len });
+            return error.CompatibleApiError;
+        };
         defer allocator.free(resp_body);
 
         return parseNativeResponse(allocator, resp_body) catch |err| {

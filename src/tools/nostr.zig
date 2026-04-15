@@ -210,14 +210,7 @@ pub const NostrTool = struct {
         const relay = ctx.relays[relay_index];
         const allocator = ctx.allocator;
 
-        // Create a per-thread Io instance for TLS handshake isolation.
-        var threaded = std.Io.Threaded.init(allocator, .{
-            .stack_size = 8 * 1024 * 1024,
-        });
-        defer threaded.deinit();
-        const io = threaded.io();
-
-        var client = nostr.RelayClient.connect(allocator, relay, io) catch |err| {
+        var client = nostr.RelayClient.connect(allocator, relay) catch |err| {
             const msg = std.fmt.allocPrint(allocator, "{s}: {}", .{ relay, err }) catch relay;
             ctx.results[relay_index] = .{ .relay = relay, .events = &.{}, .error_msg = msg };
             _ = ctx.completed_count.fetchAdd(1, .monotonic);
@@ -1049,7 +1042,7 @@ pub const NostrTool = struct {
 
     fn publishToRelay(self: *NostrTool, allocator: std.mem.Allocator, relay: []const u8, event_json: []const u8) ?[]const u8 {
         _ = self;
-        var client = nostr.RelayClient.connect(allocator, relay, null) catch return null;
+        var client = nostr.RelayClient.connect(allocator, relay) catch return null;
         defer client.deinit();
 
         return client.publish(event_json) catch null;
