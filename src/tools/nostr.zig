@@ -106,16 +106,12 @@ pub const NostrTool = struct {
                 return ToolResult.fail("Invalid private_key hex (must be 64 hex chars)");
             break :blk true;
         } else blk: {
-            const loaded = self.loadPrivateKey(allocator, io) catch |err| {
-                const msg = std.fmt.allocPrint(allocator, "Failed to load private key from config: {}", .{err}) catch
-                    "Failed to load private key from config";
+            sk_buf = self.loadPrivateKey(allocator, io) catch |err| {
+                const msg = std.fmt.allocPrint(allocator, "Failed to load/generate private key: {}", .{err}) catch
+                    "Failed to load/generate private key";
                 return ToolResult.failAlloc(allocator, msg);
             };
-            if (loaded) |key| {
-                sk_buf = key;
-                break :blk true;
-            }
-            break :blk false;
+            break :blk true;
         };
 
         // Get relays — from args or config
@@ -1048,9 +1044,9 @@ pub const NostrTool = struct {
         return client.publish(event_json) catch null;
     }
 
-    /// Load private key from nullclaw config.
-    /// Priority: config channels.nostr_public.private_key > .nostr_key file.
-    fn loadPrivateKey(self: *NostrTool, allocator: std.mem.Allocator, io: std.Io) !?[32]u8 {
+    /// Load private key from nullclaw config, or auto-generate one.
+    /// Priority: config channels.nostr_public.private_key > .nostr_key file > auto-generate.
+    fn loadPrivateKey(self: *NostrTool, allocator: std.mem.Allocator, io: std.Io) ![32]u8 {
         // 1. Try config.json channels.nostr_public.private_key
         const from_config = try self.loadPrivateKeyFromConfig(allocator, io);
         if (from_config) |sk| return sk;
@@ -1059,7 +1055,8 @@ pub const NostrTool = struct {
         const from_file = try self.loadPrivateKeyFromFile(allocator, io);
         if (from_file) |sk| return sk;
 
-        return null;
+        // 3. Auto-generate a new keypair and save it
+        return try self.generateAndSaveKey(allocator, io);
     }
 
     /// Load private key from config.json channels.nostr_public.private_key.
@@ -1138,6 +1135,63 @@ pub const NostrTool = struct {
 
         const sk = nostr.hexDecodeFixed(32, decrypted) catch return null;
         return sk;
+    }
+
+    /// Generate a fresh nostr keypair, encrypt it, and save to .nostr_key file.
+    fn generateAndSaveKey(self: *NostrTool, allocator: std.mem.Allocator, io: std.Io) ![32]u8 {
+        const secrets_mod = @import("../security/secrets.zig");
+        const store = secrets_mod.SecretStore.init(self.config_dir, true);
+
+        // Generate random 32-byte secret (retry if invalid scalar)
+        var sk_bytes: [32]u8 = undefined;
+        var kp: nostr.KeyPair = undefined;
+        var attempts: u8 = 0;
+        while (attempts < 5) : (attempts += 1) {
+            util.randomBytes(&sk_bytes);
+            if (nostr.keyPairFromSecret(sk_bytes)) |ok| {
+                kp = ok;
+                break;
+            } else |_| {
+                continue;
+            }
+        } else {
+            return error.KeyGenerationFailed;
+        }
+
+        const pk_hex = nostr.hexEncode32(kp.public_key);
+        const sk_hex = nostr.hexEncode32(sk_bytes);
+
+        // Encrypt and save
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const key_file_name = "/.nostr_key";
+        const path_total = @min(self.config_dir.len + key_file_name.len, path_buf.len);
+        @memcpy(path_buf[0..self.config_dir.len], self.config_dir);
+        @memcpy(path_buf[self.config_dir.len..][0..key_file_name.len], key_file_name);
+        const key_file_path = path_buf[0..path_total];
+
+        const encrypted = store.encryptSecret(allocator, &sk_hex) catch |err| {
+            log.warn("nostr_tool: failed to encrypt generated key: {} — using in-memory only", .{err});
+            return sk_bytes;
+        };
+        defer allocator.free(encrypted);
+
+        const file = std.Io.Dir.cwd().createFile(io, key_file_path, .{}) catch |err| {
+            log.warn("nostr_tool: failed to write .nostr_key: {} — using in-memory only", .{err});
+            return sk_bytes;
+        };
+        defer file.close(io);
+        if (@import("builtin").os.tag != .windows) {
+            file.setPermissions(io, @enumFromInt(0o600)) catch {};
+        }
+        file.writeStreamingAll(io, encrypted) catch |err| {
+            log.warn("nostr_tool: failed to write .nostr_key content: {}", .{err});
+        };
+
+        log.info("nostr_tool: AUTO-GENERATED new nostr keypair", .{});
+        log.info("nostr_tool:   pubkey (hex): {s}", .{&pk_hex});
+        log.info("nostr_tool:   saved to: {s}", .{key_file_path});
+
+        return sk_bytes;
     }
 
     /// Load relay URLs from nullclaw config.

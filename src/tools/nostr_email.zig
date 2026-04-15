@@ -65,16 +65,12 @@ pub const NostrEmailTool = struct {
                 return ToolResult.fail("Invalid private_key hex (must be 64 hex chars)");
             break :blk true;
         } else blk: {
-            const loaded = self.loadPrivateKey(allocator, io) catch |err| {
-                const msg = std.fmt.allocPrint(allocator, "Failed to load private key: {}", .{err}) catch
-                    "Failed to load private key";
+            sk_buf = self.loadPrivateKey(allocator, io) catch |err| {
+                const msg = std.fmt.allocPrint(allocator, "Failed to load/generate private key: {}", .{err}) catch
+                    "Failed to load/generate private key";
                 return ToolResult.failAlloc(allocator, msg);
             };
-            if (loaded) |key| {
-                sk_buf = key;
-                break :blk true;
-            }
-            break :blk false;
+            break :blk true;
         };
 
         // Load relays
@@ -561,7 +557,18 @@ pub const NostrEmailTool = struct {
 
     // ── Config helpers ────────────────────────────────────────────
 
-    fn loadPrivateKey(self: *NostrEmailTool, allocator: std.mem.Allocator, io: std.Io) !?[32]u8 {
+    fn loadPrivateKey(self: *NostrEmailTool, allocator: std.mem.Allocator, io: std.Io) ![32]u8 {
+        // 1. Try config.json channels.nostr_public.private_key
+        if (try self.loadPrivateKeyFromConfig(allocator, io)) |sk| return sk;
+
+        // 2. Try .nostr_key file
+        if (try self.loadPrivateKeyFromFile(allocator, io)) |sk| return sk;
+
+        // 3. Auto-generate a new keypair and save it
+        return try self.generateAndSaveKey(allocator, io);
+    }
+
+    fn loadPrivateKeyFromConfig(self: *NostrEmailTool, allocator: std.mem.Allocator, io: std.Io) !?[32]u8 {
         const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{self.config_dir});
         defer allocator.free(config_path);
 
@@ -603,6 +610,87 @@ pub const NostrEmailTool = struct {
         const decrypted = store.decryptSecret(allocator, pk_val.string) catch return null;
         defer allocator.free(decrypted);
         return nostr.hexDecodeFixed(32, decrypted) catch return null;
+    }
+
+    fn loadPrivateKeyFromFile(self: *NostrEmailTool, allocator: std.mem.Allocator, io: std.Io) !?[32]u8 {
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const key_file_name = "/.nostr_key";
+        const path_total = @min(self.config_dir.len + key_file_name.len, path_buf.len);
+        @memcpy(path_buf[0..self.config_dir.len], self.config_dir);
+        @memcpy(path_buf[self.config_dir.len..][0..key_file_name.len], key_file_name);
+        const key_file_path = path_buf[0..path_total];
+
+        const file = std.Io.Dir.cwd().openFile(io, key_file_path, .{}) catch return null;
+        defer file.close(io);
+
+        var buf: [512]u8 = undefined;
+        var reader = file.reader(io, &buf);
+        const content = reader.interface.readAlloc(allocator, 512) catch return null;
+        defer allocator.free(content);
+
+        const trimmed = std.mem.trim(u8, content, " \t\r\n");
+        if (trimmed.len == 0) return null;
+
+        const secrets_mod = @import("../security/secrets.zig");
+        const store = secrets_mod.SecretStore.init(self.config_dir, true);
+        const decrypted = store.decryptSecret(allocator, trimmed) catch return null;
+        defer allocator.free(decrypted);
+
+        return nostr.hexDecodeFixed(32, decrypted) catch return null;
+    }
+
+    fn generateAndSaveKey(self: *NostrEmailTool, allocator: std.mem.Allocator, io: std.Io) ![32]u8 {
+        const secrets_mod = @import("../security/secrets.zig");
+        const store = secrets_mod.SecretStore.init(self.config_dir, true);
+
+        var sk_bytes: [32]u8 = undefined;
+        var kp: nostr.KeyPair = undefined;
+        var attempts: u8 = 0;
+        while (attempts < 5) : (attempts += 1) {
+            util.randomBytes(&sk_bytes);
+            if (nostr.keyPairFromSecret(sk_bytes)) |ok| {
+                kp = ok;
+                break;
+            } else |_| {
+                continue;
+            }
+        } else {
+            return error.KeyGenerationFailed;
+        }
+
+        const pk_hex = nostr.hexEncode32(kp.public_key);
+        const sk_hex = nostr.hexEncode32(sk_bytes);
+
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const key_file_name = "/.nostr_key";
+        const path_total = @min(self.config_dir.len + key_file_name.len, path_buf.len);
+        @memcpy(path_buf[0..self.config_dir.len], self.config_dir);
+        @memcpy(path_buf[self.config_dir.len..][0..key_file_name.len], key_file_name);
+        const key_file_path = path_buf[0..path_total];
+
+        const encrypted = store.encryptSecret(allocator, &sk_hex) catch |err| {
+            log.warn("nostr_email: failed to encrypt generated key: {} — using in-memory only", .{err});
+            return sk_bytes;
+        };
+        defer allocator.free(encrypted);
+
+        const file = std.Io.Dir.cwd().createFile(io, key_file_path, .{}) catch |err| {
+            log.warn("nostr_email: failed to write .nostr_key: {} — using in-memory only", .{err});
+            return sk_bytes;
+        };
+        defer file.close(io);
+        if (@import("builtin").os.tag != .windows) {
+            file.setPermissions(io, @enumFromInt(0o600)) catch {};
+        }
+        file.writeStreamingAll(io, encrypted) catch |err| {
+            log.warn("nostr_email: failed to write .nostr_key content: {}", .{err});
+        };
+
+        log.info("nostr_email: AUTO-GENERATED new nostr keypair", .{});
+        log.info("nostr_email:   pubkey (hex): {s}", .{&pk_hex});
+        log.info("nostr_email:   saved to: {s}", .{key_file_path});
+
+        return sk_bytes;
     }
 
     fn loadRelays(self: *NostrEmailTool, allocator: std.mem.Allocator, io: std.Io) ![][]const u8 {
