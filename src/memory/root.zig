@@ -53,6 +53,13 @@ pub const circuit_breaker = @import("vector/circuit_breaker.zig");
 pub const outbox = @import("vector/outbox.zig");
 pub const chunker = @import("vector/chunker.zig");
 
+// eval/ (Meta-harness: retrieval quality evaluation)
+pub const eval = @import("eval/types.zig");
+pub const eval_benchmark = @import("eval/benchmark.zig");
+pub const eval_runner = @import("eval/runner.zig");
+pub const eval_metrics = @import("eval/metrics.zig");
+pub const eval_logger = @import("eval/logger.zig");
+
 // lifecycle/ (Layer D: Runtime Orchestrator)
 pub const cache = @import("lifecycle/cache.zig");
 pub const semantic_cache = @import("lifecycle/semantic_cache.zig");
@@ -607,6 +614,12 @@ pub const MemoryRuntime = struct {
     /// Run memory doctor diagnostics and return a report.
     pub fn diagnose(self: *MemoryRuntime) diagnostics.DiagnosticReport {
         return diagnostics.diagnose(self);
+    }
+
+    /// Access the retrieval engine (if search is enabled). Returns null if
+    /// the engine was not initialised (search disabled or init failure).
+    pub fn retrievalEngine(self: *MemoryRuntime) ?*retrieval.RetrievalEngine {
+        return self._engine;
     }
 
     pub fn deinit(self: *MemoryRuntime) void {

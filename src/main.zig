@@ -1004,6 +1004,111 @@ fn runMemory(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
         return;
     }
 
+    // ── eval: run retrieval benchmark ──
+    if (std.mem.eql(u8, subcmd, "eval")) {
+        if (sub_args.len < 2) {
+            std.debug.print("Usage: nullclaw memory eval <benchmark.json> [--k 6] [--output results.jsonl]\n", .{});
+            std.process.exit(1);
+        }
+        const bench_path = sub_args[1];
+        var k: u32 = 6;
+        var output_path: []const u8 = "";
+
+        var i: usize = 2;
+        while (i < sub_args.len) : (i += 1) {
+            if (std.mem.eql(u8, sub_args[i], "--k")) {
+                if (i + 1 >= sub_args.len) {
+                    std.debug.print("--k requires a value\n", .{});
+                    std.process.exit(1);
+                }
+                i += 1;
+                k = std.fmt.parseInt(u32, sub_args[i], 10) catch {
+                    std.debug.print("Invalid --k value: {s}\n", .{sub_args[i]});
+                    std.process.exit(1);
+                };
+            } else if (std.mem.eql(u8, sub_args[i], "--output")) {
+                if (i + 1 >= sub_args.len) {
+                    std.debug.print("--output requires a value\n", .{});
+                    std.process.exit(1);
+                }
+                i += 1;
+                output_path = sub_args[i];
+            } else {
+                std.debug.print("Unknown option for memory eval: {s}\n", .{sub_args[i]});
+                std.process.exit(1);
+            }
+        }
+
+        // Load benchmark
+        const benchmark = yc.memory.eval_benchmark.loadBenchmark(allocator, bench_path) catch |err| {
+            std.debug.print("Failed to load benchmark '{s}': {s}\n", .{ bench_path, @errorName(err) });
+            std.process.exit(1);
+        };
+        var bench = benchmark;
+        defer bench.deinit(allocator);
+
+        std.debug.print("Loaded benchmark: {d} queries\n", .{bench.entries.len});
+
+        // Get retrieval engine
+        const engine = mem_rt.retrievalEngine() orelse {
+            std.debug.print("Retrieval engine not available — is search enabled in config?\n", .{});
+            std.process.exit(1);
+        };
+
+        // Run eval
+        const result = yc.memory.eval_runner.runEval(allocator, engine, &bench, k) catch |err| {
+            std.debug.print("Eval failed: {s}\n", .{@errorName(err)});
+            std.process.exit(1);
+        };
+
+        // Print results
+        const summary = result.aggregated.formatSummary(allocator) catch "format failed";
+        std.debug.print("\nEval results:\n  {s}\n\n", .{summary});
+
+        // Per-query breakdown
+        for (result.query_metrics, 0..) |qm, idx| {
+            var r_buf: [16]u8 = undefined;
+            var p_buf: [16]u8 = undefined;
+            var m_buf: [16]u8 = undefined;
+            var n_buf: [16]u8 = undefined;
+            const r_s = std.fmt.bufPrint(&r_buf, "{d:.2}", .{qm.recall_at_k}) catch "?";
+            const p_s = std.fmt.bufPrint(&p_buf, "{d:.2}", .{qm.precision_at_k}) catch "?";
+            const m_s = std.fmt.bufPrint(&m_buf, "{d:.3}", .{qm.mrr}) catch "?";
+            const n_s = std.fmt.bufPrint(&n_buf, "{d:.3}", .{qm.ndcg}) catch "?";
+            std.debug.print("  {d:3}. recall@k={s} P@k={s} MRR={s} nDCG={s} [{d}us] {s}\n", .{
+                idx + 1,
+                r_s,
+                p_s,
+                m_s,
+                n_s,
+                qm.latency_us,
+                qm.query,
+            });
+        }
+
+        // Optionally persist results
+        if (output_path.len > 0) {
+            const config_json = "{}"; // TODO: serialize actual config
+            const config_hash = yc.memory.eval_logger.computeConfigHash(allocator, config_json);
+            var tv: std.c.timeval = undefined;
+            _ = std.c.gettimeofday(&tv, null);
+            const eval_result = yc.memory.eval.EvalResult{
+                .config_hash = config_hash,
+                .config_json = config_json,
+                .metrics = result.aggregated,
+                .query_metrics = result.query_metrics,
+                .timestamp = tv.sec,
+                .iteration = 0,
+            };
+            yc.memory.eval_logger.appendResult(allocator, output_path, &eval_result) catch |err| {
+                std.debug.print("Warning: failed to write results to '{s}': {s}\n", .{ output_path, @errorName(err) });
+            };
+            std.debug.print("\nResults saved to: {s}\n", .{output_path});
+        }
+
+        return;
+    }
+
     std.debug.print("Unknown memory command: {s}\n\n", .{subcmd});
     printMemoryUsage();
     std.process.exit(1);

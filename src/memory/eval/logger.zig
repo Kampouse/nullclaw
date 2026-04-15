@@ -24,33 +24,19 @@ pub fn appendResult(allocator: Allocator, file_path: []const u8, result: *const 
     const file = try std.Io.Dir.cwd().createFile(io, file_path, .{ .truncate = false, .read = true });
     defer file.close(io);
 
-    const stat = try file.stat(io);
-    const size = stat.size;
-    try file.seekTo(io, size);
-
-    // Ensure the file ends with a newline so our JSONL stays well-formed.
-    if (size > 0) {
-        try file.seekTo(io, size - 1);
-        var last_byte: [1]u8 = undefined;
-        var read_buf: [1]u8 = undefined;
-        var reader = file.reader(io, &read_buf);
-        const n = reader.interface.readSliceShort(&last_byte) catch |err| switch (err) {
-            error.EndOfStream => return error.ReadFailed,
-            else => return err,
-        };
-        if (n == 1 and last_byte[0] != '\n') {
-            try file.seekTo(io, size);
-            try file.writeStreamingAll(io, "\n");
-        } else {
-            try file.seekTo(io, size);
-        }
-    }
+    // Read existing content, append new line, rewrite (Zig 0.16 Io.File lacks seekTo).
+    var read_buf: [8192]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+    const existing = reader.interface.readAlloc(allocator, 1024 * 1024) catch "";
+    defer allocator.free(existing);
 
     const line = try formatResultJson(allocator, result);
     defer allocator.free(line);
 
-    try file.writeStreamingAll(io, line);
-    try file.writeStreamingAll(io, "\n");
+    const full = try std.fmt.allocPrint(allocator, "{s}{s}\n", .{ existing, line });
+    defer allocator.free(full);
+
+    try file.writeStreamingAll(io, full);
 }
 
 /// Read all JSONL lines from `file_path` and parse them into `EvalResult`
@@ -130,29 +116,77 @@ fn formatResultJson(allocator: Allocator, result: *const types.EvalResult) ![]u8
     const m = result.metrics;
 
     // Escape config_json for safe embedding inside a JSON string.
-    // We need to handle at least: backslash, double-quote, newline, tab.
     const escaped = try escapeJsonString(allocator, result.config_json);
     defer allocator.free(escaped);
 
-    return std.fmt.allocPrint(allocator,
-        \{"iteration":{d},"timestamp":{d},"config_hash":"{s}","metrics":{"mean_recall_at_1":{d},"mean_recall_at_3":{d},"mean_recall_at_k":{d},"mean_precision_at_k":{d},"mean_mrr":{d},"mean_ndcg":{d},"mean_latency_us":{d},"median_latency_us":{d},"total_queries":{d},"k":{d}},"config_json":"{s}"}},
-        .{
-            result.iteration,
-            result.timestamp,
-            hex,
-            m.mean_recall_at_1,
-            m.mean_recall_at_3,
-            m.mean_recall_at_k,
-            m.mean_precision_at_k,
-            m.mean_mrr,
-            m.mean_ndcg,
-            m.mean_latency_us,
-            m.median_latency_us,
-            m.total_queries,
-            m.k,
-            escaped,
-        },
-    );
+    // Build JSON using bufPrint fragments — avoids Zig 0.16 fmt issues with
+    // mixed literal braces and format specifiers in a single allocPrint.
+    var buf = std.ArrayListUnmanaged(u8).empty;
+    errdefer buf.deinit(allocator);
+
+    const w = &buf;
+
+    try w.appendSlice(allocator, "{\"iteration\":");
+    {
+        var tmp: [32]u8 = undefined;
+        const s = std.fmt.bufPrint(&tmp, "{d}", .{result.iteration}) catch return error.FormatFailed;
+        try w.appendSlice(allocator, s);
+    }
+    try w.appendSlice(allocator, ",\"timestamp\":");
+    {
+        var tmp: [32]u8 = undefined;
+        const s = std.fmt.bufPrint(&tmp, "{d}", .{result.timestamp}) catch return error.FormatFailed;
+        try w.appendSlice(allocator, s);
+    }
+    try w.appendSlice(allocator, ",\"config_hash\":\"");
+    try w.appendSlice(allocator, &hex);
+    try w.appendSlice(allocator, "\",\"metrics\":{\"mean_recall_at_1\":");
+    try appendFloat(w, allocator, m.mean_recall_at_1);
+    try w.appendSlice(allocator, ",\"mean_recall_at_3\":");
+    try appendFloat(w, allocator, m.mean_recall_at_3);
+    try w.appendSlice(allocator, ",\"mean_recall_at_k\":");
+    try appendFloat(w, allocator, m.mean_recall_at_k);
+    try w.appendSlice(allocator, ",\"mean_precision_at_k\":");
+    try appendFloat(w, allocator, m.mean_precision_at_k);
+    try w.appendSlice(allocator, ",\"mean_mrr\":");
+    try appendFloat(w, allocator, m.mean_mrr);
+    try w.appendSlice(allocator, ",\"mean_ndcg\":");
+    try appendFloat(w, allocator, m.mean_ndcg);
+    try w.appendSlice(allocator, ",\"mean_latency_us\":");
+    {
+        var tmp: [32]u8 = undefined;
+        const s = std.fmt.bufPrint(&tmp, "{d}", .{m.mean_latency_us}) catch return error.FormatFailed;
+        try w.appendSlice(allocator, s);
+    }
+    try w.appendSlice(allocator, ",\"median_latency_us\":");
+    {
+        var tmp: [32]u8 = undefined;
+        const s = std.fmt.bufPrint(&tmp, "{d}", .{m.median_latency_us}) catch return error.FormatFailed;
+        try w.appendSlice(allocator, s);
+    }
+    try w.appendSlice(allocator, ",\"total_queries\":");
+    {
+        var tmp: [16]u8 = undefined;
+        const s = std.fmt.bufPrint(&tmp, "{d}", .{m.total_queries}) catch return error.FormatFailed;
+        try w.appendSlice(allocator, s);
+    }
+    try w.appendSlice(allocator, ",\"k\":");
+    {
+        var tmp: [16]u8 = undefined;
+        const s = std.fmt.bufPrint(&tmp, "{d}", .{m.k}) catch return error.FormatFailed;
+        try w.appendSlice(allocator, s);
+    }
+    try w.appendSlice(allocator, "},\"config_json\":\"");
+    try w.appendSlice(allocator, escaped);
+    try w.appendSlice(allocator, "\"}");
+
+    return w.toOwnedSlice(allocator);
+}
+
+fn appendFloat(buf: *std.ArrayListUnmanaged(u8), allocator: Allocator, val: f64) !void {
+    var tmp: [32]u8 = undefined;
+    const s = std.fmt.bufPrint(&tmp, "{d:.4}", .{val}) catch return error.FormatFailed;
+    try buf.appendSlice(allocator, s);
 }
 
 /// Minimal JSON string escaping: handles `\`, `"`, `\n`, `\r`, `\t`, and

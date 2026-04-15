@@ -47,8 +47,10 @@ pub fn runEval(
     }
 
     for (benchmark.entries) |entry| {
-        // 1. Record start time (nanosecond precision).
-        const start_ns = std.time.nanoTimestamp();
+        // 1. Record start time (microsecond precision via gettimeofday).
+        var tv_start: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&tv_start, null);
+        const start_us = @as(u64, @intCast(tv_start.sec)) * 1_000_000 + @as(u64, @intCast(tv_start.usec));
 
         // 2. Execute the retrieval search.
         const candidates = engine.search(allocator, entry.query, null) catch |err| {
@@ -57,9 +59,10 @@ pub fn runEval(
         };
 
         // 3. Record end time and compute latency in microseconds.
-        const end_ns = std.time.nanoTimestamp();
-        const elapsed_ns = @as(u64, @intCast(end_ns - start_ns));
-        const latency_us = elapsed_ns / 1_000;
+        var tv_end: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&tv_end, null);
+        const end_us = @as(u64, @intCast(tv_end.sec)) * 1_000_000 + @as(u64, @intCast(tv_end.usec));
+        const latency_us = end_us -| start_us;
 
         // 4. Extract candidate IDs into a lightweight slice (no copies).
         var retrieved_ids = try allocator.alloc([]const u8, candidates.len);
