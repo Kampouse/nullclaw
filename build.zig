@@ -528,15 +528,13 @@ pub fn build(b: *std.Build) void {
         });
         module.addImport("build_options", build_options_module);
 
-        // Web channel disabled - requires external websocket library
-        // Can be re-enabled by adding websocket dependency to build.zig.zon
-        // if (enable_channel_web) {
-        //     const ws_dep = b.dependency("websocket", .{
-        //         .target = target,
-        //         .optimize = optimize,
-        //     });
-        //     module.addImport("websocket", ws_dep.module("websocket"));
-        // }
+        // Vendored karlseguin/websocket.zig (client only, patched for 0.16)
+        const ws_mod = b.addModule("ws_karlseguin", .{
+            .root_source_file = b.path("lib/websocket-zig/src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        module.addImport("ws_karlseguin", ws_mod);
         // Add zquic for QUIC protocol support
         const zquic_dep = b.dependency("zquic", .{
             .target = target,

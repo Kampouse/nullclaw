@@ -116,6 +116,7 @@ pub const path_security = @import("path_security.zig");
 pub const process_util = @import("process_util.zig");
 pub const gork = @import("gork.zig");
 pub const self_update = @import("self_update.zig");
+pub const nostr_email = @import("nostr_email.zig");
 
 // ── Core types ──────────────────────────────────────────────────────
 
@@ -540,6 +541,13 @@ pub fn allTools(
             try gork_tool.start(io);
             try list.append(allocator, gork_tool.tool());
         }
+    }
+
+    // Nostr email tool (NIP-59 gift wrap)
+    {
+        const net = try allocator.create(nostr_email.NostrEmailTool);
+        net.* = .{ .config_dir = workspace_dir, .allocator = allocator };
+        try list.append(allocator, net.tool());
     }
 
     return list.toOwnedSlice(allocator);

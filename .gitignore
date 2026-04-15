@@ -2,3 +2,25 @@
 nullclaw-config.yaml
 *.pid
 telegram
+
+# Build artifacts
+zig-out/
+.zig-cache/
+*.db
+*.db-shm
+*.db-wal
+nullclaw
+nostr
+nostr-lite
+
+# Local state
+.nullclaw/
+.nostr-lite/
+MEMORY.md
+MEMORY_SNAPSHOT.json
+daemon_state.json
+models_cache.json
+
+# Scratch
+rust_test/
+test_*

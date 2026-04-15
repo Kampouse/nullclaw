@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NullClaw Runtime Architecture</title>
+<script>p5.disableFriendlyErrors = true;</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { overflow: hidden; background: #080a10; }
+  canvas { display: block; }
+  #tooltip {
+    position: fixed;
+    background: rgba(12, 15, 25, 0.95);
+    border: 1px solid rgba(100, 140, 200, 0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: #c8d0e0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    max-width: 360px;
+    pointer-events: none;
+    z-index: 100;
+    display: none;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #tooltip .tt-title {
+    font-weight: 600;
+    color: #e8ecf4;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  #tooltip .tt-file {
+    color: #5a8abf;
+    font-size: 10px;
+    margin-bottom: 6px;
+  }
+  #tooltip .tt-desc {
+    color: #8890a4;
+    font-size: 11px;
+  }
+  #tooltip .tt-tags {
+    margin-top: 6px;
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  #tooltip .tt-tag {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(100, 140, 200, 0.15);
+    color: #7aa0d0;
+  }
+  #legend {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    background: rgba(12, 15, 25, 0.85);
+    border: 1px solid rgba(100, 140, 200, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'SF Mono', monospace;
+    font-size: 10px;
+    color: #667;
+    z-index: 50;
+    backdrop-filter: blur(8px);
+  }
+  #legend .lg-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  #legend .lg-row:last-child { margin-bottom: 0; }
+  #legend .lg-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  #legend .lg-line {
+    width: 16px; height: 2px; border-radius: 1px;
+  }
+</style>
+</head>
+<body>
+<div id="tooltip">
+  <div class="tt-title"></div>
+  <div class="tt-file"></div>
+  <div class="tt-desc"></div>
+  <div class="tt-tags"></div>
+</div>
+<div id="legend">
+  <div class="lg-row"><div class="lg-dot" style="background:#22d3ee"></div> Channel</div>
+  <div class="lg-row"><div class="lg-dot" style="background:#34d399"></div> Runtime Core</div>
+  <div class="lg-row"><div class="lg-dot" style="background:#a78bfa"></div> Agent / LLM</div>
+  <div class="lg-row"><div class="lg-dot" style="background:#fbbf24"></div> Provider</div>
+  <div class="lg-row"><div class="lg-dot" style="background:#fb923c"></div> Tools</div>
+  <div class="lg-row"><div class="lg-dot" style="background:#fb7185"></div> Security / Config</div>
+  <div class="lg-row"><div class="lg-dot" style="background:#38bdf8"></div> Memory / State</div>
+  <div class="lg-row"><div class="lg-line" style="background:rgba(100,180,255,0.6)"></div> Data Flow</div>
+  <div class="lg-row"><div class="lg-line" style="background:rgba(255,180,80,0.4)"></div> Internal</div>
+</div>
+<script>
+// ============================================================
+// NULLCLAW RUNTIME ARCHITECTURE — INTERACTIVE VISUALIZATION
+// ============================================================
+
+const CONFIG = {
+  particleSpeed: 0.6,
+  trailAlpha: 40,
+  pulseSpeed: 0.015,
+  hoverGlow: 25,
+};
+
+// Color palette
+const C = {
+  bg: '#080a10',
+  channel: [34, 211, 238],      // cyan
+  runtime: [52, 211, 153],      // emerald
+  agent: [167, 139, 250],       // violet
+  provider: [251, 191, 36],     // amber
+  tool: [251, 146, 60],         // orange
+  security: [251, 113, 133],    // rose
+  memory: [56, 189, 248],       // sky
+  bus: [100, 180, 255],         // light blue
+  text: [200, 208, 224],
+  dim: [80, 88, 100],
+  grid: [20, 25, 35],
+};
+
+// Component definitions
+const COMPONENTS = [];
+const CONNECTIONS = [];
+const PARTICLES = [];
+
+let W, H, dpr;
+let hoveredNode = null;
+let t = 0;
+
+// ---- Node class ----
+class Node {
+  constructor(id, label, file, desc, tags, x, y, w, h, colorKey, shape) {
+    this.id = id;
+    this.label = label;
+    this.file = file;
+    this.desc = desc;
+    this.tags = tags;
+    this.x = x; this.y = y;
+    this.w = w; this.h = h;
+    this.colorKey = colorKey;
+    this.shape = shape || 'rect';
+    this.color = C[colorKey];
+    this.hovered = false;
+    this.pulse = Math.random() * Math.PI * 2;
+    this.ox = x; this.oy = y;
+  }
+
+  contains(mx, my) {
+    return mx > this.x && mx < this.x + this.w &&
+           my > this.y && my < this.y + this.h;
+  }
+
+  cx() { return this.x + this.w / 2; }
+  cy() { return this.y + this.h / 2; }
+
+  draw() {
+    let glow = this.hovered ? CONFIG.hoverGlow : 0;
+    let pulse = Math.sin(t * 2 + this.pulse) * 0.15 + 0.85;
+
+    push();
+
+    // Glow
+    if (glow > 0) {
+      drawingContext.shadowColor = `rgba(${this.color[0]},${this.color[1]},${this.color[2]},0.4)`;
+      drawingContext.shadowBlur = glow;
+    }
+
+    // Background
+    let fillAlpha = this.hovered ? 50 : 30;
+    let strokeAlpha = this.hovered ? 0.9 : 0.5 * pulse;
+    fill(this.color[0], this.color[1], this.color[2], fillAlpha);
+    stroke(this.color[0], this.color[1], this.color[2], strokeAlpha * 100);
+    strokeWeight(this.hovered ? 2 : 1.2);
+
+    if (this.shape === 'rounded') {
+      rect(this.x, this.y, this.w, this.h, 8);
+    } else if (this.shape === 'hex') {
+      this.drawHex(this.x, this.y, this.w, this.h);
+    } else if (this.shape === 'diamond') {
+      this.drawDiamond(this.x, this.y, this.w, this.h);
+    } else {
+      rect(this.x, this.y, this.w, this.h, 4);
+    }
+
+    drawingContext.shadowBlur = 0;
+
+    // Label
+    noStroke();
+    fill(230, 235, 245, this.hovered ? 100 : 85);
+    textAlign(CENTER, CENTER);
+    textSize(this.w < 100 ? 9 : 10);
+    textStyle(BOLD);
+    text(this.label, this.cx(), this.cy() - 6);
+
+    // File hint
+    if (this.file && this.w >= 90) {
+      fill(this.color[0], this.color[1], this.color[2], 40);
+      textSize(7);
+      textStyle(NORMAL);
+      let f = this.file.replace('src/', '');
+      if (f.length > 22) f = f.substring(0, 20) + '…';
+      text(f, this.cx(), this.cy() + 8);
+    }
+
+    // Top-left accent dot
+    fill(this.color[0], this.color[1], this.color[2], 60 * pulse);
+    noStroke();
+    circle(this.x + 8, this.y + 8, 4);
+
+    pop();
+  }
+
+  drawHex(x, y, w, h) {
+    let cx = x + w/2, cy = y + h/2;
+    beginShape();
+    for (let i = 0; i < 6; i++) {
+      let a = (Math.PI / 3) * i - Math.PI / 6;
+      vertex(cx + (w/2) * Math.cos(a), cy + (h/2) * Math.sin(a));
+    }
+    endShape(CLOSE);
+  }
+
+  drawDiamond(x, y, w, h) {
+    let cx = x + w/2, cy = y + h/2;
+    beginShape();
+    vertex(cx, y); vertex(x + w, cy); vertex(cx, y + h); vertex(x, cy);
+    endShape(CLOSE);
+  }
+}
+
+// ---- Flow Particle ----
+class FlowParticle {
+  constructor(from, to, color, speed, offset) {
+    this.from = from;
+    this.to = to;
+    this.color = color;
+    this.speed = speed || 0.008;
+    this.progress = offset || 0;
+    this.alive = true;
+  }
+
+  update() {
+    this.progress += this.speed * CONFIG.particleSpeed;
+    if (this.progress > 1) this.progress -= 1;
+  }
+
+  draw() {
+    let fx = this.from.cx(), fy = this.from.cy();
+    let tx = this.to.cx(), ty = this.to.cy();
+    let px = lerp(fx, tx, this.progress);
+    let py = lerp(fy, ty, this.progress);
+
+    // Add slight curve
+    let mx = (fx + tx) / 2, my = (fy + ty) / 2;
+    let perpX = -(ty - fy) * 0.1;
+    let perpY = (tx - fx) * 0.1;
+    let wave = Math.sin(this.progress * Math.PI) * 0.3;
+    px = lerp(fx, tx, this.progress) + perpX * wave;
+    py = lerp(fy, ty, this.progress) + perpY * wave;
+
+    let alpha = Math.sin(this.progress * Math.PI) * 140;
+    fill(this.color[0], this.color[1], this.color[2], alpha);
+    noStroke();
+    circle(px, py, 4);
+  }
+}
+
+// ---- Connection ----
+class Connection {
+  constructor(from, to, colorKey, label, flowDir) {
+    this.from = from;
+    this.to = to;
+    this.color = C[colorKey] || C.bus;
+    this.label = label;
+    this.flowDir = flowDir; // 1 = forward, -1 = backward, 0 = both
+    this.particles = [];
+    let count = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < count; i++) {
+      this.particles.push(new FlowParticle(from, to, this.color, 0.005 + Math.random() * 0.006, i / count));
+    }
+  }
+
+  draw() {
+    let fx = this.from.cx(), fy = this.from.cy();
+    let tx = this.to.cx(), ty = this.to.cy();
+
+    // Line
+    let isHighlighted = this.from.hovered || this.to.hovered;
+    let lineAlpha = isHighlighted ? 90 : 55;
+    let lineWeight = isHighlighted ? 2.5 : 1.5;
+    stroke(this.color[0], this.color[1], this.color[2], lineAlpha);
+    strokeWeight(lineWeight);
+
+    // Glow line behind
+    if (isHighlighted) {
+      stroke(this.color[0], this.color[1], this.color[2], 25);
+      strokeWeight(6);
+      line(fx, fy, tx, ty);
+      stroke(this.color[0], this.color[1], this.color[2], lineAlpha);
+      strokeWeight(lineWeight);
+    }
+    line(fx, fy, tx, ty);
+
+    // Arrowhead at destination
+    let angle = Math.atan2(ty - fy, tx - fx);
+    let arrowSize = 6;
+    let ax = tx - Math.cos(angle) * (this.to.w/2 + 2);
+    let ay = ty - Math.sin(angle) * (this.to.h/2 + 2);
+    fill(this.color[0], this.color[1], this.color[2], isHighlighted ? 80 : 55);
+    noStroke();
+    push();
+    translate(ax, ay);
+    rotate(angle);
+    let arrowSize = isHighlighted ? 8 : 7;
+    triangle(0, 0, -arrowSize, -arrowSize/2, -arrowSize, arrowSize/2);
+    pop();
+
+    // Label
+    if (this.label) {
+      let lx = (fx + tx) / 2;
+      let ly = (fy + ty) / 2;
+      fill(this.color[0], this.color[1], this.color[2], 35);
+      noStroke();
+      textSize(7);
+      textAlign(CENTER, CENTER);
+      textStyle(NORMAL);
+      text(this.label, lx, ly - 7);
+    }
+
+    // Flow particles
+    for (let p of this.particles) {
+      p.update();
+      p.draw();
+    }
+  }
+}
+
+// ---- Setup ----
+function setup() {
+  dpr = pixelDensity(1);
+  W = windowWidth;
+  H = windowHeight;
+  let cnv = createCanvas(W, H);
+  cnv.parent(document.body);
+  colorMode(RGB, 255);
+  textFont('SF Mono, Fira Code, Consolas, monospace');
+
+  buildArchitecture();
+}
+
+function buildArchitecture() {
+  COMPONENTS.length = 0;
+  CONNECTIONS.length = 0;
+  PARTICLES.length = 0;
+
+  let cx = W / 2;
+  let cy = H / 2;
+  let s = Math.min(W / 1600, H / 1000, 1);
+
+  // ---- LAYER Y positions ----
+  let yChannels = cy - 380 * s;
+  let yGateway = cy - 260 * s;
+  let yBusIn = cy - 150 * s;
+  let yDispatcher = cy - 50 * s;
+  let ySession = cy + 60 * s;
+  let yAgent = cy + 180 * s;
+  let yProvider = cy + 310 * s;
+  let yTools = cy + 60 * s;
+  let yMemory = cy + 310 * s;
+  let ySecurity = cy + 430 * s;
+  let yConfig = cy - 380 * s;
+
+  // ---- CHANNELS (left side) ----
+  let chX = cx - 580 * s;
+  let chW = 105 * s;
+  let chH = 36 * s;
+  let chGap = 44 * s;
+
+  const channels = [
+    { id: 'ch-tg', label: 'Telegram', file: 'channels/telegram.zig', desc: 'Long-polling bot API. Receives updates, sends messages via HTTP.', tags: ['polling', 'bot-api'] },
+    { id: 'ch-dc', label: 'Discord', file: 'channels/discord.zig', desc: 'WebSocket gateway. Receives events, sends via REST API.', tags: ['websocket', 'gateway_loop'] },
+    { id: 'ch-sl', label: 'Slack', file: 'channels/slack.zig', desc: 'Socket Mode WebSocket. Events API + chat.postMessage.', tags: ['websocket', 'events-api'] },
+    { id: 'ch-ma', label: 'Matrix', file: 'channels/matrix.zig', desc: 'Long-polling /sync endpoint. Sends via /m.room.message.', tags: ['polling', 'federation'] },
+    { id: 'ch-no', label: 'Nostr', file: 'channels/nostr.zig', desc: 'NIP-01 relay subscriptions. Sends via NIP-01 EVENT.', tags: ['nostr', 'relay'] },
+    { id: 'ch-wh', label: 'WhatsApp', file: 'channels/whatsapp.zig', desc: 'Cloud API webhooks. Sends via messages endpoint.', tags: ['webhook', 'cloud-api'] },
+    { id: 'ch-ms', label: 'more...', file: 'channels/', desc: '18+ channels: Signal, IRC, iMessage, Email, LINE, QQ, Lark, DingTalk, Mattermost, OneBot...', tags: ['18 adapters'] },
+  ];
+
+  channels.forEach((ch, i) => {
+    let y = yChannels + i * chGap;
+    COMPONENTS.push(new Node(ch.id, ch.label, ch.file, ch.desc, ch.tags, chX, y, chW, chH, 'channel', 'rounded'));
+  });
+
+  // ---- CHANNEL MANAGER ----
+  let cmX = cx - 320 * s;
+  COMPONENTS.push(new Node('ch-mgr', 'Channel\nManager', 'channel_manager.zig',
+    'Centralized lifecycle for all channels. Spawns/monitors/restarts channel threads via supervision loop.',
+    ['vtable', 'supervisor', 'threads'],
+    cmX, yChannels + 50*s, 120*s, 50*s, 'runtime', 'rounded'));
+
+  // ---- GATEWAY ----
+  let gwX = cx - 180 * s;
+  COMPONENTS.push(new Node('gw', 'HTTP\nGateway', 'gateway.zig',
+    'HTTP server: /webhook, /telegram, /health, /pair. Rate limiting, idempotency, bearer auth.',
+    ['http', 'tls', 'rate-limit'],
+    gwX, yGateway, 120*s, 50*s, 'runtime', 'rounded'));
+
+  // ---- INBOUND BUS ----
+  let busInX = cx - 200 * s;
+  let busW = 160 * s;
+  COMPONENTS.push(new Node('bus-in', 'INBOUND QUEUE', 'bus.zig',
+    'BoundedQueue<InboundMessage>(100). Mutex+Condition blocking publish/consume. Channels → Agent.',
+    ['bounded', 'mutex', 'blocking'],
+    busInX, yBusIn, busW, 36*s, 'bus', 'rounded'));
+
+  // ---- OUTBOUND BUS ----
+  let busOutY = yBusIn + 60 * s;
+  COMPONENTS.push(new Node('bus-out', 'OUTBOUND QUEUE', 'bus.zig',
+    'BoundedQueue<OutboundMessage>(100). Agent/Cron → Channels.',
+    ['bounded', 'mutex', 'blocking'],
+    busInX, busOutY, busW, 36*s, 'bus', 'rounded'));
+
+  // ---- INBOUND DISPATCHER ----
+  let dispX = cx + 20 * s;
+  COMPONENTS.push(new Node('disp', 'Inbound\nDispatcher', 'daemon.zig',
+    'Consumes inbound bus. Resolves session key via agent_routing. Calls SessionManager. Publishes outbound.',
+    ['thread', 'routing', 'session-key'],
+    dispX, yDispatcher, 120*s, 55*s, 'runtime', 'rounded'));
+
+  // ---- OUTBOUND DISPATCHER ----
+  COMPONENTS.push(new Node('disp-out', 'Outbound\nDispatcher', 'channels/dispatch.zig',
+    'Consumes outbound bus. Finds channel by name+account_id. Calls channel.send().',
+    ['thread', 'channel-lookup'],
+    dispX, busOutY, 120*s, 36*s, 'runtime', 'rounded'));
+
+  // ---- SESSION MANAGER ----
+  let sessX = cx + 20 * s;
+  COMPONENTS.push(new Node('session', 'Session\nManager', 'session.zig',
+    'Thread-safe session pool. getOrCreate(session_key) → Session with Agent. processMessageStreaming(). Idle eviction.',
+    ['pool', 'mutex', 'eviction'],
+    sessX, ySession, 120*s, 55*s, 'agent', 'rounded'));
+
+  // ---- AGENT ----
+  let agX = cx + 200 * s;
+  COMPONENTS.push(new Node('agent', 'AGENT CORE', 'agent/root.zig',
+    'Turn loop: build prompt → provider.chat() → parse tool calls → execute tools → feed results → repeat. Max iterations.',
+    ['llm-loop', 'tools', 'compaction'],
+    agX, yAgent - 20*s, 140*s, 60*s, 'agent', 'hex'));
+
+  // ---- PROVIDER SYSTEM ----
+  let provX = cx + 420 * s;
+  let provY = yAgent - 20*s;
+
+  COMPONENTS.push(new Node('prov-router', 'Router\nProvider', 'providers/router.zig',
+    'Multi-model routing via hint: prefix in model name. Delegates to resolved provider.',
+    ['routing', 'hint-prefix'],
+    provX, provY, 100*s, 45*s, 'provider', 'rounded'));
+
+  COMPONENTS.push(new Node('prov-reliable', 'Reliable\nProvider', 'providers/reliable.zig',
+    'Wraps primary with retries + fallback providers. Exponential backoff.',
+    ['retries', 'fallback', 'backoff'],
+    provX + 115*s, provY, 100*s, 45*s, 'provider', 'rounded'));
+
+  // Individual providers
+  let indProvY = provY + 60 * s;
+  let indProvW = 70 * s;
+  let indProvH = 28 * s;
+  const provs = [
+    { id: 'prov-ant', label: 'Anthropic', file: 'providers/anthropic.zig' },
+    { id: 'prov-oai', label: 'OpenAI', file: 'providers/openai.zig' },
+    { id: 'prov-gem', label: 'Gemini', file: 'providers/gemini.zig' },
+    { id: 'prov-oll', label: 'Ollama', file: 'providers/ollama.zig' },
+    { id: 'prov-or', label: 'OpenRouter', file: 'providers/openrouter.zig' },
+  ];
+  provs.forEach((p, i) => {
+    COMPONENTS.push(new Node(p.id, p.label, p.file,
+      `${p.label} API provider implementation. HTTP calls, SSE streaming, tool use.`,
+      ['provider', 'api'],
+      provX + i * (indProvW + 8*s), indProvY, indProvW, indProvH, 'provider', 'rounded'));
+  });
+
+  // ---- TOOL SYSTEM ----
+  let toolX = cx - 420 * s;
+  let toolW = 90 * s;
+  let toolH = 28 * s;
+  const tools = [
+    { id: 'tool-shell', label: 'Shell', file: 'tools/shell.zig', desc: 'Execute shell commands. Security-gated.' },
+    { id: 'tool-fs', label: 'File I/O', file: 'tools/file_read.zig', desc: 'Read, write, edit, append files.' },
+    { id: 'tool-http', label: 'HTTP', file: 'tools/http_request.zig', desc: 'Arbitrary HTTP requests.' },
+    { id: 'tool-git', label: 'Git', file: 'tools/git.zig', desc: 'Git operations.' },
+    { id: 'tool-web', label: 'Web', file: 'tools/web_search.zig', desc: 'Web search + scrape + fetch.' },
+    { id: 'tool-browser', label: 'Browser', file: 'tools/browser.zig', desc: 'Headless browser automation.' },
+    { id: 'tool-mem', label: 'Memory', file: 'tools/memory_store.zig', desc: 'Store/recall/list/forget memories.' },
+    { id: 'tool-cron', label: 'Cron', file: 'tools/cron_add.zig', desc: 'Schedule/manage cron jobs.' },
+    { id: 'tool-msg', label: 'Message', file: 'tools/message.zig', desc: 'Send messages to channels.' },
+    { id: 'tool-delegate', label: 'Delegate', file: 'tools/delegate.zig', desc: 'Spawn sub-agent tasks.' },
+    { id: 'tool-hw', label: 'Hardware', file: 'tools/hardware_info.zig', desc: 'I2C, SPI, hardware info.' },
+    { id: 'tool-img', label: 'Image', file: 'tools/image.zig', desc: 'Image generation/analysis.' },
+  ];
+  tools.forEach((tl, i) => {
+    let row = Math.floor(i / 3);
+    let col = i % 3;
+    COMPONENTS.push(new Node(tl.id, tl.label, tl.file, tl.desc,
+      ['tool', 'vtable'],
+      toolX + col * (toolW + 6*s), yTools + 70*s + row * (toolH + 6*s),
+      toolW, toolH, 'tool', 'rounded'));
+  });
+
+  // ---- TOOL DISPATCHER ----
+  COMPONENTS.push(new Node('tool-disp', 'Tool\nDispatcher', 'agent/dispatcher.zig',
+    'Parses tool calls from LLM response (OpenAI JSON or XML tags). Finds tool by name, calls execute().',
+    ['parse', 'execute', 'security'],
+    toolX, yTools, 100*s, 50*s, 'tool', 'rounded'));
+
+  // ---- MEMORY SYSTEM ----
+  let memX = cx + 200 * s;
+  let memY = yAgent + 80 * s;
+  COMPONENTS.push(new Node('mem', 'Memory\nRuntime', 'memory/root.zig',
+    '4-layer architecture: Storage (SQLite/PG/Redis) → Retrieval (QMD/RRF) → Vector (embeddings) → Lifecycle (cache/consolidation).',
+    ['4-layer', 'vtable', 'vector'],
+    memX, memY, 130*s, 50*s, 'memory', 'rounded'));
+
+  const memBackends = [
+    { id: 'mem-sql', label: 'SQLite', file: 'memory/engines/sqlite.zig' },
+    { id: 'mem-pg', label: 'Postgres', file: 'memory/engines/postgres.zig' },
+    { id: 'mem-redis', label: 'Redis', file: 'memory/engines/redis.zig' },
+    { id: 'mem-qdrant', label: 'Qdrant', file: 'memory/vector/store_qdrant.zig' },
+  ];
+  memBackends.forEach((m, i) => {
+    COMPONENTS.push(new Node(m.id, m.label, m.file, 'Memory storage backend.', ['backend'],
+      memX + i * (75*s + 6*s), memY + 60*s, 75*s, 24*s, 'memory', 'rounded'));
+  });
+
+  // ---- CRON / SCHEDULER ----
+  let cronX = cx - 180 * s;
+  COMPONENTS.push(new Node('cron', 'Cron\nScheduler', 'cron.zig',
+    'In-memory job store. Cron expression parser. Executes shell or agent-mode jobs. Publishes results to bus.',
+    ['cron', 'thread', 'reload'],
+    cronX, yGateway + 70*s, 110*s, 45*s, 'runtime', 'rounded'));
+
+  // ---- HEARTBEAT ----
+  COMPONENTS.push(new Node('hb', 'Heartbeat', 'heartbeat.zig',
+    'Periodic state file writes + HEARTBEAT.md polling. Proactive message routing.',
+    ['periodic', 'state'],
+    cronX + 130*s, yGateway + 70*s, 90*s, 45*s, 'runtime', 'rounded'));
+
+  // ---- STATE MANAGER ----
+  let stX = cx - 180 * s;
+  COMPONENTS.push(new Node('state', 'State\nManager', 'state.zig',
+    'Thread-safe. Persists to ~/.nullclaw/state.json (atomic writes). Tracks last_channel, last_chat_id.',
+    ['atomic', 'persist'],
+    stX, yBusIn + 60*s, 100*s, 36*s, 'memory', 'rounded'));
+
+  // ---- SECURITY ----
+  let secX = cx - 580 * s;
+  let secY = yTools + 170 * s;
+  COMPONENTS.push(new Node('sec-policy', 'Security\nPolicy', 'security/root.zig',
+    'Command allowlists, path validation, risk classification, autonomy levels.',
+    ['policy', 'allowlist'],
+    secX, secY, 100*s, 45*s, 'security', 'rounded'));
+
+  COMPONENTS.push(new Node('sec-sandbox', 'Sandbox', 'security/sandbox.zig',
+    'VTable: Landlock, Firejail, Bubblewrap, Docker backends.',
+    ['isolation', 'vtable'],
+    secX + 115*s, secY, 85*s, 45*s, 'security', 'rounded'));
+
+  COMPONENTS.push(new Node('sec-secrets', 'Secret\nStore', 'security/secrets.zig',
+    'ChaCha20-Poly1305 AEAD encryption for API keys on disk.',
+    ['encryption', 'chacha20'],
+    secX, secY + 55*s, 85*s, 40*s, 'security', 'rounded'));
+
+  COMPONENTS.push(new Node('sec-pair', 'Pairing\nGuard', 'security/pairing.zig',
+    'Gateway authentication with one-time pairing codes. Bearer token auth.',
+    ['auth', 'pairing'],
+    secX + 115*s, secY + 55*s, 85*s, 40*s, 'security', 'rounded'));
+
+  // ---- CONFIG ----
+  let cfgX = cx + 420 * s;
+  COMPONENTS.push(new Node('config', 'Config', 'config_types.zig',
+    'Provider entries, agent config, diagnostics, autonomy, reliability, scheduler, gork, sandbox backend.',
+    ['json', 'types'],
+    cfgX, yChannels + 60*s, 100*s, 50*s, 'security', 'rounded'));
+
+  // ---- RUNTIME ADAPTERS ----
+  let rtX = cx - 580 * s;
+  let rtY = yChannels - 60*s;
+  COMPONENTS.push(new Node('rt-native', 'Native\nRuntime', 'runtime.zig',
+    'Full shell/filesystem/storage access. Mac/Linux/Docker.',
+    ['native', 'vtable'],
+    rtX, rtY, 90*s, 40*s, 'runtime', 'rounded'));
+
+  COMPONENTS.push(new Node('rt-docker', 'Docker\nRuntime', 'runtime.zig',
+    'Container-isolated execution. Configurable image, network, memory limit.',
+    ['docker', 'isolation'],
+    rtX + 100*s, rtY, 90*s, 40*s, 'runtime', 'rounded'));
+
+  COMPONENTS.push(new Node('rt-wasm', 'Wasm\nRuntime', 'runtime.zig',
+    'WASM sandbox via wasmtime. Fuel-limited, memory-capped.',
+    ['wasm', 'wasmtime', 'sandbox'],
+    rtX + 200*s, rtY, 90*s, 40*s, 'runtime', 'rounded'));
+
+  // ---- WORKER POOL ----
+  COMPONENTS.push(new Node('wp', 'Worker\nPool', 'worker_pool.zig',
+    'Comptime-generic pool. Per-session Spinlock hashmap. Graceful shutdown.',
+    ['comptime', 'spinlock', 'threads'],
+    dispX - 150*s, yDispatcher - 50*s, 100*s, 45*s, 'runtime', 'hex'));
+
+  // ---- DAEMON (center top, the orchestrator) ----
+  COMPONENTS.push(new Node('daemon', 'DAEMON', 'daemon.zig',
+    'Main orchestrator. Spawns: Gateway, Heartbeat, Scheduler, Channel Supervisor, Inbound/Outbound Dispatchers.',
+    ['main', 'threads', 'shutdown'],
+    cx - 70*s, cy - 430*s, 140*s, 42*s, 'runtime', 'hex'));
+
+  // ============================================================
+  // CONNECTIONS
+  // ============================================================
+  const n = id => COMPONENTS.find(c => c.id === id);
+
+  // Daemon spawns
+  CONNECTIONS.push(new Connection(n('daemon'), n('gw'), 'runtime', null));
+  CONNECTIONS.push(new Connection(n('daemon'), n('cron'), 'runtime', null));
+  CONNECTIONS.push(new Connection(n('daemon'), n('hb'), 'runtime', null));
+  CONNECTIONS.push(new Connection(n('daemon'), n('ch-mgr'), 'runtime', null));
+  CONNECTIONS.push(new Connection(n('daemon'), n('disp'), 'runtime', null));
+  CONNECTIONS.push(new Connection(n('daemon'), n('wp'), 'runtime', null));
+
+  // Channels → Channel Manager
+  channels.forEach(ch => {
+    CONNECTIONS.push(new Connection(n(ch.id), n('ch-mgr'), 'channel', null));
+  });
+
+  // Channel Manager → Gateway
+  CONNECTIONS.push(new Connection(n('ch-mgr'), n('gw'), 'runtime', 'vtable'));
+
+  // Gateway → Inbound Bus
+  CONNECTIONS.push(new Connection(n('gw'), n('bus-in'), 'bus', 'publish'));
+
+  // Channels → Inbound Bus (direct)
+  channels.slice(0, 3).forEach(ch => {
+    CONNECTIONS.push(new Connection(n(ch.id), n('bus-in'), 'channel', null));
+  });
+
+  // Inbound Bus → Dispatcher
+  CONNECTIONS.push(new Connection(n('bus-in'), n('disp'), 'bus', 'consume'));
+
+  // Worker Pool → Dispatcher
+  CONNECTIONS.push(new Connection(n('wp'), n('disp'), 'runtime', null));
+
+  // Dispatcher → Session Manager
+  CONNECTIONS.push(new Connection(n('disp'), n('session'), 'agent', 'process'));
+
+  // Session → Agent
+  CONNECTIONS.push(new Connection(n('session'), n('agent'), 'agent', 'turn()'));
+
+  // Agent → Provider Router
+  CONNECTIONS.push(new Connection(n('agent'), n('prov-router'), 'provider', 'chat()'));
+
+  // Router → Reliable
+  CONNECTIONS.push(new Connection(n('prov-router'), n('prov-reliable'), 'provider', null));
+
+  // Reliable → Individual providers
+  provs.forEach(p => {
+    CONNECTIONS.push(new Connection(n('prov-reliable'), n(p.id), 'provider', null));
+  });
+
+  // Agent → Tool Dispatcher
+  CONNECTIONS.push(new Connection(n('agent'), n('tool-disp'), 'tool', 'tool calls'));
+
+  // Tool Dispatcher → Tools
+  tools.forEach(tl => {
+    CONNECTIONS.push(new Connection(n('tool-disp'), n(tl.id), 'tool', null));
+  });
+
+  // Agent → Memory
+  CONNECTIONS.push(new Connection(n('agent'), n('mem'), 'memory', 'enrich'));
+
+  // Memory → Backends
+  memBackends.forEach(m => {
+    CONNECTIONS.push(new Connection(n('mem'), n(m.id), 'memory', null));
+  });
+
+  // Dispatcher → Outbound Bus
+  CONNECTIONS.push(new Connection(n('disp'), n('bus-out'), 'bus', 'publish'));
+
+  // Outbound Bus → Outbound Dispatcher
+  CONNECTIONS.push(new Connection(n('bus-out'), n('disp-out'), 'bus', 'consume'));
+
+  // Outbound Dispatcher → Channels
+  channels.slice(0, 3).forEach(ch => {
+    CONNECTIONS.push(new Connection(n('disp-out'), n(ch.id), 'channel', 'send()'));
+  });
+
+  // Outbound Dispatcher → Channel Manager
+  CONNECTIONS.push(new Connection(n('disp-out'), n('ch-mgr'), 'channel', null));
+
+  // Cron → Bus
+  CONNECTIONS.push(new Connection(n('cron'), n('bus-out'), 'runtime', 'results'));
+
+  // Heartbeat → State
+  CONNECTIONS.push(new Connection(n('hb'), n('state'), 'runtime', null));
+
+  // Config → Provider Router
+  CONNECTIONS.push(new Connection(n('config'), n('prov-router'), 'security', 'routes'));
+
+  // Config → Agent
+  CONNECTIONS.push(new Connection(n('config'), n('agent'), 'security', 'config'));
+
+  // Security → Tool Dispatcher
+  CONNECTIONS.push(new Connection(n('sec-policy'), n('tool-disp'), 'security', 'validate'));
+
+  // Security → Gateway
+  CONNECTIONS.push(new Connection(n('sec-pair'), n('gw'), 'security', 'auth'));
+
+  // Runtime Adapters → Agent
+  CONNECTIONS.push(new Connection(n('rt-native'), n('agent'), 'runtime', 'vtable'));
+  CONNECTIONS.push(new Connection(n('rt-docker'), n('agent'), 'runtime', 'vtable'));
+  CONNECTIONS.push(new Connection(n('rt-wasm'), n('agent'), 'runtime', 'vtable'));
+
+  // State → Dispatcher
+  CONNECTIONS.push(new Connection(n('state'), n('disp'), 'memory', 'route'));
+}
+
+// ---- Draw ----
+function draw() {
+  background(C.bg[0], C.bg[1], C.bg[2]);
+
+  t += CONFIG.pulseSpeed;
+
+  // Background grid
+  drawGrid();
+
+  // Draw connections first (behind nodes)
+  for (let conn of CONNECTIONS) {
+    conn.draw();
+  }
+
+  // Draw nodes
+  for (let node of COMPONENTS) {
+    node.hovered = (hoveredNode === node);
+    node.draw();
+  }
+
+  // Title
+  drawTitle();
+}
+
+function drawGrid() {
+  stroke(C.grid[0], C.grid[1], C.grid[2], 30);
+  strokeWeight(0.5);
+  let spacing = 40;
+  for (let x = 0; x < W; x += spacing) {
+    line(x, 0, x, H);
+  }
+  for (let y = 0; y < H; y += spacing) {
+    line(0, y, W, y);
+  }
+}
+
+function drawTitle() {
+  noStroke();
+  textAlign(LEFT, TOP);
+
+  // Main title
+  fill(200, 210, 225, 90);
+  textSize(16);
+  textStyle(BOLD);
+  text('NULLCLAW RUNTIME', 20, 16);
+
+  fill(100, 110, 130, 70);
+  textSize(10);
+  textStyle(NORMAL);
+  text('Multi-threaded Zig AI Agent Framework', 20, 38);
+
+  // Thread indicators
+  let threads = [
+    { label: 'Gateway', color: C.runtime },
+    { label: 'Heartbeat', color: C.runtime },
+    { label: 'Scheduler', color: C.runtime },
+    { label: 'Channel Supervisor', color: C.channel },
+    { label: 'Inbound Dispatcher', color: C.agent },
+    { label: 'Outbound Dispatcher', color: C.agent },
+  ];
+  let tx = 20;
+  let ty = H - 20;
+  textSize(8);
+  fill(80, 90, 110, 50);
+  text('DAEMON THREADS:', tx, ty);
+  tx += 90;
+  for (let th of threads) {
+    fill(th.color[0], th.color[1], th.color[2], 50 + Math.sin(t * 2 + tx) * 20);
+    circle(tx + 4, ty + 4, 5);
+    fill(th.color[0], th.color[1], th.color[2], 40);
+    text(th.label, tx + 12, ty);
+    tx += textWidth(th.label) + 24;
+  }
+}
+
+// ---- Mouse interaction ----
+function mouseMoved() {
+  let tooltip = document.getElementById('tooltip');
+  hoveredNode = null;
+
+  for (let node of COMPONENTS) {
+    if (node.contains(mouseX, mouseY)) {
+      hoveredNode = node;
+      break;
+    }
+  }
+
+  if (hoveredNode) {
+    tooltip.style.display = 'block';
+    tooltip.style.left = (mouseX + 16) + 'px';
+    tooltip.style.top = (mouseY - 10) + 'px';
+
+    // Keep tooltip on screen
+    let rect = tooltip.getBoundingClientRect();
+    if (rect.right > W) tooltip.style.left = (mouseX - rect.width - 16) + 'px';
+    if (rect.bottom > H) tooltip.style.top = (mouseY - rect.height - 10) + 'px';
+
+    tooltip.querySelector('.tt-title').textContent = hoveredNode.label.replace('\n', ' ');
+    tooltip.querySelector('.tt-file').textContent = hoveredNode.file;
+    tooltip.querySelector('.tt-desc').textContent = hoveredNode.desc;
+
+    let tagsHtml = hoveredNode.tags.map(t => `<span class="tt-tag">${t}</span>`).join('');
+    tooltip.querySelector('.tt-tags').innerHTML = tagsHtml;
+  } else {
+    tooltip.style.display = 'none';
+  }
+}
+
+function mousePressed() {
+  // Could add click-to-focus behavior
+}
+
+function windowResized() {
+  W = windowWidth;
+  H = windowHeight;
+  resizeCanvas(W, H);
+  buildArchitecture();
+}
+
+function keyPressed() {
+  if (key === 's' || key === 'S') saveCanvas('nullclaw-runtime', 'png');
+}
+</script>
+</body>
+</html>
