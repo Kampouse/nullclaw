@@ -490,13 +490,25 @@ fn readWorkspaceContextForSummary(
         const agents_path = try std.fs.path.join(allocator, &.{ dir, "AGENTS.md" });
         defer allocator.free(agents_path);
 
-        var read_buf: [8192]u8 = undefined;
-        const file = std.Io.Dir.cwd().openFile(io, agents_path, .{}) catch return allocator.dupe(u8, "");
-        defer file.close(io);
+        // Resolve symlinks to prevent reading files outside workspace
+        const resolved = std.Io.Dir.realPathFileAbsoluteAlloc(io, agents_path, allocator) catch return allocator.dupe(u8, "");
+        defer allocator.free(resolved.ptr[0 .. resolved.len + 1]);
+        const resolved_slice = resolved[0..resolved.len];
 
-        var reader = file.reader(io, &read_buf);
-        const content = reader.interface.readAlloc(allocator, MAX_AGENTS_FILE_BYTES) catch return allocator.dupe(u8, "");
-        return content;
+        // Verify resolved path is within workspace
+        const workspace_resolved = std.Io.Dir.realPathFileAbsoluteAlloc(io, dir, allocator) catch return allocator.dupe(u8, "");
+        defer allocator.free(workspace_resolved.ptr[0 .. workspace_resolved.len + 1]);
+        const workspace_slice = workspace_resolved[0..workspace_resolved.len];
+
+        if (!std.mem.startsWith(u8, resolved_slice, workspace_slice)) {
+            return allocator.dupe(u8, "");
+        }
+
+        // Use Dir.readFileAlloc instead of reader.readAlloc (which has EndOfStream bugs in Zig 0.16)
+        const content = std.Io.Dir.cwd().readFileAlloc(io, resolved_slice, allocator, .limited(MAX_AGENTS_FILE_BYTES)) catch return allocator.dupe(u8, "");
+        defer allocator.free(content);
+        if (content.len == 0) return allocator.dupe(u8, "");
+        return std.fmt.allocPrint(allocator, "<workspace-critical-rules>\n{s}\n</workspace-critical-rules>", .{content});
     }
     return allocator.dupe(u8, "");
 }

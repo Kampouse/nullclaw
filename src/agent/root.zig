@@ -1840,15 +1840,31 @@ pub const Agent = struct {
         dirs: *std.ArrayListUnmanaged([]const u8),
         raw_dir: []const u8,
     ) !void {
-        const trimmed = std.mem.trim(u8, raw_dir, "/\\");
+        // Only strip trailing slashes — keep leading / for absolute paths
+        var trimmed = raw_dir;
+        while (trimmed.len > 0 and (trimmed[trimmed.len - 1] == '/' or trimmed[trimmed.len - 1] == '\\')) {
+            trimmed = trimmed[0 .. trimmed.len - 1];
+        }
         if (trimmed.len == 0) return;
 
         if (!containsMultimodalDir(dirs.items, trimmed)) {
             try dirs.append(arena, trimmed);
         }
 
-        // Add canonical path variant too (/var <-> /private/var on macOS).
-        // TODO: Zig 0.16.0 - realpathAlloc API changed, skip canonical path for now
+        // Add /var <-> /private/var symlink variant on macOS
+        if (comptime @import("builtin").os.tag == .macos) {
+            const variant = if (std.mem.startsWith(u8, trimmed, "/private/"))
+                trimmed["/private".len..]
+            else if (std.mem.startsWith(u8, trimmed, "/var/"))
+                try std.fmt.allocPrint(arena, "/private{s}", .{trimmed})
+            else
+                null;
+            if (variant) |v| {
+                if (!containsMultimodalDir(dirs.items, v)) {
+                    try dirs.append(arena, v);
+                }
+            }
+        }
     }
 
     fn containsMultimodalDir(dirs: []const []const u8, target: []const u8) bool {
@@ -3537,8 +3553,9 @@ test "turn refreshes system prompt after workspace markdown change" {
         try f.writeStreamingAll(std.Options.debug_io, "SOUL-V1");
     }
 
-    const workspace = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(workspace);
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
+    const workspace = tmp_path[0..tmp_path.len];
 
     var provider_state: u8 = 0;
     const provider_vtable = Provider.VTable{
@@ -3625,8 +3642,9 @@ test "turn refreshes system prompt after TOOLS.md change" {
         try f.writeStreamingAll(std.Options.debug_io, "TOOLS-V1");
     }
 
-    const workspace = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(workspace);
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
+    const workspace = tmp_path[0..tmp_path.len];
 
     var provider_state: u8 = 0;
     const provider_vtable = Provider.VTable{
@@ -3713,8 +3731,9 @@ test "turn refreshes system prompt after USER.md change" {
         try f.writeStreamingAll(std.Options.debug_io, "- **Name:** USER-V1");
     }
 
-    const workspace = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(workspace);
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
+    const workspace = tmp_path[0..tmp_path.len];
 
     var provider_state: u8 = 0;
     const provider_vtable = Provider.VTable{

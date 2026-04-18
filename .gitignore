@@ -24,3 +24,16 @@ models_cache.json
 # Scratch
 rust_test/
 test_*
+session-*.md
+types.o
+run_tracy_build.sh
+
+# Secrets (never commit)
+.secret_key
+.nostr_key
+
+# tools/ directory (local scripts, not part of nullclaw source)
+tools/
+
+# Node modules
+node_modules/

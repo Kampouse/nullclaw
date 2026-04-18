@@ -117,89 +117,7 @@ pub fn parseXmlToolCalls(
         }
     };
 
-    // Special case 1: Check for valid JSON format with "name" and "arguments"
-    // Format: {"name": "tool", "arguments": {...}}  (valid JSON, non-standard structure)
-    if (std.mem.indexOf(u8, remaining, "{\"name\":")) |start_idx| {
-        // Check if it has "arguments": key (JSON format)
-        if (std.mem.indexOf(u8, remaining, "\"arguments\":")) |_| {
-            // Find the end of this JSON object
-            var depth: usize = 1; // Already inside the opening {
-            var end_idx = start_idx + 8; // Skip past {"name":
-            while (end_idx < remaining.len and depth > 0) : (end_idx += 1) {
-                if (remaining[end_idx] == '{') depth += 1;
-                if (remaining[end_idx] == '}') depth -= 1;
-            }
-            if (depth == 0) {
-                const content = remaining[start_idx..end_idx];
-                log.debug("Detected valid JSON format (non-standard)", .{});
-                log.debug("Raw JSON content: {s}", .{content});
-
-                if (parseHybridTagCall(allocator, content)) |call| {
-                    // Check for duplicate
-                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
-                        log.info("✓ Parsed valid JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                        try isDuplicate.mark(allocator, &seen_calls, call);
-                        try calls.append(allocator, call);
-
-                        // Capture text before the tool call
-                        const before = std.mem.trim(u8, remaining[0..start_idx], " \t\r\n");
-                        if (before.len > 0) {
-                            try text_parts.append(allocator, before);
-                        }
-                        remaining = remaining[end_idx..];
-                    } else {
-                        log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                        remaining = remaining[end_idx..];
-                    }
-                } else |err| {
-                    log.warn("Failed to parse valid JSON tool call: {}", .{err});
-                }
-            }
-        }
-    }
-
-    // Special case 2: Check for malformed JSON-like format
-    // Format: {"name="tool", "arguments": {...}}  (no closing tags, uses = instead of :)
-    if (std.mem.indexOf(u8, remaining, "{\"name=")) |start_idx| {
-        // Check if it has "arguments": key (JSON format)
-        if (std.mem.indexOf(u8, remaining, "\"arguments\":")) |_| {
-            // Find the end of this JSON object
-            var depth: usize = 1; // Already inside the opening {
-            var end_idx = start_idx + 7; // Skip past {"name=
-            while (end_idx < remaining.len and depth > 0) : (end_idx += 1) {
-                if (remaining[end_idx] == '{') depth += 1;
-                if (remaining[end_idx] == '}') depth -= 1;
-            }
-            if (depth == 0) {
-                const content = remaining[start_idx..end_idx];
-                log.debug("Detected malformed JSON format (no closing tags)", .{});
-                log.debug("Raw JSON content: {s}", .{content});
-
-                if (parseHybridTagCall(allocator, content)) |call| {
-                    // Check for duplicate
-                    if (!isDuplicate.check(allocator, &seen_calls, call)) {
-                        log.info("✓ Parsed malformed JSON tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                        try isDuplicate.mark(allocator, &seen_calls, call);
-                        try calls.append(allocator, call);
-
-                        // Capture text before the tool call
-                        const before = std.mem.trim(u8, remaining[0..start_idx], " \t\r\n");
-                        if (before.len > 0) {
-                            try text_parts.append(allocator, before);
-                        }
-                        remaining = remaining[end_idx..];
-                    } else {
-                        log.warn("Skipping duplicate tool call: name='{s}' args='{s}'", .{call.name, call.arguments_json});
-                        remaining = remaining[end_idx..];
-                    }
-                } else |err| {
-                    log.warn("Failed to parse malformed JSON tool call: {}", .{err});
-                }
-            }
-        }
-    }
-
-    // Special case 3: Check for malformed MiniMax format at the start.
+    // MiniMax format (has its own closing tag, distinct from invoke/tool_call): Check for malformed MiniMax format at the start.
     // This format starts with {"name": or {"name= or {"invoke name= or {"invoke name": and ends with </minimax:tool_call>
     const mini_max_pattern_colon = "{\"name\":";
     const mini_max_pattern_equals = "{\"name=";
@@ -723,9 +641,13 @@ pub fn formatNativeToolResults(allocator: std.mem.Allocator, results: []const To
         const tc_id = result.tool_call_id orelse "unknown";
 
         // Serialize content as a JSON string value
+        const tc_id_escaped = try std.json.Stringify.valueAlloc(allocator, tc_id, .{});
+        defer allocator.free(tc_id_escaped);
+        const output_escaped = try std.json.Stringify.valueAlloc(allocator, result.output, .{});
+        defer allocator.free(output_escaped);
         const formatted = try std.fmt.allocPrint(allocator, "{{\"role\":\"tool\",\"tool_call_id\":{s},\"content\":{s}}}", .{
-            tc_id,
-            result.output,
+            tc_id_escaped,
+            output_escaped,
         });
         defer allocator.free(formatted);
         try buf.appendSlice(allocator, formatted);
@@ -1882,7 +1804,7 @@ test "buildToolInstructions empty tools" {
     const instructions = try buildToolInstructions(allocator, empty);
     defer allocator.free(instructions);
     try std.testing.expect(std.mem.indexOf(u8, instructions, "Tool Use Protocol") != null);
-    try std.testing.expect(std.mem.indexOf(u8, instructions, "tool_call") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions, "TOOL_CALL") != null);
 }
 
 test "parseToolCalls three consecutive calls" {

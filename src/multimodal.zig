@@ -167,7 +167,12 @@ pub fn readLocalImage(allocator: std.mem.Allocator, path: []const u8, config: Mu
     if (config.allowed_dirs.len == 0) return error.LocalReadNotAllowed;
     const allowed = blk: {
         for (config.allowed_dirs) |dir| {
-            const trimmed = std.mem.trim(u8, dir, "/\\");
+            // Only strip trailing slashes — keep leading / for absolute paths.
+            // std.mem.trim strips BOTH ends, which would break absolute paths.
+            var trimmed = dir;
+            while (trimmed.len > 0 and (trimmed[trimmed.len - 1] == '/' or trimmed[trimmed.len - 1] == '\\')) {
+                trimmed = trimmed[0 .. trimmed.len - 1];
+            }
             if (trimmed.len == 0) continue;
             if (path_security.pathStartsWith(path, trimmed)) break :blk true;
         }
@@ -175,8 +180,23 @@ pub fn readLocalImage(allocator: std.mem.Allocator, path: []const u8, config: Mu
     };
     if (!allowed) return error.PathNotAllowed;
 
-    const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return error.PathNotFound;
-    return readFromFile(allocator, file, config.max_image_size_bytes, io);
+    // Use readFileAlloc instead of Io.Reader — Zig 0.16 reader.readAlloc
+    // returns EndOfStream in spawned threads (test runner bug).
+    const data = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(config.max_image_size_bytes)) catch {
+        return error.PathNotFound;
+    };
+    errdefer allocator.free(data);
+
+    // Detect MIME type from header
+    const mime_type = detectMimeType(data) orelse {
+        allocator.free(data);
+        return error.UnsupportedImageFormat;
+    };
+
+    return ImageData{
+        .data = data,
+        .mime_type = mime_type,
+    };
 }
 
 fn readFromFile(allocator: std.mem.Allocator, file: std.Io.File, max_size: u64, io: std.Io) !ImageData {

@@ -68,19 +68,32 @@ fn openWorkspaceFileWithGuards(
     _ = io_arg; // Using global io - parameter available for future flexibility
     if (!isWorkspaceBootstrapFilenameSafe(filename)) return null;
 
-    // Use workspace_dir directly (realpath not needed with current security model)
-    const workspace_root = workspace_dir;
+    // Resolve workspace root to its real path for accurate symlink checks
+    const workspace_root_resolved = std.Io.Dir.realPathFileAbsoluteAlloc(io, workspace_dir, allocator) catch {
+        // If we can't resolve workspace dir, fall back to raw path
+        return null;
+    };
+    defer allocator.free(workspace_root_resolved.ptr[0 .. workspace_root_resolved.len + 1]);
+    const workspace_root = workspace_root_resolved[0..workspace_root_resolved.len];
 
     const candidate = std.fs.path.join(allocator, &.{ workspace_dir, filename }) catch return null;
     defer allocator.free(candidate);
 
-    // Use candidate path as canonical (realpath not available in Zig 0.16)
-    const canonical_path = allocator.dupe(u8, candidate) catch return null;
+    // Resolve the candidate path to catch symlinks pointing outside workspace
+    const canonical_z = std.Io.Dir.realPathFileAbsoluteAlloc(io, candidate, allocator) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return null,
+    };
+    defer allocator.free(canonical_z.ptr[0 .. canonical_z.len + 1]);
+    const canonical_path_slice = canonical_z[0..canonical_z.len];
 
-    if (!pathStartsWith(canonical_path, workspace_root)) {
-        allocator.free(canonical_path);
+    // Verify resolved path is still within workspace
+    if (!pathStartsWith(canonical_path_slice, workspace_root)) {
         return null;
     }
+
+    // Dupe the resolved path for the caller (we're about to free canonical_z's backing memory)
+    const canonical_path = allocator.dupe(u8, canonical_path_slice) catch return null;
 
     const file = std.Io.Dir.cwd().openFile(io, canonical_path, .{}) catch |err| switch (err) {
         error.FileNotFound => {
@@ -206,13 +219,86 @@ pub fn buildSystemPrompt(
     try buf.appendSlice(allocator, "## Version\n\n");
     try buf.print(allocator, "You are running nullclaw {s} (git commit {s}).\n\n", .{ build_options.version, build_options.git_commit });
 
-    try buf.appendSlice(allocator, "System prompt builder (stubbed)\n");
     try buf.appendSlice(allocator, "Workspace: ");
     try buf.appendSlice(allocator, ctx.workspace_dir);
-    try buf.appendSlice(allocator, "\n");
+    try buf.appendSlice(allocator, "\n\n");
+
+    // Inject workspace identity files in canonical order
+    const identity_files = [_][]const u8{
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+    };
+    for (identity_files) |filename| {
+        const opened = openWorkspaceFileWithGuards(allocator, ctx.workspace_dir, filename, io);
+        if (opened) |guarded| {
+            const content = std.Io.Dir.cwd().readFileAlloc(io, guarded.canonical_path, allocator, .limited(BOOTSTRAP_MAX_CHARS + 1024)) catch null;
+            deinitGuardedWorkspaceFile(allocator, guarded, io);
+            if (content) |c| {
+                defer allocator.free(c);
+                const trimmed = std.mem.trim(u8, c, " \t\r\n");
+                if (trimmed.len > 0) {
+                    try buf.print(allocator, "### {s}\n\n", .{filename});
+                    if (trimmed.len > BOOTSTRAP_MAX_CHARS) {
+                        try buf.appendSlice(allocator, trimmed[0..BOOTSTRAP_MAX_CHARS]);
+                        try buf.print(allocator, "\n\n[... truncated at {d} chars]\n\n", .{BOOTSTRAP_MAX_CHARS});
+                    } else {
+                        try buf.appendSlice(allocator, trimmed);
+                        try buf.appendSlice(allocator, "\n\n");
+                    }
+                }
+            }
+        }
+    }
+
+    // Inject preferred memory file (MEMORY.md or memory.md, case-insensitive dedup)
+    {
+        var seen_memory_paths: std.StringHashMapUnmanaged(void) = .empty;
+        defer {
+            var it = seen_memory_paths.keyIterator();
+            while (it.next()) |key| allocator.free(key.*);
+            seen_memory_paths.deinit(allocator);
+        }
+
+        const memory_files = [_][]const u8{ "MEMORY.md", "memory.md" };
+        for (memory_files) |filename| {
+            const opened = openWorkspaceFileWithGuards(allocator, ctx.workspace_dir, filename, io);
+            if (opened) |guarded| {
+                // Dup canonical_path before deinit frees it
+                const canon_dup = allocator.dupe(u8, guarded.canonical_path) catch null;
+                const content = std.Io.Dir.cwd().readFileAlloc(io, guarded.canonical_path, allocator, .limited(BOOTSTRAP_MAX_CHARS + 1024)) catch null;
+                deinitGuardedWorkspaceFile(allocator, guarded, io);
+                if (content) |c| {
+                    defer allocator.free(c);
+                    if (canon_dup) |cp| {
+                        defer allocator.free(cp);
+                        if (seen_memory_paths.contains(cp)) {
+                            continue;
+                        }
+                        try seen_memory_paths.put(allocator, try allocator.dupe(u8, cp), {});
+                    }
+                    const trimmed = std.mem.trim(u8, c, " \t\r\n");
+                    if (trimmed.len > 0) {
+                        try buf.print(allocator, "### {s}\n\n", .{filename});
+                        if (trimmed.len > BOOTSTRAP_MAX_CHARS) {
+                            try buf.appendSlice(allocator, trimmed[0..BOOTSTRAP_MAX_CHARS]);
+                            try buf.print(allocator, "\n\n[... truncated at {d} chars]\n\n", .{BOOTSTRAP_MAX_CHARS});
+                        } else {
+                            try buf.appendSlice(allocator, trimmed);
+                            try buf.appendSlice(allocator, "\n\n");
+                        }
+                    }
+                } else if (canon_dup) |cp| {
+                    allocator.free(cp);
+                }
+            }
+        }
+    }
 
     if (ctx.conversation_context) |cc| {
-        try buf.appendSlice(allocator, "\n## Conversation Context\n\n");
+        try buf.appendSlice(allocator, "## Conversation Context\n\n");
         if (cc.channel) |ch| {
             try buf.print(allocator, "Channel: {s}\n", .{ch});
         }
@@ -255,13 +341,13 @@ test "buildSystemPrompt includes workspace dir when AGENTS.md is present" {
     });
     defer allocator.free(prompt);
 
-    // Stubbed prompt builder no longer injects AGENTS.md content;
-    // verify the workspace path is included and the stub marker is present.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    // Prompt builder now injects AGENTS.md content; verify both workspace and content.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "### AGENTS.md") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "Read SOUL.md") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "Workspace: ") != null);
 }
 
-test "buildSystemPrompt stub produces version and workspace for TOOLS.md test" {
+test "buildSystemPrompt produces version and workspace for nonexistent dir" {
     const allocator = std.testing.allocator;
     const prompt = try buildSystemPrompt(allocator, .{
         .workspace_dir = "/tmp/nonexistent",
@@ -270,8 +356,8 @@ test "buildSystemPrompt stub produces version and workspace for TOOLS.md test" {
     });
     defer allocator.free(prompt);
 
-    // Stubbed prompt builder no longer includes TOOLS.md guidance; verify stub output.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    // No workspace files found in nonexistent dir; verify version + workspace.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "## Version") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "Workspace: /tmp/nonexistent") != null);
 }
 
@@ -301,9 +387,9 @@ test "buildSystemPrompt blocks AGENTS symlink escape outside workspace" {
     });
     defer std.testing.allocator.free(prompt);
 
-    // Stubbed prompt builder doesn't inject AGENTS.md content at all,
-    // so outside-secret-rules must not leak.  The "[File not found]" marker
-    // is no longer emitted by the stub.
+    // Prompt builder now injects AGENTS.md, but symlink escape must be blocked.
+    // The symlink points outside the workspace, so openWorkspaceFileWithGuards
+    // should reject it and outside-secret-rules must not leak.
     try std.testing.expect(std.mem.indexOf(u8, prompt, "outside-secret-rules") == null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "Workspace: ") != null);
 }
@@ -569,7 +655,7 @@ test "pathStartsWith handles root prefixes" {
     try std.testing.expect(!pathStartsWith("/tmpx/workspace", "/tmp"));
 }
 
-test "buildSystemPrompt stub includes version and workspace" {
+test "buildSystemPrompt includes version and workspace" {
     const allocator = std.testing.allocator;
     const prompt = try buildSystemPrompt(allocator, .{
         .workspace_dir = "/tmp/nonexistent",
@@ -578,9 +664,8 @@ test "buildSystemPrompt stub includes version and workspace" {
     });
     defer allocator.free(prompt);
 
-    // Stubbed prompt builder produces version + workspace only.
+    // Prompt builder produces version + workspace only for nonexistent dir.
     try std.testing.expect(std.mem.indexOf(u8, prompt, "## Version") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "Workspace: /tmp/nonexistent") != null);
 }
 
@@ -596,7 +681,7 @@ test "buildSystemPrompt includes workspace dir" {
     try std.testing.expect(std.mem.indexOf(u8, prompt, "/my/workspace") != null);
 }
 
-test "buildSystemPrompt stub does not include channel sections" {
+test "buildSystemPrompt does not include channel sections" {
     const allocator = std.testing.allocator;
     const prompt = try buildSystemPrompt(allocator, .{
         .workspace_dir = "/my/workspace",
@@ -605,15 +690,14 @@ test "buildSystemPrompt stub does not include channel sections" {
     });
     defer allocator.free(prompt);
 
-    // Stubbed prompt builder does not include channel attachment or choices sections.
+    // Prompt builder does not include channel attachment or choices sections.
     try std.testing.expect(std.mem.indexOf(u8, prompt, "## Channel Attachments") == null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "## Channel Choices") == null);
-    // Stub still includes version and workspace.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    // Still includes version and workspace.
     try std.testing.expect(std.mem.indexOf(u8, prompt, "Workspace: /my/workspace") != null);
 }
 
-test "buildSystemPrompt stub ignores memory.md file" {
+test "buildSystemPrompt injects memory.md file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -633,12 +717,15 @@ test "buildSystemPrompt stub ignores memory.md file" {
     });
     defer std.testing.allocator.free(prompt);
 
-    // Stubbed prompt builder does not inject workspace file content.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "alt-memory") == null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    // Prompt builder now injects memory.md content.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "alt-memory") != null);
+    // Header uses the filename from the iteration order (MEMORY.md first on case-insensitive FS).
+    // Just verify some memory header is present.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "### MEMORY.md") != null or
+        std.mem.indexOf(u8, prompt, "### memory.md") != null);
 }
 
-test "buildSystemPrompt stub ignores BOOTSTRAP.md file" {
+test "buildSystemPrompt ignores BOOTSTRAP.md file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -658,12 +745,12 @@ test "buildSystemPrompt stub ignores BOOTSTRAP.md file" {
     });
     defer std.testing.allocator.free(prompt);
 
-    // Stubbed prompt builder does not inject workspace file content.
+    // BOOTSTRAP.md is not in the identity file list, so content is not injected.
     try std.testing.expect(std.mem.indexOf(u8, prompt, "bootstrap-welcome-line") == null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "Workspace: ") != null);
 }
 
-test "buildSystemPrompt stub ignores HEARTBEAT.md file" {
+test "buildSystemPrompt ignores HEARTBEAT.md file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -683,12 +770,12 @@ test "buildSystemPrompt stub ignores HEARTBEAT.md file" {
     });
     defer std.testing.allocator.free(prompt);
 
-    // Stubbed prompt builder does not inject workspace file content.
+    // HEARTBEAT.md is not in the identity file list, so content is not injected.
     try std.testing.expect(std.mem.indexOf(u8, prompt, "heartbeat-check-item") == null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "Workspace: ") != null);
 }
 
-test "buildSystemPrompt stub ignores IDENTITY.md file" {
+test "buildSystemPrompt injects IDENTITY.md file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -708,12 +795,12 @@ test "buildSystemPrompt stub ignores IDENTITY.md file" {
     });
     defer std.testing.allocator.free(prompt);
 
-    // Stubbed prompt builder does not inject workspace file content.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "identity-test-bot") == null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    // Prompt builder now injects IDENTITY.md content.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "identity-test-bot") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "### IDENTITY.md") != null);
 }
 
-test "buildSystemPrompt stub ignores USER.md file" {
+test "buildSystemPrompt injects USER.md file" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -733,9 +820,9 @@ test "buildSystemPrompt stub ignores USER.md file" {
     });
     defer std.testing.allocator.free(prompt);
 
-    // Stubbed prompt builder does not inject workspace file content.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "**Name:** user-test") == null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
+    // Prompt builder now injects USER.md content.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "user-test") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "### USER.md") != null);
 }
 
 test "workspacePromptFingerprint is stable when files are unchanged" {
@@ -989,12 +1076,16 @@ test "buildSystemPrompt includes both MEMORY.md and memory.md when distinct" {
     });
     defer std.testing.allocator.free(prompt);
 
-    // Stubbed prompt builder does not inject workspace file content.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "primary-memory") == null);
+    // Prompt builder now injects memory files.
+    // On case-insensitive FS (macOS), MEMORY.md and memory.md are the same file.
     if (has_distinct_case_files) {
-        try std.testing.expect(std.mem.indexOf(u8, prompt, "alt-memory") == null);
+        // Case-sensitive FS: both files exist and are distinct; both should be included.
+        try std.testing.expect(std.mem.indexOf(u8, prompt, "primary-memory") != null);
+        try std.testing.expect(std.mem.indexOf(u8, prompt, "alt-memory") != null);
+    } else {
+        // Case-insensitive FS: only one file; dedup should prevent double-injection.
+        try std.testing.expect(std.mem.indexOf(u8, prompt, "primary-memory") != null);
     }
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "System prompt builder (stubbed)") != null);
 }
 
 test "appendDateTimeSection outputs UTC timestamp" {
