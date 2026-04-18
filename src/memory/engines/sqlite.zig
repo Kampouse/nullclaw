@@ -94,7 +94,7 @@ pub const SqliteMemory = struct {
             \\-- Core memories table
             \\CREATE TABLE IF NOT EXISTS memories (
             \\  id         TEXT PRIMARY KEY,
-            \\  key        TEXT NOT NULL UNIQUE,
+            \\  key        TEXT NOT NULL,
             \\  content    TEXT NOT NULL,
             \\  category   TEXT NOT NULL DEFAULT 'core',
             \\  session_id TEXT,
@@ -102,7 +102,7 @@ pub const SqliteMemory = struct {
             \\  updated_at TEXT NOT NULL
             \\);
             \\CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
-            \\CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
+            \\CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_session ON memories(key, COALESCE(session_id, '__global__'));
             \\CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
             \\
             \\-- FTS5 full-text search (BM25 scoring)
@@ -222,7 +222,22 @@ pub const SqliteMemory = struct {
 
         const cat_str = category.toString();
 
-        const sql = "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(key, COALESCE(session_id, '__global__')) DO UPDATE SET content = excluded.content, category = excluded.category, session_id = excluded.session_id, updated_at = excluded.updated_at";
+        // Delete any existing row with the same key first, so that changing
+        // session_id on an existing key works correctly (upsert semantics).
+        // Without this, the composite unique index (key, COALESCE(session_id))
+        // would allow duplicate keys when session_id differs.
+        {
+            const del_sql = "DELETE FROM memories WHERE key = ?1";
+            var del_stmt: ?*c.sqlite3_stmt = null;
+            const del_rc = c.sqlite3_prepare_v2(self_.db, del_sql, -1, &del_stmt, null);
+            if (del_rc == c.SQLITE_OK) {
+                defer _ = c.sqlite3_finalize(del_stmt);
+                _ = c.sqlite3_bind_text(del_stmt, 1, key.ptr, @intCast(key.len), SQLITE_STATIC);
+                _ = c.sqlite3_step(del_stmt);
+            }
+        }
+
+        const sql = "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
@@ -261,7 +276,8 @@ pub const SqliteMemory = struct {
     fn implGet(ptr: *anyopaque, allocator: std.mem.Allocator, key: []const u8) anyerror!?MemoryEntry {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
-        const sql = "SELECT id, key, content, category, created_at, session_id FROM memories WHERE key = ?1";
+        // Prefer global (session_id IS NULL) entries, fall back to any matching key
+        const sql = "SELECT id, key, content, category, created_at, session_id FROM memories WHERE key = ?1 ORDER BY CASE WHEN session_id IS NULL THEN 0 ELSE 1 END LIMIT 1";
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
@@ -285,47 +301,50 @@ pub const SqliteMemory = struct {
             entries.deinit(allocator);
         }
 
+        // Build session filter clause (strict match — global entries are NOT
+        // included when filtering by session; use recall/search for that).
+        const session_clause = if (session_id != null)
+            "AND m.session_id = ?3 "
+        else
+            "";
+
         if (category) |cat| {
             const cat_str = cat.toString();
-            const sql = "SELECT id, key, content, category, created_at, session_id FROM memories " ++
-                "WHERE category = ?1 ORDER BY updated_at DESC";
+            const sql = try std.fmt.allocPrint(allocator, "SELECT id, key, content, category, created_at, session_id FROM memories m WHERE category = ?1 {s}ORDER BY updated_at DESC LIMIT 500", .{session_clause});
+            defer allocator.free(sql);
             var stmt: ?*c.sqlite3_stmt = null;
             var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
             if (rc != c.SQLITE_OK) return error.PrepareFailed;
             defer _ = c.sqlite3_finalize(stmt);
 
             _ = c.sqlite3_bind_text(stmt, 1, cat_str.ptr, @intCast(cat_str.len), SQLITE_STATIC);
+            if (session_id) |sid| {
+                _ = c.sqlite3_bind_text(stmt, 3, sid.ptr, @intCast(sid.len), SQLITE_STATIC);
+            }
 
             while (true) {
                 rc = c.sqlite3_step(stmt);
                 if (rc == c.SQLITE_ROW) {
                     const entry = try readEntryFromRow(stmt.?, allocator);
-                    if (session_id) |sid| {
-                        if (entry.session_id == null or !std.mem.eql(u8, entry.session_id.?, sid)) {
-                            entry.deinit(allocator);
-                            continue;
-                        }
-                    }
                     try entries.append(allocator, entry);
                 } else break;
             }
         } else {
-            const sql = "SELECT id, key, content, category, created_at, session_id FROM memories ORDER BY updated_at DESC";
+            const sql = try std.fmt.allocPrint(allocator, "SELECT id, key, content, category, created_at, session_id FROM memories m WHERE 1=1 {s}ORDER BY updated_at DESC LIMIT 500", .{session_clause});
+            defer allocator.free(sql);
             var stmt: ?*c.sqlite3_stmt = null;
             var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
             if (rc != c.SQLITE_OK) return error.PrepareFailed;
             defer _ = c.sqlite3_finalize(stmt);
 
+            if (session_id) |sid| {
+                _ = c.sqlite3_bind_text(stmt, 3, sid.ptr, @intCast(sid.len), SQLITE_STATIC);
+            }
+
             while (true) {
                 rc = c.sqlite3_step(stmt);
                 if (rc == c.SQLITE_ROW) {
                     const entry = try readEntryFromRow(stmt.?, allocator);
-                    if (session_id) |sid| {
-                        if (entry.session_id == null or !std.mem.eql(u8, entry.session_id.?, sid)) {
-                            entry.deinit(allocator);
-                            continue;
-                        }
-                    }
                     try entries.append(allocator, entry);
                 } else break;
             }
@@ -337,7 +356,9 @@ pub const SqliteMemory = struct {
     fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
-        const sql = "DELETE FROM memories WHERE key = ?1";
+        // Only delete global (session_id IS NULL) entries to avoid accidentally
+        // removing session-scoped memories when the tool API has no session param.
+        const sql = "DELETE FROM memories WHERE key = ?1 AND session_id IS NULL";
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
@@ -566,6 +587,11 @@ pub const SqliteMemory = struct {
 
         if (fts_query.items.len == 0) return allocator.alloc(MemoryEntry, 0);
 
+        // Use a higher internal limit when session filtering to compensate for
+        // rows that will be filtered out. Without this, requesting limit=10 with
+        // session filter might return only 2 results if 8 belong to other sessions.
+        const effective_limit = if (session_id != null) limit * 4 else limit;
+
         const sql =
             "SELECT m.id, m.key, m.content, m.category, m.created_at, bm25(memories_fts) as score, m.session_id " ++
             "FROM memories_fts f " ++
@@ -583,7 +609,7 @@ pub const SqliteMemory = struct {
         try fts_query.append(allocator, 0);
         const fts_z = fts_query.items[0 .. fts_query.items.len - 1];
         _ = c.sqlite3_bind_text(stmt, 1, fts_z.ptr, @intCast(fts_z.len), SQLITE_STATIC);
-        _ = c.sqlite3_bind_int64(stmt, 2, @intCast(limit));
+        _ = c.sqlite3_bind_int64(stmt, 2, @intCast(effective_limit));
 
         var entries: std.ArrayList(MemoryEntry) = .empty;
         errdefer {
@@ -605,6 +631,8 @@ pub const SqliteMemory = struct {
                     }
                 }
                 try entries.append(allocator, entry);
+                // Stop once we have enough results
+                if (entries.items.len >= limit) break;
             } else break;
         }
 
@@ -640,6 +668,10 @@ pub const SqliteMemory = struct {
         try appendInt(&sql_buf, allocator, keywords.items.len * 2 + 1);
         try sql_buf.append(allocator, 0);
 
+        // Use a higher internal limit when session filtering to compensate for
+        // rows that will be filtered out.
+        const effective_limit = if (session_id != null) limit * 4 else limit;
+
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql_buf.items.ptr, @intCast(sql_buf.items.len), &stmt, null);
         if (rc != c.SQLITE_OK) return allocator.alloc(MemoryEntry, 0);
@@ -657,7 +689,7 @@ pub const SqliteMemory = struct {
             _ = c.sqlite3_bind_text(stmt, @intCast(i * 2 + 1), like.ptr, @intCast(like.len), SQLITE_STATIC);
             _ = c.sqlite3_bind_text(stmt, @intCast(i * 2 + 2), like.ptr, @intCast(like.len), SQLITE_STATIC);
         }
-        _ = c.sqlite3_bind_int64(stmt, @intCast(keywords.items.len * 2 + 1), @intCast(limit));
+        _ = c.sqlite3_bind_int64(stmt, @intCast(keywords.items.len * 2 + 1), @intCast(effective_limit));
 
         var entries: std.ArrayList(MemoryEntry) = .empty;
         errdefer {
@@ -678,6 +710,8 @@ pub const SqliteMemory = struct {
                     }
                 }
                 try entries.append(allocator, entry);
+                // Stop once we have enough results
+                if (entries.items.len >= limit) break;
             } else break;
         }
 
@@ -696,8 +730,7 @@ pub const SqliteMemory = struct {
         const key = try dupeColumnText(stmt, 1, allocator);
         errdefer allocator.free(key);
         const content = try dupeColumnText(stmt, 2, allocator);
-        // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
+        // content ownership transfers to the returned MemoryEntry — no defer free
         const cat_str = try dupeColumnText(stmt, 3, allocator);
         errdefer allocator.free(cat_str);
         const timestamp = try dupeColumnText(stmt, 4, allocator);
@@ -778,12 +811,12 @@ pub const SqliteMemory = struct {
     }
 
     fn getNowTimestamp(allocator: std.mem.Allocator) ![]u8 {
-        const ts = 0;
-        return std.fmt.allocPrint(allocator, "{d}", .{ts});
+        const now = util.timestampUnix();
+        return std.fmt.allocPrint(allocator, "{d}", .{now});
     }
 
     fn generateId(allocator: std.mem.Allocator) ![]u8 {
-        const ts = 0;
+        const ts = util.timestampUnix();
         var buf: [16]u8 = undefined;
         util.randomBytes(&buf);
         const rand_hi = std.mem.readInt(u64, buf[0..8], .little);

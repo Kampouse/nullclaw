@@ -8,6 +8,7 @@ const std = @import("std");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const vector = @import("math.zig");
+const util = @import("../../util.zig");
 const sqlite_mod = if (build_options.enable_sqlite) @import("../engines/sqlite.zig") else @import("../engines/sqlite_disabled.zig");
 const c = sqlite_mod.c;
 const SQLITE_STATIC = sqlite_mod.SQLITE_STATIC;
@@ -135,11 +136,17 @@ pub const SqliteSharedVectorStore = struct {
     fn implSearch(ptr: *anyopaque, alloc: Allocator, query_embedding: []const f32, limit: u32) anyerror![]VectorResult {
         const self: *Self = @ptrCast(@alignCast(ptr));
 
-        const sql = "SELECT memory_key, embedding FROM memory_embeddings";
+        // SQLite has no native vector index, so we must scan all rows and
+        // compute cosine similarity in-process. Cap the scan at 10k rows
+        // to prevent OOM on large tables — a dedicated vector DB (qdrant,
+        // pgvector) should be used for production scale.
+        const max_scan: u32 = @max(limit * 10, 10000);
+        const sql = "SELECT memory_key, embedding FROM memory_embeddings LIMIT ?1";
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
         if (rc != c.SQLITE_OK) return error.PrepareFailed;
         defer _ = c.sqlite3_finalize(stmt);
+        _ = c.sqlite3_bind_int64(stmt, 1, max_scan);
 
         var candidates: std.ArrayList(VectorResult) = .empty;
         errdefer {
@@ -228,13 +235,13 @@ pub const SqliteSharedVectorStore = struct {
 
     fn implHealthCheck(ptr: *anyopaque, alloc: Allocator) anyerror!HealthStatus {
         const self: *Self = @ptrCast(@alignCast(ptr));
-        const start = 0;
+        const start = util.nanoTimestamp();
 
         const sql = "SELECT COUNT(*) FROM memory_embeddings";
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
         if (rc != c.SQLITE_OK) {
-            const elapsed: u64 = @intCast(@max(0, 0 - start));
+            const elapsed: u64 = @intCast(@max(0, util.nanoTimestamp() - start));
             return HealthStatus{
                 .ok = false,
                 .latency_ns = elapsed,
@@ -245,7 +252,7 @@ pub const SqliteSharedVectorStore = struct {
         defer _ = c.sqlite3_finalize(stmt);
 
         rc = c.sqlite3_step(stmt);
-        const elapsed: u64 = @intCast(@max(0, 0 - start));
+        const elapsed: u64 = @intCast(@max(0, util.nanoTimestamp() - start));
 
         if (rc == c.SQLITE_ROW) {
             const n: usize = @intCast(c.sqlite3_column_int64(stmt, 0));

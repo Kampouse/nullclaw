@@ -390,11 +390,11 @@ pub const Memory = struct {
     /// This is a convenience method that wraps recall() and merges results.
     /// If an embedding provider is available, it can be used for vector search;
     /// otherwise falls back to keyword-only search via recall().
-    pub fn search(self: Memory, allocator: std.mem.Allocator, query: []const u8, limit: usize) ![]MemoryEntry {
+    pub fn search(self: Memory, allocator: std.mem.Allocator, query: []const u8, limit: usize, session_id: ?[]const u8) ![]MemoryEntry {
         // For now, delegate to recall() which uses FTS5/keyword search.
         // When embeddings are integrated at a higher level, this serves as
         // the standard entry point that can be upgraded to hybrid search.
-        return self.recall(allocator, query, limit, null);
+        return self.recall(allocator, query, limit, session_id);
     }
 };
 

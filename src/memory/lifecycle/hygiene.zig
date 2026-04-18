@@ -225,7 +225,7 @@ pub fn pruneConversationRows(allocator: std.mem.Allocator, mem: Memory, retentio
     const cutoff_secs = 0 - @as(i64, @intCast(retention_days)) * 24 * 60 * 60;
 
     // Search for conversation-tagged entries
-    const results = mem.search(allocator, "conversation", 1000) catch return 0;
+    const results = mem.search(allocator, "conversation", 1000, null) catch return 0;
     defer {
         for (results) |r| r.deinit(allocator);
         allocator.free(results);

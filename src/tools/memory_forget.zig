@@ -15,7 +15,7 @@ pub const MemoryForgetTool = struct {
     pub const tool_name = "memory_forget";
     pub const tool_description = "Remove a memory by key. Use to delete outdated facts or sensitive data.";
     pub const tool_params =
-        \\{"type":"object","properties":{"key":{"type":"string","description":"The key of the memory to forget"}},"required":["key"]}
+        \\{"type":"object","properties":{"key":{"type":"string","description":"The key of the memory to forget"},"session_id":{"type":"string","description":"Optional session ID. If provided, only forget memories scoped to this session. If omitted, only global (session-scoped) memories are affected."}},"required":["key"]}
     ;
 
     pub const vtable = root.ToolVTable(@This());

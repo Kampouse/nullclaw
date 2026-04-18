@@ -16,7 +16,7 @@ pub const MemoryStoreTool = struct {
     pub const tool_name = "memory_store";
     pub const tool_description = "Store durable user facts, preferences, and decisions in long-term memory. Use category 'core' for stable facts, 'daily' for session notes, 'conversation' for important context only. Do not store routine greetings or every chat message.";
     pub const tool_params =
-        \\{"type":"object","properties":{"key":{"type":"string","description":"Unique key for this memory"},"content":{"type":"string","description":"The information to remember"},"category":{"type":"string","enum":["core","daily","conversation"],"description":"Memory category"}},"required":["key","content"]}
+        \\{"type":"object","properties":{"key":{"type":"string","description":"Unique key for this memory"},"content":{"type":"string","description":"The information to remember"},"category":{"type":"string","enum":["core","daily","conversation"],"description":"Memory category"},"session_id":{"type":"string","description":"Optional session ID to scope this memory to a specific session. Omit for global (session-scoped) memory."}},"required":["key","content"]}
     ;
 
     pub const vtable = root.ToolVTable(@This());
@@ -40,13 +40,14 @@ pub const MemoryStoreTool = struct {
 
         const category_str = root.getString(args, "category") orelse "core";
         const category = MemoryCategory.fromString(category_str);
+        const session_id = root.getString(args, "session_id");
 
         const m = self.memory orelse {
             const msg = try std.fmt.allocPrint(allocator, "Memory backend not configured. Cannot store: {s} = {s}", .{ key, content });
             return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };
 
-        m.store(key, content, category, null) catch |err| {
+        m.store(key, content, category, session_id) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to store memory '{s}': {s}", .{ key, @errorName(err) });
             return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };
