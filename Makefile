@@ -38,7 +38,7 @@ start:
 		pkill -f "$$BIN" 2>/dev/null; sleep 2; pkill -9 -f "$$BIN" 2>/dev/null || true; \
 	fi; \
 	echo "Starting nullclaw in background..."; \
-	nohup $$BIN channel start telegram >> $$LOGFILE 2>&1 & \
+	nohup $$BIN gateway >> $$LOGFILE 2>&1 & \
 	echo $$! > $$PIDFILE; \
 	sleep 1; \
 	if pgrep -f "$$BIN" > /dev/null 2>&1; then \
