@@ -12,6 +12,7 @@ const Secp256k1 = std.crypto.ecc.Secp256k1;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const ws = @import("ws_karlseguin");
 const util = @import("util.zig");
+const http_util = @import("http_util.zig");
 
 const log = std.log.scoped(.nostr);
 
@@ -41,6 +42,96 @@ pub fn hexEncode(out: []u8, bytes: []const u8) void {
 pub fn hexEncode32(bytes: [32]u8) [64]u8 {
     var out: [64]u8 = undefined;
     hexEncode(&out, &bytes);
+    return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bech32 encoding (npub / nsec)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/// Bech32 polymod checksum.
+fn bech32Polymod(values: []const u5) u32 {
+    var chk: u32 = 1;
+    for (values) |v| {
+        const b = chk >> 25;
+        chk = ((chk & 0x01ffffff) << 5) ^ v;
+        if (b & 0x01 != 0) chk ^= 0x3b6a57b2;
+        if (b & 0x02 != 0) chk ^= 0x26508e6d;
+        if (b & 0x04 != 0) chk ^= 0x1ea119fa;
+        if (b & 0x08 != 0) chk ^= 0x3d4233dd;
+        if (b & 0x10 != 0) chk ^= 0x2a1462b3;
+    }
+    return chk;
+}
+
+/// HRP expansion for bech32 checksum. Returns slice into caller-provided buffer.
+/// For HRP of length n, the expansion is n + 1 + n = 2n+1 values.
+fn bech32HrpExpand(hrp: []const u8, buf: *[39]u5) []const u5 {
+    var i: usize = 0;
+    for (hrp) |c| {
+        buf[i] = @intCast(c >> 5);
+        i += 1;
+    }
+    buf[i] = 0;
+    i += 1;
+    for (hrp) |c| {
+        buf[i] = @intCast(c & 0x1f);
+        i += 1;
+    }
+    return buf[0..i];
+}
+
+/// Encode a 32-byte x-only pubkey as npub1... bech32 string.
+/// Returns a stack-allocated [63]u8 (npub1 = 5 chars + 53 data chars + 6 checksum chars).
+pub fn npubEncode(pubkey: [32]u8) [63]u8 {
+    // Build witness program: version 0x00 + 32-byte pubkey = 33 bytes
+    var data8: [33]u8 = undefined;
+    data8[0] = 0x00;
+    @memcpy(data8[1..33], &pubkey);
+
+    // Convert 8-bit to 5-bit groups: 33 bytes -> 53 five-bit values
+    var data5: [53]u5 = undefined;
+    var acc: u32 = 0;
+    var bits: u5 = 0;
+    var di: usize = 0;
+    for (data8) |b| {
+        acc = (acc << 8) | b;
+        bits += 8;
+        while (bits >= 5) {
+            bits -= 5;
+            data5[di] = @intCast((acc >> bits) & 0x1F);
+            di += 1;
+        }
+    }
+    if (bits > 0) {
+        data5[di] = @intCast((acc << (5 - bits)) & 0x1F);
+        di += 1;
+    }
+
+    // Compute bech32 checksum (6 values)
+    const hrp = "npub";
+    var hrp_buf: [39]u5 = undefined;
+    const hrp_exp = bech32HrpExpand(hrp, &hrp_buf);
+    var checksum_data: [hrp_buf.len + data5.len + 6]u5 = undefined;
+    @memcpy(checksum_data[0..hrp_exp.len], hrp_exp);
+    @memcpy(checksum_data[hrp_exp.len .. hrp_exp.len + data5.len], &data5);
+    // Zero-fill checksum positions
+    for (hrp_exp.len + data5.len .. checksum_data.len) |j| {
+        checksum_data[j] = 0;
+    }
+    const chk = bech32Polymod(&checksum_data) ^ 1;
+
+    // Build output: "npub1" + 53 data chars + 6 checksum chars
+    var out: [63]u8 = undefined;
+    @memcpy(out[0..5], "npub1");
+    for (0..53) |i| {
+        out[5 + i] = BECH32_CHARSET[data5[i]];
+    }
+    for (0..6) |i| {
+        out[58 + i] = BECH32_CHARSET[(chk >> (5 * (5 - @as(u5, @intCast(i))))) & 0x1F];
+    }
     return out;
 }
 
@@ -488,12 +579,17 @@ pub const ParsedUrl = struct {
 };
 
 /// Parse a wss:// URL into host, port, path components.
+/// Auto-prepends wss:// if the URL has no scheme prefix.
 pub fn parseRelayUrl(allocator: Allocator, url: []const u8) !ParsedUrl {
-    // Strip wss:// or ws:// prefix
+    // Strip wss:// or ws:// prefix, or auto-prepend wss:// for bare hostnames
     const rest = if (std.ascii.startsWithIgnoreCase(url, "wss://"))
         url[6..]
     else if (std.ascii.startsWithIgnoreCase(url, "ws://"))
         url[5..]
+    else if (std.mem.indexOfScalar(u8, url, ':') == null and
+        !std.ascii.startsWithIgnoreCase(url, "http"))
+        // Bare hostname like "relay.ditto.pub" — assume wss://
+        url
     else
         return error.InvalidRelayUrl;
 
@@ -539,6 +635,7 @@ pub const RelayClient = struct {
             .tls = true,
             .max_size = 512 * 1024, // 512KB max message
             .buffer_size = 8192,
+            .io = http_util.getThreadedIo(),
         }) catch |err| {
             log.err("relay connect to {s} failed: {}", .{ url, err });
             return err;
@@ -548,7 +645,14 @@ pub const RelayClient = struct {
             log.err("relay handshake to {s} failed: {}", .{ url, err });
             return err;
         };
+        // No read timeout here — persistent reader loops need infinite blocking.
+        // One-shot reads (clawstr_read, search) set their own deadlines.
         return .{ .client = client, .allocator = allocator, .url = url };
+    }
+
+    /// Set SO_RCVTIMEO on the underlying socket (ms). Use for one-shot reads.
+    pub fn setReadTimeout(self: *RelayClient, ms: u32) void {
+        self.client.readTimeout(ms) catch {};
     }
 
     /// Publish a signed event to the relay. Returns the OK/NOTICE response.

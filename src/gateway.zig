@@ -6,7 +6,7 @@
 //!   - Body size limits (64KB max)
 //!   - Request timeouts (30s)
 //!   - Bearer token authentication (PairingGuard)
-//!   - Endpoints: /health, /ready, /pair, /webhook, /whatsapp, /telegram, /line, /lark, /qq, /slack/events
+//!   - Endpoints: /health, /ready, /pair, /webhook, /eval, /whatsapp, /telegram, /line, /lark, /qq, /slack/events
 //!
 //! Uses std.http.Server (built-in, no external deps).
 
@@ -2506,7 +2506,9 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     var sec_policy_opt: ?security.SecurityPolicy = null;
     var gateway_thread_observer = GatewayThreadObserver.init(allocator, io);
     defer gateway_thread_observer.deinit();
-    const needs_local_agent = event_bus == null;
+    // Always create a local agent runtime — needed for /eval endpoint even in daemon mode.
+    // Regular channel webhooks still route through the event bus when present.
+    const needs_local_agent = true;
 
     if (config_opt) |cfg_ptr| {
         const cfg = cfg_ptr;
@@ -2676,12 +2678,13 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         const target = parts.next() orelse continue;
 
         // Simple routing — control endpoints + descriptor-driven channel webhooks.
-        const ControlRoute = enum { health, ready, webhook, pair };
+        const ControlRoute = enum { health, ready, webhook, pair, eval };
         const control_route_map = std.StaticStringMap(ControlRoute).initComptime(.{
             .{ "/health", .health },
             .{ "/ready", .ready },
             .{ "/webhook", .webhook },
             .{ "/pair", .pair },
+            .{ "/eval", .eval },
         });
         const base_path = if (std.mem.indexOfScalar(u8, target, '?')) |qi| target[0..qi] else target;
         const is_post = std.mem.eql(u8, method_str, "POST");
@@ -2836,6 +2839,48 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                         response_status = "500 Internal Server Error";
                         response_body = "{\"error\":\"pairing unavailable\"}";
                     }
+                }
+            },
+            .eval => {
+                // Synchronous eval endpoint — allows local agents (e.g. Hermes)
+                // to send messages and get replies directly.
+                // No auth required: gateway only listens on 127.0.0.1.
+                if (!is_post) {
+                    response_status = "405 Method Not Allowed";
+                    response_body = "{\"error\":\"method not allowed\"}";
+                } else if (session_mgr_opt) |*sm| {
+                    const body = extractBody(raw);
+                    if (body) |b| {
+                        const msg_text = jsonStringField(b, "message") orelse jsonStringField(b, "text") orelse b;
+                        const session_id = jsonStringField(b, "session_id");
+
+                        var sk_buf: [128]u8 = undefined;
+                        const session_key = if (session_id) |sid|
+                            std.fmt.bufPrint(&sk_buf, "eval:{s}", .{sid}) catch "eval:default"
+                        else
+                            "eval:hermes";
+
+                        const start_seq = gateway_thread_observer.currentSeq();
+                        const reply: ?[]const u8 = sm.processMessage(session_key, msg_text, null) catch |err| blk: {
+                            response_body = userFacingAgentErrorJson(err);
+                            break :blk null;
+                        };
+                        if (reply) |r| {
+                            defer allocator.free(r);
+                            const tool_events = gateway_thread_observer.collectSince(req_allocator, start_seq) catch &.{};
+                            const thread_events_json = buildThreadEventsJson(req_allocator, tool_events) catch "[]";
+                            const json_resp = buildWebhookSuccessResponse(req_allocator, r, thread_events_json) catch null;
+                            response_body = json_resp orelse "{\"status\":\"ok\"}";
+                        } else if (response_body.len == 0) {
+                            response_body = "{\"status\":\"no_response\"}";
+                        }
+                    } else {
+                        response_status = "400 Bad Request";
+                        response_body = "{\"error\":\"missing request body\"}";
+                    }
+                } else {
+                    response_status = "503 Service Unavailable";
+                    response_body = "{\"error\":\"agent runtime not initialized\"}";
                 }
             },
         } else {

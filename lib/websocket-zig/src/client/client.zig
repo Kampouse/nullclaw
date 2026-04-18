@@ -488,11 +488,21 @@ pub const Stream = struct {
     pub fn read(self: *Stream, buf: []u8) !usize {
         if (self.tls_client) |tls_client| {
             var w: std.Io.Writer = .fixed(buf);
+            var consecutive_zeros: usize = 0;
             while (true) {
-                const n = try tls_client.client.reader.stream(&w, .limited(buf.len));
+                const n = tls_client.client.reader.stream(&w, .limited(buf.len)) catch |err| {
+                    // If socket has SO_RCVTIMEO set, EAGAIN/EWOULDBLOCK means timeout.
+                    // Return WouldBlock so callers can handle it (e.g. break read loop).
+                    if (err == error.WouldBlock or err == error.ConnectionTimedOut) return err;
+                    return err;
+                };
                 if (n != 0) {
                     return n;
                 }
+                // TLS returned 0 bytes — with SO_RCVTIMEO this means socket timed out.
+                // Without timeout, 0 means connection closed. Break either way.
+                consecutive_zeros += 1;
+                if (consecutive_zeros >= 3) return error.WouldBlock;
             }
         }
         return posix.read(self.stream.socket.handle, buf);

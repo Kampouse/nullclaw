@@ -53,9 +53,10 @@ pub fn MessageQueue(comptime T: type) type {
                 }
                 self.mutex.unlock();
 
-                // Yield CPU to avoid contention when queue is empty
-                // Uses util.sleep (C nanosleep) for thread-safe sleeping without I/O context
-                // util.sleep(10_000); // 10 microseconds
+                // Sleep briefly to avoid CPU spin when queue is empty.
+                // 1ms is imperceptible latency for message processing
+                // but drops idle CPU from ~100% to ~0% per worker.
+                util.sleep(1 * std.time.ns_per_ms);
             }
 
             // Queue closed, return any remaining items

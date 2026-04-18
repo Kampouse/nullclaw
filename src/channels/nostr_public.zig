@@ -338,6 +338,10 @@ pub const NostrPublicChannel = struct {
         while (self.running.load(.acquire)) {
             // readMessage returns null on close/error.
             const raw = self.relay.?.readMessage() catch |err| {
+                if (err == error.WouldBlock) {
+                    // Socket timeout — no data received, continue waiting.
+                    continue;
+                }
                 log.warn("nostr_public: readMessage error: {}", .{err});
                 break;
             } orelse {
@@ -597,21 +601,12 @@ pub const NostrPublicChannel = struct {
         @memcpy(key_file_path_buf[config_dir.len..][0..key_file_name.len], key_file_name);
         const key_file_path = key_file_path_buf[0..path_total];
 
-        // Try reading existing .nostr_key file
-        const file = std.Io.Dir.cwd().openFile(io, key_file_path, .{}) catch |err| {
+        // Try reading existing .nostr_key file (use readFileAlloc to avoid reader buffering issues)
+        const content = std.Io.Dir.cwd().readFileAlloc(io, key_file_path, allocator, .limited(1024)) catch |err| {
             if (err != error.FileNotFound) {
                 log.warn("nostr_public: error reading .nostr_key: {}", .{err});
             }
             // File doesn't exist (or unreadable) — generate a new key
-            return generateAndSaveKey(allocator, store, key_file_path);
-        };
-        defer file.close(io);
-
-        // Read file content via reader
-        var buf: [512]u8 = undefined;
-        var reader = file.reader(io, &buf);
-        const content = reader.interface.readAlloc(allocator, 512) catch |err| {
-            log.warn("nostr_public: error reading .nostr_key content: {}", .{err});
             return generateAndSaveKey(allocator, store, key_file_path);
         };
         defer allocator.free(content);
@@ -994,6 +989,9 @@ pub const NostrPublicChannel = struct {
             return err;
         };
         defer client.deinit();
+
+        // Set read timeout for one-shot search reads.
+        client.setReadTimeout(10_000);
 
         // Build NIP-50 search filter.
         const filter = try nostr.buildFilter(self.allocator, .{

@@ -1535,3 +1535,68 @@ test "merge_system_into_user streaming body also merges" {
     const content = messages.items[0].object.get("content").?.string;
     try std.testing.expect(std.mem.indexOf(u8, content, "[System: Be concise]") != null);
 }
+
+test "multi-turn with markdown quotes and special chars" {
+    const allocator = std.testing.allocator;
+
+    // Reproduce the exact scenario from the ollama-cloud bug:
+    // user asks a question, assistant responds with markdown containing quotes,
+    // backticks, newlines, asterisks, then user sends a short follow-up.
+    const assistant_response =
+        "I have a wide range of tools, but they fall into a few specific categories. Here is exactly what I can use right now:\n\n" ++
+        "### 🛠 System & Code (The \"Hands\")\n" ++
+        "*   `shell`: I can run terminal commands (like ls, grep, curl, etc.). *Note: I just found out npx is not installed.*\n" ++
+        "*   `file_read` / `file_write` / `file_edit`: I can read, create, and modify any file.\n\n" ++
+        "### 🌐 Web & Network (The \"Eyes & Ears\")\n" ++
+        "*   `web_search`: I can search the internet.\n" ++
+        "*   `http_request`: I can make direct API calls.\n\n" ++
+        "### 📩 Nostr (The \"Social Connection\")\n" ++
+        "*   `nostr`: I can post notes, read events, and search (NIP-50).\n\n" ++
+        "### 🧠 Memory & Logic (The \"Brain\")\n" ++
+        "*   `memory_store` / `recall` / `forget`: I can remember things across sessions.\n" ++
+        "*   `delegate` / `spawn`: I can hire other specialized agents.";
+
+    const msgs = [_]root.ChatMessage{
+        root.ChatMessage.user("What tool you have access?"),
+        root.ChatMessage.assistant(assistant_response),
+        root.ChatMessage.user("Igh\nUgh"),
+    };
+    const req = root.ChatRequest{ .messages = &msgs, .model = "gemma4:31b-cloud" };
+
+    const body = try buildChatRequestBody(allocator, req, "gemma4:31b-cloud", 0.7, false);
+    defer allocator.free(body);
+
+    // The body must be valid JSON — parse it back
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch |err| {
+        std.debug.print("FAILED TO PARSE GENERATED JSON:\n{s}\n", .{body});
+        return err;
+    };
+    defer parsed.deinit();
+
+    // Verify structure
+    const root_obj = parsed.value.object;
+    try std.testing.expectEqualStrings("gemma4:31b-cloud", root_obj.get("model").?.string);
+
+    const messages = root_obj.get("messages").?.array;
+    try std.testing.expectEqual(@as(usize, 3), messages.items.len);
+
+    // Verify user message 1
+    const msg0 = messages.items[0].object;
+    try std.testing.expectEqualStrings("user", msg0.get("role").?.string);
+    try std.testing.expectEqualStrings("What tool you have access?", msg0.get("content").?.string);
+
+    // Verify assistant message — must contain the quotes and backticks verbatim
+    const msg1 = messages.items[1].object;
+    try std.testing.expectEqualStrings("assistant", msg1.get("role").?.string);
+    const asst_content = msg1.get("content").?.string;
+    try std.testing.expect(std.mem.indexOf(u8, asst_content, "The \"Hands\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, asst_content, "The \"Eyes & Ears\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, asst_content, "`shell`") != null);
+    try std.testing.expect(std.mem.indexOf(u8, asst_content, "The \"Brain\"") != null);
+    try std.testing.expectEqualStrings(assistant_response, asst_content);
+
+    // Verify user message 2 with newline
+    const msg2 = messages.items[2].object;
+    try std.testing.expectEqualStrings("user", msg2.get("role").?.string);
+    try std.testing.expectEqualStrings("Igh\nUgh", msg2.get("content").?.string);
+}

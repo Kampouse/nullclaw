@@ -75,14 +75,23 @@ const SEARCH_RELAYS = [_][]const u8{
     "wss://relay.cloistr.xyz",
 };
 
+/// Relays known to carry Clawstr (kind 1111) content.
+/// ditto.pub is the primary Clawstr relay.
+const CLAWSTR_RELAYS = [_][]const u8{
+    "wss://relay.ditto.pub",
+    "wss://nos.lol",
+    "wss://relay.nostr.net",
+    "wss://relay.crostr.com",
+};
+
 pub const NostrTool = struct {
     config_dir: []const u8,
     allocator: std.mem.Allocator,
 
     pub const tool_name = "nostr";
-    pub const tool_description = "Native Nostr operations. Actions: post (kind 1 note), read (subscribe + fetch events from multiple relays, deduplicated), search (NIP-50 full-text search across relay events), profile (kind 0 metadata), react (kind 7 reaction), channel_create (NIP-28 create channel, kind 40), channel_send (NIP-28 send message to channel, kind 42), channel_read (NIP-28 read channel messages, kinds 41/42). Supports full NIP-01 filters (kinds, authors, #p, #e, #t, since, until, limit). Uses direct WebSocket relay connections with BIP-340 Schnorr signing.";
+    pub const tool_description = "Native Nostr operations. Actions: identity (return this agent's npub and hex pubkey), post (kind 1 note), read (subscribe + fetch events from multiple relays, deduplicated), search (NIP-50 full-text search across relay events), profile (kind 0 metadata), react (kind 7 reaction), channel_create (NIP-28 create channel, kind 40), channel_send (NIP-28 send message to channel, kind 42), channel_read (NIP-28 read channel messages, kinds 41/42). Supports full NIP-01 filters (kinds, authors, #p, #e, #t, since, until, limit). Uses direct WebSocket relay connections with BIP-340 Schnorr signing.";
     pub const tool_params =
-        \\{"type":"object","properties":{"action":{"type":"string","enum":["post","read","search","profile","react","channel_create","channel_send","channel_read"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react/channel_send"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"},"deep_search":{"type":"boolean","description":"For read/search: when true, fire all relays in parallel and return as soon as 5 respond with events. Default false returns after the first relay responds (fastest response wins)."},"name":{"type":"string","description":"For channel_create: channel name"},"about":{"type":"string","description":"For channel_create: channel description/about text"},"channel_id":{"type":"string","description":"For channel_send/channel_read: event ID of the kind 40 channel creation event"}},"required":["action"]}
+        \\{"type":"object","properties":{"action":{"type":"string","enum":["identity","post","read","search","profile","react","channel_create","channel_send","channel_read","clawstr_post","clawstr_read"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react/channel_send/clawstr_post"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"},"deep_search":{"type":"boolean","description":"For read/search: when true, fire all relays in parallel and return as soon as 5 respond with events. Default false returns after the first relay responds (fastest response wins)."},"name":{"type":"string","description":"For channel_create: channel name"},"about":{"type":"string","description":"For channel_create: channel description/about text"},"channel_id":{"type":"string","description":"For channel_send/channel_read: event ID of the kind 40 channel creation event"},"subclaw":{"type":"string","description":"For clawstr_post/clawstr_read: subclaw community name (e.g. ai-freedom, videogames)"},"reply_to":{"type":"string","description":"For clawstr_post: event ID of the post being replied to"},"reply_pubkey":{"type":"string","description":"For clawstr_post: pubkey of the post author being replied to"}}}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -132,16 +141,26 @@ pub const NostrTool = struct {
             }
         }
         if (relay_urls.items.len == 0) {
-            // Load from config
-            const config_relays = self.loadRelays(allocator, io) catch &.{};
-            for (config_relays) |r| {
-                try relay_urls.append(allocator, r);
+            if (std.mem.startsWith(u8, action, "clawstr")) {
+                // Clawstr actions use their own relay list — config relays
+                // (agent's private message relay) don't carry public Clawstr content.
+                for (&CLAWSTR_RELAYS) |r| {
+                    try relay_urls.append(allocator, try allocator.dupe(u8, r));
+                }
+            } else {
+                // Load from config
+                const config_relays = self.loadRelays(allocator, io) catch &.{};
+                for (config_relays) |r| {
+                    try relay_urls.append(allocator, r);
+                }
             }
         }
         if (relay_urls.items.len == 0) {
             // Use appropriate fallback relays based on action
             const fallback_relays = if (std.mem.eql(u8, action, "search"))
                 &SEARCH_RELAYS
+            else if (std.mem.startsWith(u8, action, "clawstr"))
+                &CLAWSTR_RELAYS
             else
                 &WELL_KNOWN_RELAYS;
             for (fallback_relays) |r| {
@@ -149,7 +168,9 @@ pub const NostrTool = struct {
             }
         }
 
-        if (std.mem.eql(u8, action, "post")) {
+        if (std.mem.eql(u8, action, "identity")) {
+            return self.actionIdentity(allocator, sk_buf);
+        } else if (std.mem.eql(u8, action, "post")) {
             if (!has_sk) return ToolResult.fail("Private key required for posting. Provide 'private_key' parameter or configure channels.nostr_public.private_key.");
             return self.actionPost(allocator, sk_buf, relay_urls.items, args);
         } else if (std.mem.eql(u8, action, "read")) {
@@ -170,8 +191,12 @@ pub const NostrTool = struct {
             return self.actionChannelSend(allocator, sk_buf, relay_urls.items, args);
         } else if (std.mem.eql(u8, action, "channel_read")) {
             return self.actionChannelRead(allocator, relay_urls.items, args);
+        } else if (std.mem.eql(u8, action, "clawstr_post")) {
+            return self.actionClawstrPost(allocator, sk_buf, relay_urls.items, args);
+        } else if (std.mem.eql(u8, action, "clawstr_read")) {
+            return self.actionClawstrRead(allocator, relay_urls.items, args);
         } else {
-            return ToolResult.fail("Unknown action. Use: post, read, search, profile, react, channel_create, channel_send, channel_read.");
+            return ToolResult.fail("Unknown action. Use: identity, post, read, search, profile, react, channel_create, channel_send, channel_read, clawstr_post, clawstr_read.");
         }
     }
 
@@ -213,6 +238,9 @@ pub const NostrTool = struct {
             return;
         };
         defer client.deinit();
+
+        // Set read timeout for one-shot query reads.
+        client.setReadTimeout(10_000);
 
         const sub_id = client.subscribe(ctx.filter_json) catch |err| {
             const msg = std.fmt.allocPrint(allocator, "{s}: subscribe {}", .{ relay, err }) catch relay;
@@ -475,6 +503,24 @@ pub const NostrTool = struct {
     }
 
     // ── Actions ─────────────────────────────────────────────────────
+
+    /// Return this agent's Nostr identity (npub + hex pubkey).
+    /// Derives the public key from the configured private key using secp256k1,
+    /// then encodes it as both hex and bech32 npub format.
+    fn actionIdentity(self: *NostrTool, allocator: std.mem.Allocator, sk: [32]u8) !ToolResult {
+        _ = self;
+        const kp = nostr.keyPairFromSecret(sk) catch
+            return ToolResult.fail("Failed to derive public key from private key.");
+
+        const hex_pk = nostr.hexEncode32(kp.public_key);
+        const npub = nostr.npubEncode(kp.public_key);
+
+        const result = try std.fmt.allocPrint(allocator,
+            "Nostr Identity:\n  npub: {s}\n  hex:  {s}",
+            .{ &npub, &hex_pk },
+        );
+        return ToolResult.ok(result);
+    }
 
     fn actionPost(self: *NostrTool, allocator: std.mem.Allocator, sk: [32]u8, relays: []const []const u8, args: JsonObjectMap) !ToolResult {
         const content = root.getString(args, "content") orelse
@@ -1034,14 +1080,280 @@ pub const NostrTool = struct {
         return ToolResult.okAlloc(allocator, results.items);
     }
 
+    // ── Clawstr (clawstr.com) ──────────────────────────────────────
+
+    /// Post to a Clawstr subclaw community (kind 1111, NIP-22 + NIP-73 + NIP-32).
+    fn actionClawstrPost(self: *NostrTool, allocator: std.mem.Allocator, sk: [32]u8, relays: []const []const u8, args: JsonObjectMap) !ToolResult {
+        const subclaw = root.getString(args, "subclaw") orelse
+            return ToolResult.fail("Missing 'subclaw' parameter. Specify the community name (e.g. ai-freedom, videogames).");
+        const content = root.getString(args, "content") orelse
+            return ToolResult.fail("Missing 'content' parameter.");
+        const reply_to = root.getString(args, "reply_to");
+        const reply_pubkey = root.getString(args, "reply_pubkey");
+
+        const kp = nostr.keyPairFromSecret(sk) catch
+            return ToolResult.fail("Invalid private key.");
+
+        const now = util.timestampUnix();
+
+        // Build NIP-73 web URL identifier for the subclaw
+        const subclaw_url = try std.fmt.allocPrint(allocator, "https://clawstr.com/c/{s}", .{subclaw});
+        defer allocator.free(subclaw_url);
+
+        // Count tags: 4 base (I, K, i, k) + 2 AI labels (L, l) + optional reply tags (e, p, k)
+        const is_reply = reply_to != null;
+        const tag_count: usize = if (is_reply) 9 else 6;
+        var tags = try allocator.alloc(nostr.Tag, tag_count);
+        defer allocator.free(tags);
+
+        // Tag 0: Root scope — ["I", "<subclaw_url>"]
+        {
+            const fields = try allocator.alloc([]const u8, 2);
+            fields[0] = try allocator.dupe(u8, "I");
+            fields[1] = try allocator.dupe(u8, subclaw_url);
+            tags[0] = .{ .fields = fields };
+        }
+        // Tag 1: Root kind — ["K", "web"]
+        {
+            const fields = try allocator.alloc([]const u8, 2);
+            fields[0] = try allocator.dupe(u8, "K");
+            fields[1] = try allocator.dupe(u8, "web");
+            tags[1] = .{ .fields = fields };
+        }
+        // Tag 2: Parent item — ["i", "<subclaw_url>"] (same as root for top-level)
+        {
+            const fields = try allocator.alloc([]const u8, 2);
+            fields[0] = try allocator.dupe(u8, "i");
+            fields[1] = try allocator.dupe(u8, subclaw_url);
+            tags[2] = .{ .fields = fields };
+        }
+        // Tag 3: Parent kind — ["k", "web"]
+        {
+            const fields = try allocator.alloc([]const u8, 2);
+            fields[0] = try allocator.dupe(u8, "k");
+            fields[1] = try allocator.dupe(u8, "web");
+            tags[3] = .{ .fields = fields };
+        }
+        // Tag 4: NIP-32 AI label — ["L", "agent"]
+        {
+            const fields = try allocator.alloc([]const u8, 2);
+            fields[0] = try allocator.dupe(u8, "L");
+            fields[1] = try allocator.dupe(u8, "agent");
+            tags[4] = .{ .fields = fields };
+        }
+        // Tag 5: NIP-32 AI value — ["l", "ai", "agent"]
+        {
+            const fields = try allocator.alloc([]const u8, 3);
+            fields[0] = try allocator.dupe(u8, "l");
+            fields[1] = try allocator.dupe(u8, "ai");
+            fields[2] = try allocator.dupe(u8, "agent");
+            tags[5] = .{ .fields = fields };
+        }
+
+        // Reply tags
+        if (is_reply) {
+            // Tag 6: ["e", "<reply_to>", "<relay>", "<reply_pubkey>"]
+            {
+                const fields = try allocator.alloc([]const u8, 4);
+                fields[0] = try allocator.dupe(u8, "e");
+                fields[1] = try allocator.dupe(u8, reply_to.?);
+                fields[2] = try allocator.dupe(u8, if (relays.len > 0) relays[0] else "");
+                fields[3] = try allocator.dupe(u8, reply_pubkey orelse "");
+                tags[6] = .{ .fields = fields };
+            }
+            // Tag 7: ["p", "<reply_pubkey>"]
+            {
+                const fields = try allocator.alloc([]const u8, 2);
+                fields[0] = try allocator.dupe(u8, "p");
+                fields[1] = try allocator.dupe(u8, reply_pubkey orelse "");
+                tags[7] = .{ .fields = fields };
+            }
+            // Tag 8: ["k", "1111"] — parent event kind
+            {
+                const fields = try allocator.alloc([]const u8, 2);
+                fields[0] = try allocator.dupe(u8, "k");
+                fields[1] = try allocator.dupe(u8, "1111");
+                tags[8] = .{ .fields = fields };
+            }
+        }
+
+        var event: nostr.Event = .{
+            .id = [_]u8{0} ** 32,
+            .pubkey = kp.public_key,
+            .created_at = now,
+            .kind = 1111,
+            .tags = tags,
+            .content = content,
+            .sig = [_]u8{0} ** 64,
+        };
+        nostr.signEvent(&event, sk, allocator) catch
+            return ToolResult.fail("Failed to sign Clawstr event.");
+
+        const event_json = nostr.eventToJson(event, allocator) catch
+            return ToolResult.fail("Failed to serialize event.");
+        defer allocator.free(event_json);
+
+        // Cleanup tags
+        for (tags) |t| t.deinit(allocator);
+
+        log.info("clawstr_post to c/{s}: {s}", .{ subclaw, content[0..@min(content.len, 60)] });
+
+        var results: std.ArrayListUnmanaged(u8) = .empty;
+        const w = struct {
+            fn print(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, ap: anytype) !void {
+                const line = try std.fmt.allocPrint(alloc, fmt, ap);
+                defer alloc.free(line);
+                try buf.appendSlice(alloc, line);
+            }
+        }.print;
+
+        const action_type = if (is_reply) "Reply" else "Post";
+        try w(&results, allocator, "{s} to c/{s} (kind 1111)\n", .{ action_type, subclaw });
+        try w(&results, allocator, "Relays:\n", .{});
+
+        for (relays) |relay| {
+            try w(&results, allocator, "  {s}: ", .{relay});
+            const result = self.publishToRelay(allocator, relay, event_json);
+            if (result) |resp| {
+                defer allocator.free(resp);
+                try w(&results, allocator, "{s}\n", .{resp[0..@min(resp.len, 100)]});
+            } else {
+                try w(&results, allocator, "FAILED\n", .{});
+            }
+        }
+
+        return ToolResult.okAlloc(allocator, results.items);
+    }
+
+    /// Read posts from a Clawstr subclaw community.
+    fn actionClawstrRead(_: *NostrTool, allocator: std.mem.Allocator, relays: []const []const u8, args: JsonObjectMap) !ToolResult {
+        const subclaw = root.getString(args, "subclaw") orelse
+            return ToolResult.fail("Missing 'subclaw' parameter. Specify the community name (e.g. ai-freedom, videogames).");
+
+        const limit: u32 = if (root.getInt(args, "filter_limit")) |l|
+            @intCast(l)
+        else
+            30;
+
+        const subclaw_url = try std.fmt.allocPrint(allocator, "https://clawstr.com/c/{s}", .{subclaw});
+        defer allocator.free(subclaw_url);
+
+        // Build Clawstr filter: kinds [1111], #I [subclaw_url], #K [web], #l [ai], #L [agent]
+        const filter_json = try std.fmt.allocPrint(allocator,
+            \\"{{"kinds":[1111],"#I":["{s}"],"#K":["web"],"#l":["ai"],"#L":["agent"],"limit":{d}}}\\
+        , .{ subclaw_url, limit });
+        defer allocator.free(filter_json);
+
+        // Query relays sequentially (avoids TLS thread issues)
+        var all_events: std.ArrayListUnmanaged(nostr.Event) = .empty;
+        defer {
+            for (all_events.items) |*e| nostr.freeEvent(e.*, allocator);
+            all_events.deinit(allocator);
+        }
+
+        for (relays) |relay| {
+            var client = nostr.RelayClient.connect(allocator, relay) catch |err| {
+                log.warn("clawstr_read: connect to {s} failed: {}", .{ relay, err });
+                continue;
+            };
+            defer client.deinit();
+
+            // Set read timeout for one-shot reads so readMessage() doesn't block forever.
+            client.setReadTimeout(10_000);
+
+            const sub_id = client.subscribe(filter_json) catch |err| {
+                log.warn("clawstr_read: subscribe to {s} failed: {}", .{ relay, err });
+                continue;
+            };
+            defer allocator.free(sub_id);
+
+            // Collect events until EOSE or timeout
+            const timeout_ns: u64 = 8 * std.time.ns_per_s;
+            const start = util.nanoTimestamp();
+            var local_events: std.ArrayListUnmanaged(nostr.Event) = .empty;
+
+            while (util.nanoTimestamp() - start < timeout_ns) {
+                const msg = client.readMessage() catch break;
+                if (msg) |m| {
+                    defer allocator.free(m);
+                    if (std.mem.indexOf(u8, m, "\"EOSE\"") != null) break;
+                    if (std.mem.indexOf(u8, m, "\"EVENT\"") != null) {
+                        if (nostr.parseEventJson(allocator, m)) |ev| {
+                            local_events.append(allocator, ev) catch {};
+                        } else |_| {}
+                    }
+                } else break;
+            }
+
+            for (local_events.items) |ev| {
+                // Dedup by event ID
+                var dup = false;
+                for (all_events.items) |existing| {
+                    if (std.mem.eql(u8, &existing.id, &ev.id)) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    all_events.append(allocator, ev) catch continue;
+                } else {
+                    nostr.freeEvent(ev, allocator);
+                }
+            }
+            local_events.deinit(allocator);
+        }
+
+        // Format results
+        var results: std.ArrayListUnmanaged(u8) = .empty;
+        const w = struct {
+            fn print(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, ap: anytype) !void {
+                const line = try std.fmt.allocPrint(alloc, fmt, ap);
+                defer alloc.free(line);
+                try buf.appendSlice(alloc, line);
+            }
+        }.print;
+
+        try w(&results, allocator, "Clawstr c/{s} — {d} posts\n", .{ subclaw, all_events.items.len });
+
+        // Sort by created_at descending
+        std.mem.sort(nostr.Event, all_events.items, {}, struct {
+            fn lessThan(_: void, a: nostr.Event, b: nostr.Event) bool {
+                return a.created_at > b.created_at;
+            }
+        }.lessThan);
+
+        for (all_events.items, 0..) |ev, i| {
+            const pk_hex = nostr.hexEncode32(ev.pubkey);
+            try w(&results, allocator, "\n--- Post {d} ---\n", .{i + 1});
+            try w(&results, allocator, "Author: {s}\n", .{&pk_hex});
+            try w(&results, allocator, "Time: {d}\n", .{ev.created_at});
+            try w(&results, allocator, "ID: ", .{});
+            const id_hex = nostr.hexEncode32(ev.id);
+            try w(&results, allocator, "{s}\n", .{&id_hex});
+            try w(&results, allocator, "{s}\n", .{ev.content});
+        }
+
+        if (all_events.items.len == 0) {
+            try w(&results, allocator, "\nNo posts found in c/{s}.\n", .{subclaw});
+        }
+
+        return ToolResult.okAlloc(allocator, results.items);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────
 
     fn publishToRelay(self: *NostrTool, allocator: std.mem.Allocator, relay: []const u8, event_json: []const u8) ?[]const u8 {
         _ = self;
-        var client = nostr.RelayClient.connect(allocator, relay) catch return null;
+        var client = nostr.RelayClient.connect(allocator, relay) catch |err| {
+            log.warn("publishToRelay: connect to {s} failed: {}", .{ relay, err });
+            return null;
+        };
         defer client.deinit();
 
-        return client.publish(event_json) catch null;
+        return client.publish(event_json) catch |err| {
+            log.warn("publishToRelay: publish to {s} failed: {}", .{ relay, err });
+            return null;
+        };
     }
 
     /// Load private key from nullclaw config, or auto-generate one.
@@ -1049,13 +1361,20 @@ pub const NostrTool = struct {
     fn loadPrivateKey(self: *NostrTool, allocator: std.mem.Allocator, io: std.Io) ![32]u8 {
         // 1. Try config.json channels.nostr_public.private_key
         const from_config = try self.loadPrivateKeyFromConfig(allocator, io);
-        if (from_config) |sk| return sk;
+        if (from_config) |sk| {
+            log.info("nostr_tool: loaded private key from config", .{});
+            return sk;
+        }
 
         // 2. Try .nostr_key file
         const from_file = try self.loadPrivateKeyFromFile(allocator, io);
-        if (from_file) |sk| return sk;
+        if (from_file) |sk| {
+            log.info("nostr_tool: loaded private key from .nostr_key file", .{});
+            return sk;
+        }
 
         // 3. Auto-generate a new keypair and save it
+        log.warn("nostr_tool: no existing key found, generating new keypair", .{});
         return try self.generateAndSaveKey(allocator, io);
     }
 
@@ -1065,18 +1384,8 @@ pub const NostrTool = struct {
             return null;
         defer allocator.free(config_path);
 
-        const file = std.Io.Dir.cwd().openFile(io, config_path, .{}) catch return null;
-        defer file.close(io);
-
-        const stat = file.stat(io) catch return null;
-        const content = allocator.alloc(u8, @intCast(stat.size)) catch return null;
+        const content = std.Io.Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(64 * 1024)) catch return null;
         defer allocator.free(content);
-
-        var read_buf: [4096]u8 = undefined;
-        var reader = file.reader(io, &read_buf);
-        const data = reader.interface.allocRemaining(allocator, .limited64(@intCast(stat.size))) catch return null;
-        defer allocator.free(data);
-        @memcpy(content, data);
 
         var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return null;
         defer parsed.deinit();
@@ -1116,12 +1425,8 @@ pub const NostrTool = struct {
         @memcpy(path_buf[self.config_dir.len..][0..key_file_name.len], key_file_name);
         const key_file_path = path_buf[0..path_total];
 
-        const file = std.Io.Dir.cwd().openFile(io, key_file_path, .{}) catch return null;
-        defer file.close(io);
-
-        var buf: [512]u8 = undefined;
-        var reader = file.reader(io, &buf);
-        const content = reader.interface.readAlloc(allocator, 512) catch return null;
+        // Use readFileAlloc to avoid reader buffering issues with std.Io in threads
+        const content = std.Io.Dir.cwd().readFileAlloc(io, key_file_path, allocator, .limited(1024)) catch return null;
         defer allocator.free(content);
 
         const trimmed = std.mem.trim(u8, content, " \t\r\n");
@@ -1130,7 +1435,10 @@ pub const NostrTool = struct {
         // Decrypt
         const secrets_mod = @import("../security/secrets.zig");
         const store = secrets_mod.SecretStore.init(self.config_dir, true);
-        const decrypted = store.decryptSecret(allocator, trimmed) catch return null;
+        const decrypted = store.decryptSecret(allocator, trimmed) catch |err| {
+            log.warn("nostr_tool: failed to decrypt .nostr_key: {} (file exists, key may have changed)", .{err});
+            return null;
+        };
         defer allocator.free(decrypted);
 
         const sk = nostr.hexDecodeFixed(32, decrypted) catch return null;

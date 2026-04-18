@@ -921,9 +921,20 @@ pub fn runTelegramLoop(
             if (std.mem.startsWith(u8, trimmed, "/")) {
                 log.debug("Telegram polling loop: handling command immediately: {s}", .{trimmed});
 
-                // Build session key for command processing
+                // Build session key for command processing (must match worker routing)
                 var key_buf: [256]u8 = undefined;
-                const session_key = std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ tg_ptr.account_id, msg.sender }) catch msg.sender;
+                var cmd_routed_key: ?[]const u8 = null;
+                defer if (cmd_routed_key) |key| allocator.free(key);
+                const session_key = blk: {
+                    const route = agent_routing.resolveRouteWithSession(allocator, .{
+                        .channel = "telegram",
+                        .account_id = tg_ptr.account_id,
+                        .peer = .{ .kind = if (msg.is_group) .group else .direct, .id = msg.sender },
+                    }, config.agent_bindings, config.agents, config.session) catch break :blk std.fmt.bufPrint(&key_buf, "telegram:{s}:{s}", .{ tg_ptr.account_id, msg.sender }) catch msg.sender;
+                    allocator.free(route.main_session_key);
+                    cmd_routed_key = route.session_key;
+                    break :blk route.session_key;
+                };
 
                 // Calculate reply_to_id before error handling
                 const reply_to_id: ?i64 = if (msg.is_group or tg_ptr.reply_in_private) msg.message_id else null;
