@@ -1029,6 +1029,7 @@ pub const SlackChannel = struct {
 
     /// Helper function to append JSON-escaped string to ArrayListUnmanaged (Zig 0.16 compatibility)
     fn appendJsonStringArrayList(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+        try buf.append(alloc, '"');
         for (s) |c| {
             switch (c) {
                 '\\' => try buf.appendSlice(alloc, "\\\\"),
@@ -1039,6 +1040,7 @@ pub const SlackChannel = struct {
                 else => try buf.append(alloc, c),
             }
         }
+        try buf.append(alloc, '"');
     }
 
     pub const vtable = root.Channel.VTable{

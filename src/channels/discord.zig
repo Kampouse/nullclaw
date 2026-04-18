@@ -921,12 +921,10 @@ pub const DiscordChannel = struct {
         try metadata_buf.appendSlice(self.allocator, "{\"is_dm\":");
         try metadata_buf.appendSlice(self.allocator, if (guild_id == null) "true" else "false");
         try metadata_buf.appendSlice(self.allocator, ",\"account_id\":");
-        try metadata_buf.appendSlice(self.allocator, self.account_id);
-        // TODO: Proper JSON escaping for account_id
+        try root.json_util.appendJsonString(&metadata_buf, self.allocator, self.account_id);
         if (guild_id) |gid| {
             try metadata_buf.appendSlice(self.allocator, ",\"guild_id\":");
-            try metadata_buf.appendSlice(self.allocator, gid);
-            // TODO: Proper JSON escaping for guild_id
+            try root.json_util.appendJsonString(&metadata_buf, self.allocator, gid);
         }
         try metadata_buf.appendSlice(self.allocator, "}");
 

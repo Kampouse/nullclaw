@@ -169,14 +169,14 @@ pub const IMessageChannel = struct {
         // Build JSON metadata manually (TODO: proper JSON escaping)
         metadata_buf.appendSlice(self.allocator, "{") catch return;
         metadata_buf.appendSlice(self.allocator, "\"account_id\":") catch return;
-        metadata_buf.appendSlice(self.allocator, self.account_id) catch return;
+        root.json_util.appendJsonString(&metadata_buf, self.allocator, self.account_id) catch return;
         metadata_buf.appendSlice(self.allocator, ",\"is_dm\":") catch return;
         metadata_buf.appendSlice(self.allocator, if (msg.is_group) "false" else "true") catch return;
         metadata_buf.appendSlice(self.allocator, ",\"is_group\":") catch return;
         metadata_buf.appendSlice(self.allocator, if (msg.is_group) "true" else "false") catch return;
         if (msg.is_group) {
             metadata_buf.appendSlice(self.allocator, ",\"channel_id\":") catch return;
-            metadata_buf.appendSlice(self.allocator, group_peer_id) catch return;
+            root.json_util.appendJsonString(&metadata_buf, self.allocator, group_peer_id) catch return;
         }
         metadata_buf.appendSlice(self.allocator, "}") catch return;
 

@@ -47,15 +47,17 @@ pub const RuntimeProviderBundle = struct {
 
         const cdir = configDir(cfg);
 
+        const raw_primary = api_key.resolveApiKeyFromConfig(
+            allocator,
+            cfg.default_provider,
+            cfg.providers,
+        ) catch null;
         bundle.primary_key = try decryptKey(
             allocator,
             cdir,
-            api_key.resolveApiKeyFromConfig(
-                allocator,
-                cfg.default_provider,
-                cfg.providers,
-            ) catch null,
+            raw_primary,
         );
+        if (raw_primary) |k| allocator.free(k);
 
         const primary_holder = try allocator.create(ProviderHolder);
         bundle.primary_holder = primary_holder;
@@ -97,15 +99,17 @@ pub const RuntimeProviderBundle = struct {
             var extra_i: usize = 0;
 
             for (cfg.reliability.fallback_providers) |provider_name| {
+                const raw_fb = api_key.resolveApiKeyFromConfig(
+                    allocator,
+                    provider_name,
+                    cfg.providers,
+                ) catch null;
                 const fb_key = try decryptKey(
                     allocator,
                     cdir,
-                    api_key.resolveApiKeyFromConfig(
-                        allocator,
-                        provider_name,
-                        cfg.providers,
-                    ) catch null,
+                    raw_fb,
                 );
+                if (raw_fb) |k| allocator.free(k);
                 bundle.extra_keys.?[extra_i] = fb_key;
                 bundle.extra_holders.?[extra_i] = ProviderHolder.fromConfig(
                     allocator,
@@ -130,11 +134,13 @@ pub const RuntimeProviderBundle = struct {
                         if (std.mem.eql(u8, primary_key, trimmed)) continue;
                     }
 
+                    const key_dupe = try allocator.dupe(u8, trimmed);
                     const key_copy = try decryptKey(
                         allocator,
                         cdir,
-                        try allocator.dupe(u8, trimmed),
+                        key_dupe,
                     );
+                    allocator.free(key_dupe);
                     bundle.extra_keys.?[extra_i] = key_copy;
                     bundle.extra_holders.?[extra_i] = ProviderHolder.fromConfig(
                         allocator,

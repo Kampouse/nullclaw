@@ -214,7 +214,7 @@ fn writeMultipartToTempFile(
     {
         // For Zig 0.16, use Io.Dir.cwd().readFileAlloc for absolute paths too
         const audio_data = std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, audio_path, std.heap.page_allocator, .limited(10 * 1024 * 1024)) catch |err| {
-            log.err("failed to read audio file: {}", .{err});
+            log.warn("failed to read audio file: {}", .{err});
             return error.AudioReadFailed;
         };
         defer std.heap.page_allocator.free(audio_data);

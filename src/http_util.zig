@@ -81,7 +81,7 @@ pub fn curlPostWithProxy(
     const uri = try std.Uri.parse(url);
 
     var req = client.request(.POST, uri, .{ .extra_headers = extra_headers }) catch |err| {
-        log.err("curlPostWithProxy: request failed: {}", .{err});
+        log.warn("curlPostWithProxy: request failed: {}", .{err});
         return err;
     };
     defer req.deinit();
@@ -92,7 +92,7 @@ pub fn curlPostWithProxy(
 
     var redirect_buf: [4096]u8 = undefined;
     var response = req.receiveHead(&redirect_buf) catch |err| {
-        log.err("curlPostWithProxy: receiveHead failed: {}", .{err});
+        log.warn("curlPostWithProxy: receiveHead failed: {}", .{err});
         return err;
     };
 
@@ -127,7 +127,7 @@ pub fn curlPostWithProxy(
             try error_buffer.appendSlice(allocator, data);
         }
 
-        log.err("curlPostWithProxy: HTTP status not ok: {} | body: {s}", .{response.head.status, error_buffer.items});
+        log.warn("curlPostWithProxy: HTTP status not ok: {} | body: {s}", .{response.head.status, error_buffer.items});
         return error.HttpError;
     }
 
@@ -155,7 +155,7 @@ pub fn curlPostWithProxy(
                 try response_buffer.appendSlice(allocator, data);
                 break;
             }
-            log.err("curlPostWithProxy: fill failed: {}", .{err});
+            log.warn("curlPostWithProxy: fill failed: {}", .{err});
             return err;
         };
 

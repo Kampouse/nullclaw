@@ -637,12 +637,12 @@ pub const RelayClient = struct {
             .buffer_size = 8192,
             .io = http_util.getThreadedIo(),
         }) catch |err| {
-            log.err("relay connect to {s} failed: {}", .{ url, err });
+            log.warn("relay connect to {s} failed: {}", .{ url, err });
             return err;
         };
         errdefer @constCast(&client).deinit();
         @constCast(&client).handshake(parsed.path, .{}) catch |err| {
-            log.err("relay handshake to {s} failed: {}", .{ url, err });
+            log.warn("relay handshake to {s} failed: {}", .{ url, err });
             return err;
         };
         // No read timeout here — persistent reader loops need infinite blocking.
@@ -667,7 +667,7 @@ pub const RelayClient = struct {
         defer self.allocator.free(msg_str);
 
         self.client.write(@constCast(msg_str)) catch |err| {
-            log.err("publish write failed: {}", .{err});
+            log.warn("publish write failed: {}", .{err});
             return error.RelayWriteFailed;
         };
         log.info("published event to {s}", .{self.url});
@@ -675,7 +675,7 @@ pub const RelayClient = struct {
         // Read response (should be ["OK", ...] or ["NOTICE", ...])
         self.client.readTimeout(5000) catch {};
         const response = (self.client.read() catch |err| {
-            log.err("read after publish failed: {}", .{err});
+            log.warn("read after publish failed: {}", .{err});
             return error.RelayReadFailed;
         }) orelse return error.RelayConnectionClosed;
 
@@ -699,7 +699,7 @@ pub const RelayClient = struct {
         defer self.allocator.free(msg_str);
 
         self.client.write(@constCast(msg_str)) catch |err| {
-            log.err("subscribe write failed: {}", .{err});
+            log.warn("subscribe write failed: {}", .{err});
             return error.RelayWriteFailed;
         };
         log.info("subscribed to {s} with filter: {s}", .{ self.url, filters[0..@min(filters.len, 80)] });

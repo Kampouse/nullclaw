@@ -60,7 +60,7 @@ pub const CronRunTool = struct {
                 job_id,
                 command,
             });
-            return ToolResult{ .success = true, .output = msg, .error_msg = null, .owns_error_msg = false };
+            return ToolResult{ .success = true, .output = msg, .error_msg = null, .owns_output = true, .owns_error_msg = false };
         }
         const result = std.process.run(allocator, util.createProcessIo(), .{
             .argv = &.{ platform.getShell(), platform.getShellFlag(), command },

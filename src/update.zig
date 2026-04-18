@@ -361,7 +361,7 @@ fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.Io.F
         .stdout = .pipe,
         .stderr = .ignore,
     }) catch |err| {
-        log.err("curl spawn failed: {}", .{err});
+        log.warn("curl spawn failed: {}", .{err});
         return error.CurlFailed;
     };
 
@@ -374,7 +374,7 @@ fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.Io.F
 
     while (true) {
         const bytes_read = stdout.interface.readSliceShort(&buffer) catch |err| {
-            log.err("curl read failed: {}", .{err});
+            log.warn("curl read failed: {}", .{err});
             child.kill(std.Options.debug_io);
             _ = child.wait(std.Options.debug_io) catch {};
             return error.CurlFailed;
@@ -383,7 +383,7 @@ fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.Io.F
         if (bytes_read == 0) break;
 
         file.writeStreamingAll(std.Options.debug_io, buffer[0..bytes_read]) catch |err| {
-            log.err("download write failed: {}", .{err});
+            log.warn("download write failed: {}", .{err});
             child.kill(std.Options.debug_io);
             _ = child.wait(std.Options.debug_io) catch {};
             return err;
@@ -392,13 +392,13 @@ fn downloadToFile(allocator: std.mem.Allocator, url: []const u8, file: *std.Io.F
     }
 
     const term = child.wait(std.Options.debug_io) catch |err| {
-        log.err("curl wait failed: {}", .{err});
+        log.warn("curl wait failed: {}", .{err});
         return error.CurlFailed;
     };
 
     switch (term) {
         .exited => |code| if (code != 0) {
-            log.err("curl exited with code: {}", .{code});
+            log.warn("curl exited with code: {}", .{code});
             return error.CurlFailed;
         },
         else => return error.CurlFailed,

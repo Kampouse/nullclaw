@@ -1799,6 +1799,9 @@ test "telegram offset persistence helper retries after write failure" {
     const blocked_state_path = try std.fs.path.join(allocator, &.{ base.ptr[0..base.len], "state" });
     defer allocator.free(blocked_state_path);
 
+    // Remove any leftover state directory from previous tests
+    std.Io.Dir.cwd().deleteTree(std.Options.debug_io, blocked_state_path) catch {};
+
     {
         const blocked_state_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, blocked_state_path, .{});
         blocked_state_file.close(std.Options.debug_io);
