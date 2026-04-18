@@ -388,7 +388,7 @@ pub const SessionManager = struct {
         while (it.next()) |entry| {
             const session = entry.value_ptr.*;
             const idle_secs: u64 = @intCast(@max(@as(i64, 0), @as(i64, @intCast(now)) - session.last_active));
-            if (idle_secs > max_idle_secs) {
+            if (idle_secs >= max_idle_secs) {
                 to_remove.append(self.allocator, entry.key_ptr.*) catch continue;
             }
         }
@@ -1420,7 +1420,8 @@ test "session last_active updates on processMessage" {
     const session = try sm.getOrCreate("active");
     const initial_active = session.last_active;
 
-    _ = try sm.processMessage("active", "test", null);
+    const resp = try sm.processMessage("active", "test", null);
+    defer testing.allocator.free(resp);
 
     // last_active should be >= initial (might be same if fast)
     try testing.expect(session.last_active >= initial_active);

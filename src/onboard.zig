@@ -515,12 +515,9 @@ fn saveCachedModels(allocator: std.mem.Allocator, cache_path: []const u8, provid
 
     try buf.appendSlice(allocator, "]\n}\n");
 
-    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, cache_path, .{}) catch return;
+    const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, cache_path, .{ .truncate = true }) catch return;
     defer file.close(std.Options.debug_io);
-    var write_buffer: [4096]u8 = undefined;
-    var file_writer = file.writer(std.Options.debug_io, &write_buffer);
-    const w = &file_writer.interface;
-    w.writeAll(buf.items) catch {};
+    try file.writeStreamingAll(std.Options.debug_io, buf.items);
 }
 
 /// Parse a mock OpenRouter-style JSON response and extract model IDs.
@@ -1733,6 +1730,19 @@ pub fn scaffoldWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8
         .{ .filename = "HEARTBEAT.md", .content = heartbeat_md },
     };
 
+    // Track whether USER.md already had non-default content before we write templates
+    const user_path_check = try std.fmt.allocPrint(allocator, "{s}/USER.md", .{workspace_dir});
+    defer allocator.free(user_path_check);
+    var had_legacy_user_content = false;
+    if (try readFileIfPresent(allocator, user_path_check, 1024 * 1024)) |existing_user| {
+        defer allocator.free(existing_user);
+        const default_user = try userTemplate(allocator, ctx);
+        defer allocator.free(default_user);
+        if (!std.mem.eql(u8, existing_user, default_user)) {
+            had_legacy_user_content = true;
+        }
+    }
+
     for (files) |entry| {
         const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ workspace_dir, entry.filename });
         defer allocator.free(path);
@@ -1753,6 +1763,13 @@ pub fn scaffoldWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8
     }
 
     // MEMORY.md is optional - created on demand by memory writes
+
+    // Handle BOOTSTRAP.md lifecycle: seed for new workspaces, detect onboarding completion
+    const identity_tmpl = try identityTemplate(allocator, ctx);
+    defer allocator.free(identity_tmpl);
+    const user_tmpl = try userTemplate(allocator, ctx);
+    defer allocator.free(user_tmpl);
+    try ensureBootstrapLifecycle(allocator, workspace_dir, identity_tmpl, user_tmpl, had_legacy_user_content);
 }
 
 pub const ResetWorkspacePromptFilesOptions = struct {
@@ -1880,13 +1897,15 @@ fn writeIfMissing(allocator: std.mem.Allocator, dir: []const u8, filename: []con
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
+        else => return err,
     }
 
     const file = std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{.exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => return,
+        else => return err,
     };
-    defer file.close();
-    try file.writeAll(content);
+    defer file.close(std.Options.debug_io);
+    try file.writeStreamingAll(std.Options.debug_io, content);
 }
 
 fn ensureBootstrapLifecycle(
@@ -1965,7 +1984,7 @@ fn isLegacyOnboardingCompleted(
             templates_diverged = true;
         }
     }
-    return templates_diverged or had_legacy_user_content;
+    return templates_diverged or had_legacy_user_content or try hasLegacyUserContentIndicators(allocator, workspace_dir);
 }
 
 fn workspaceStatePath(allocator: std.mem.Allocator, workspace_dir: []const u8) ![]u8 {
@@ -2077,21 +2096,22 @@ fn writeWorkspaceOnboardingState(
     defer allocator.free(tmp_path);
 
     const tmp_file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, tmp_path, .{});
-    errdefer tmp_file.close();
-    try tmp_file.writeAll(buf.items);
-    tmp_file.close();
+    errdefer tmp_file.close(std.Options.debug_io);
+    try tmp_file.writeStreamingAll(std.Options.debug_io, buf.items);
+    tmp_file.close(std.Options.debug_io);
 
-    std.fs.renameAbsolute(tmp_path, path) catch {
+    std.Io.Dir.renameAbsolute(tmp_path, path, std.Options.debug_io) catch {
         std.Io.Dir.cwd().deleteFile(std.Options.debug_io, tmp_path) catch {};
         const file = try std.Io.Dir.cwd().createFile(std.Options.debug_io, path, .{});
-        defer file.close();
-        try file.writeAll(buf.items);
+        defer file.close(std.Options.debug_io);
+        try file.writeStreamingAll(std.Options.debug_io, buf.items);
     };
 }
 
 fn readFileIfPresent(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) !?[]u8 {
     const file = std.Io.Dir.cwd().openFile(std.Options.debug_io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
+        else => return err,
     };
     defer file.close(std.Options.debug_io);
     var read_buffer: [4096]u8 = undefined;
@@ -2106,7 +2126,7 @@ fn fileExistsAbsolute(path: []const u8) bool {
 }
 
 fn pathExistsAbsolute(path: []const u8) bool {
-    std.fs.accessAbsolute(path, .{}) catch return false;
+    std.Io.Dir.accessAbsolute(std.Options.debug_io, path, .{}) catch return false;
     return true;
 }
 
@@ -2379,12 +2399,11 @@ test "scaffoldWorkspace creates core files and leaves MEMORY.md optional" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    // Construct the actual path to the tmp directory
-    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const ctx = ProjectContext{};
-    try scaffoldWorkspace(std.testing.allocator, base, &ctx);
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ctx);
 
     // Verify core files were created
     const agents = try tmp.dir.openFile(std.Options.debug_io, "AGENTS.md", .{});
@@ -2408,14 +2427,13 @@ test "scaffoldWorkspace is idempotent" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    // Construct the actual path to the tmp directory
-    const base = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
-    defer std.testing.allocator.free(base);
+    const base = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base.ptr[0 .. base.len + 1]);
 
     const ctx = ProjectContext{};
-    try scaffoldWorkspace(std.testing.allocator, base, &ctx);
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ctx);
     // Running again should not fail
-    try scaffoldWorkspace(std.testing.allocator, base, &ctx);
+    try scaffoldWorkspace(std.testing.allocator, base.ptr[0..base.len], &ctx);
 }
 
 test "resetWorkspacePromptFiles overwrites prompt files with defaults" {
@@ -2624,7 +2642,7 @@ test "scaffoldWorkspace treats memory-backed workspace as existing and skips BOO
     defer memory_file.close(std.Options.debug_io);
     var read_buf: [4 * 1024]u8 = undefined;
     var memory_reader = memory_file.reader(std.Options.debug_io, &read_buf);
-    const memory_content = try memory_reader.interface.readAlloc(std.testing.allocator, 4 * 1024);
+    const memory_content = try std.Io.Reader.allocRemaining(&memory_reader.interface, std.testing.allocator, .limited(4 * 1024));
     defer std.testing.allocator.free(memory_content);
     try std.testing.expectEqualStrings("# Long-term memory\nImportant stuff", memory_content);
 

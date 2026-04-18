@@ -642,9 +642,13 @@ test "processWithForkedAgent clones history independently" {
     });
 
     // Clone the history
+    const mock_history_initial_len = mock_history.items.len;
     var cloned = try mock_history.clone(testing.allocator);
     defer {
-        for (cloned.items) |*msg| {
+        // clone() shallow-copies OwnedMessage structs, so content pointers in
+        // the first mock_history.items.len entries are shared with the original.
+        // Only free content for items added after cloning.
+        for (cloned.items[mock_history_initial_len..]) |*msg| {
             msg.deinit(testing.allocator);
         }
         cloned.deinit(testing.allocator);
