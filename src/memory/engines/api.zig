@@ -178,9 +178,27 @@ pub const ApiMemory = struct {
     }
 
     fn parseCurlOutput(alloc: Allocator, raw_out: []const u8) !HttpResponse {
-        _ = alloc;
-        _ = raw_out;
-        return error.NotImplemented;
+        // curl --write-out "\n%{http_code}" appends a newline + status code at the end.
+        // Find the last newline to split body from status.
+        if (raw_out.len == 0) {
+            return .{ .status = .no_content, .body = try alloc.dupe(u8, "") };
+        }
+
+        // Find last newline
+        var last_nl: usize = 0;
+        for (raw_out, 0..) |ch, i| {
+            if (ch == '\n') last_nl = i;
+        }
+
+        const status_str = std.mem.trim(u8, raw_out[last_nl + 1 ..], " \r\n");
+        const body = raw_out[0..last_nl];
+        const body_owned = try alloc.dupe(u8, body);
+
+        const code = std.fmt.parseInt(u10, status_str, 10) catch return error.ApiInvalidResponse;
+        return .{
+            .status = @enumFromInt(code),
+            .body = body_owned,
+        };
     }
 
     // ── URL builders ─────────────────────────────────────────────

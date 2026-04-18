@@ -533,12 +533,12 @@ test "exportSessions with mock session store writes files" {
     // Create temp dir
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const tmp_path = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(tmp_path);
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
     var mock = MockSessionStore{};
     var qa = QmdAdapter.init(allocator, .{
-        .sessions = .{ .enabled = true, .export_dir = tmp_path },
+        .sessions = .{ .enabled = true, .export_dir = tmp_path.ptr[0..tmp_path.len] },
     }, "/tmp");
 
     const ids = [_][]const u8{"session-1"};
@@ -548,8 +548,7 @@ test "exportSessions with mock session store writes files" {
 
     // Verify file was created
     const content = try tmp.dir.readFileAlloc(std.Options.debug_io, "session-1.md", allocator, .limited(4096));
-    // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
+    defer allocator.free(content);
     try std.testing.expect(std.mem.indexOf(u8, content, "Session: session-1") != null);
     try std.testing.expect(std.mem.indexOf(u8, content, "**User**: Hello") != null);
     try std.testing.expect(std.mem.indexOf(u8, content, "**Assistant**: Hi there") != null);
@@ -560,12 +559,12 @@ test "exportSessions skips unchanged files (hash check)" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const tmp_path = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(tmp_path);
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
     var mock = MockSessionStore{};
     var qa = QmdAdapter.init(allocator, .{
-        .sessions = .{ .enabled = true, .export_dir = tmp_path },
+        .sessions = .{ .enabled = true, .export_dir = tmp_path.ptr[0..tmp_path.len] },
     }, "/tmp");
 
     const ids = [_][]const u8{"session-2"};
@@ -626,8 +625,8 @@ test "pruneExportedSessions deletes old files" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const tmp_path = try std.testing.allocator.dupe(u8, ".");
-    defer allocator.free(tmp_path);
+    const tmp_path = try tmp.dir.realPathFileAlloc(std.Options.debug_io, ".", std.testing.allocator);
+    defer allocator.free(tmp_path.ptr[0 .. tmp_path.len + 1]);
 
     // Create a test file
     {
@@ -637,7 +636,7 @@ test "pruneExportedSessions deletes old files" {
     }
 
     var qa = QmdAdapter.init(allocator, .{
-        .sessions = .{ .enabled = true, .export_dir = tmp_path, .retention_days = 0 }, // 0 days = delete immediately
+        .sessions = .{ .enabled = true, .export_dir = tmp_path.ptr[0..tmp_path.len], .retention_days = 0 }, // 0 days = delete immediately
     }, "/tmp");
 
     const deleted = try qa.pruneExportedSessions(allocator);

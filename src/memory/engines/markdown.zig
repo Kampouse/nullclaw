@@ -76,13 +76,12 @@ pub const MarkdownMemory = struct {
         const file = try std.Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .read = false });
         defer file.close(io);
 
+        // Write at end of file so we append, not overwrite
+        const end_pos = try std.Io.File.length(file, io);
         const line = try std.fmt.allocPrint(allocator, "{s}\n", .{content});
         defer allocator.free(line);
 
-        var buf: [4096]u8 = undefined;
-        var writer = file.writer(io, &buf);
-        try writer.interface.writeAll(line);
-        try writer.interface.flush();
+        try std.Io.File.writePositionalAll(file, io, line, end_pos);
     }
 
     fn parseEntries(text: []const u8, filename: []const u8, category: MemoryCategory, allocator: std.mem.Allocator) ![]MemoryEntry {
@@ -153,17 +152,31 @@ pub const MarkdownMemory = struct {
             .{ .filename = "memory.md", .label = "memory", .seen = &seen_path_2 },
         };
 
+        // Track resolved paths to deduplicate on case-insensitive filesystems
+        // (e.g. macOS where MEMORY.md and memory.md are the same file).
+        var seen_resolved: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer {
+            for (seen_resolved.items) |p| allocator.free(p);
+            seen_resolved.deinit(allocator);
+        }
+
         for (root_candidates) |candidate| {
             const root_path = try self.rootPath(allocator, candidate.filename);
             defer allocator.free(root_path);
 
+            // Deduplicate: skip if we already read a path that differs only in case
+            var is_dup = false;
+            for (seen_resolved.items) |prev| {
+                if (std.mem.eql(u8, prev, root_path) or std.ascii.eqlIgnoreCase(prev, root_path)) {
+                    is_dup = true;
+                    break;
+                }
+            }
+            if (is_dup) continue;
+            try seen_resolved.append(allocator, try allocator.dupe(u8, root_path));
+
             const content = std.Io.Dir.cwd().readFileAlloc(io, root_path, allocator, .limited(1024 * 1024)) catch continue;
             defer allocator.free(content);
-
-            if (candidate.seen.*) {
-                continue;
-            }
-            candidate.seen.* = true;
 
             const entries = try parseEntries(content, candidate.label, .core, allocator);
             defer allocator.free(entries);

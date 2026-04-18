@@ -74,6 +74,7 @@ pub const CircuitBreaker = struct {
 
         if (self.state == .half_open or (self.state == .closed and self.failure_count >= self.threshold)) {
             self.state = .open;
+            self.last_failure_ns = nanoTimestamp();
             self.half_open_probe_sent = false;
         }
     }

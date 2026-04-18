@@ -220,7 +220,16 @@ pub fn formatEnabledBackends(allocator: std.mem.Allocator) ![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
 
-                // w.writeStreamingAll(std.Options.debug_io, "(none)");
+    if (all.len == 0) {
+        try out.appendSlice(allocator, "(none)");
+        return out.toOwnedSlice(allocator);
+    }
+
+    for (&all, 0..) |*desc, i| {
+        if (i > 0) try out.appendSlice(allocator, ", ");
+        try out.appendSlice(allocator, desc.name);
+    }
+
     return out.toOwnedSlice(allocator);
 }
 

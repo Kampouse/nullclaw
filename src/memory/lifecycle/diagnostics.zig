@@ -142,15 +142,79 @@ pub fn formatReport(report: DiagnosticReport, allocator: std.mem.Allocator) ![]u
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
     
+    var num_buf: [64]u8 = undefined;
+
     try buf.appendSlice(allocator, "=== Memory Doctor ===\n\n");
+
+    // Backend basics
     try buf.appendSlice(allocator, "Backend: ");
     try buf.appendSlice(allocator, report.backend_name);
     try buf.appendSlice(allocator, "\n");
-    
-    var num_buf: [64]u8 = undefined;
     try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "Healthy: {}\n", .{report.backend_healthy}));
     try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "Entries: {d}\n", .{report.entry_count}));
-    
+
+    // Capabilities
+    try buf.appendSlice(allocator, "\nCapabilities:\n");
+    if (report.capabilities.supports_keyword_rank)
+        try buf.appendSlice(allocator, "  keyword_rank: true\n");
+    if (report.capabilities.supports_session_store)
+        try buf.appendSlice(allocator, "  session_store: true\n");
+    if (report.capabilities.supports_transactions)
+        try buf.appendSlice(allocator, "  transactions: true\n");
+    if (report.capabilities.supports_outbox)
+        try buf.appendSlice(allocator, "  outbox: true\n");
+
+    // Vector store
+    try buf.appendSlice(allocator, "\nVector Plane:\n");
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  active: {}\n", .{report.vector_store_active}));
+    if (report.vector_entry_count) |count| {
+        try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  entries: {d}\n", .{count}));
+    } else {
+        try buf.appendSlice(allocator, "  entries: n/a\n");
+    }
+
+    // Outbox
+    try buf.appendSlice(allocator, "\nOutbox:\n");
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  active: {}\n", .{report.outbox_active}));
+    if (report.outbox_pending) |pending| {
+        try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  pending: {d}\n", .{pending}));
+    } else {
+        try buf.appendSlice(allocator, "  pending: n/a\n");
+    }
+
+    // Response Cache
+    try buf.appendSlice(allocator, "\nResponse Cache:\n");
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  active: {}\n", .{report.cache_active}));
+    if (report.cache_stats) |cs| {
+        try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  count: {d}\n", .{cs.count}));
+        try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  hits: {d}\n", .{cs.hits}));
+        try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  tokens saved: {d}\n", .{cs.tokens_saved}));
+    } else {
+        try buf.appendSlice(allocator, "  stats: n/a\n");
+    }
+
+    // Retrieval
+    try buf.appendSlice(allocator, "\nRetrieval:\n");
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  sources: {d}\n", .{report.retrieval_sources}));
+
+    // Rollout
+    try buf.appendSlice(allocator, "\nRollout:\n");
+    try buf.appendSlice(allocator, "  mode: ");
+    try buf.appendSlice(allocator, report.rollout_mode);
+    try buf.appendSlice(allocator, "\n");
+
+    // Session Store
+    try buf.appendSlice(allocator, "\nSession Store:\n");
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  active: {}\n", .{report.session_store_active}));
+
+    // Pipeline Stages (extended fields)
+    try buf.appendSlice(allocator, "\nPipeline Stages:\n");
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  query_expansion: {}\n", .{report.query_expansion_enabled}));
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  adaptive_retrieval: {}\n", .{report.adaptive_retrieval_enabled}));
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  llm_reranker: {}\n", .{report.llm_reranker_enabled}));
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  summarizer: {}\n", .{report.summarizer_enabled}));
+    try buf.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "  semantic_cache: {}\n", .{report.semantic_cache_active}));
+
     return try buf.toOwnedSlice(allocator);
 }
 

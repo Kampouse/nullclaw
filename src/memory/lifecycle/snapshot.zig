@@ -86,6 +86,7 @@ pub fn hydrateFromSnapshot(allocator: std.mem.Allocator, mem: Memory, workspace_
     defer allocator.free(snapshot_path);
 
     const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, snapshot_path, allocator, .limited(10 * 1024 * 1024)) catch |err| {
+        if (err == error.FileNotFound) return 0;
         std.log.err("Failed to read snapshot file: {}", .{err});
         return error.SnapshotReadFailed;
     };

@@ -111,16 +111,17 @@ pub const SqliteMemory = struct {
             \\);
             \\
             \\-- FTS5 triggers: keep in sync with memories table
-            \\-- For external content tables, triggers only need to specify rowid
+            \\-- For external content tables, must specify all FTS5 columns explicitly
+            \\-- (not just rowid) to avoid column-name ambiguity with content= parameter.
             \\CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-            \\  INSERT INTO memories_fts(rowid) VALUES (new.rowid);
+            \\  INSERT INTO memories_fts(rowid, key, content) VALUES (new.rowid, new.key, new.content);
             \\END;
             \\CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-            \\  INSERT INTO memories_fts(memories_fts, rowid) VALUES ('delete', old.rowid);
+            \\  INSERT INTO memories_fts(memories_fts, rowid, key, content) VALUES ('delete', old.rowid, old.key, old.content);
             \\END;
             \\CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-            \\  INSERT INTO memories_fts(memories_fts, rowid) VALUES ('delete', old.rowid);
-            \\  INSERT INTO memories_fts(rowid) VALUES (new.rowid);
+            \\  INSERT INTO memories_fts(memories_fts, rowid, key, content) VALUES ('delete', old.rowid, old.key, old.content);
+            \\  INSERT INTO memories_fts(rowid, key, content) VALUES (new.rowid, new.key, new.content);
             \\END;
             \\
             \\-- Legacy tables for backward compat
