@@ -32,8 +32,8 @@ run_tracy_build.sh
 .secret_key
 .nostr_key
 
-# tools/ directory (local scripts, not part of nullclaw source)
-tools/
+# tools/ directory (local scripts at project root, not part of nullclaw source)
+/tools/
 
 # Node modules
 node_modules/

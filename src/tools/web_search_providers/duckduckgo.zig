@@ -31,7 +31,6 @@ pub fn execute(
     };
 
     const body = common.curlGet(allocator, url_str, &headers, timeout_str) catch |err| {
-        log.err("DuckDuckGo HTTP request failed: {}", .{err});
         common.logRequestError("duckduckgo", query, err);
         return err;
     };
@@ -44,7 +43,7 @@ pub fn execute(
 
     const result = try formatResults(allocator, body, query, count);
     if (!result.success) {
-        log.err("Failed to format DuckDuckGo results", .{});
+        log.warn("Failed to format DuckDuckGo results", .{});
         return error.InvalidResponse;
     }
     const has_results = !std.mem.eql(u8, result.output, "No web results found.");
@@ -62,14 +61,14 @@ pub fn formatResults(allocator: std.mem.Allocator, json_body: []const u8, query:
     const arena_alloc = arena.allocator();
 
     const parsed = std.json.parseFromSlice(std.json.Value, arena_alloc, json_body, .{}) catch {
-        log.err("Failed to parse DuckDuckGo response JSON", .{});
+        log.warn("Failed to parse DuckDuckGo response JSON", .{});
         return common.ToolResult.fail("Failed to parse search response JSON");
     };
 
     const root_val = switch (parsed.value) {
         .object => |o| o,
         else => {
-            log.err("Unexpected DuckDuckGo response format (not an object)", .{});
+            log.warn("Unexpected DuckDuckGo response format (not an object)", .{});
             return common.ToolResult.fail("Unexpected search response format");
         },
     };

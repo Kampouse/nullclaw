@@ -141,14 +141,17 @@ pub const CargoTool = struct {
         // Add extra args if provided (with proper quote handling)
         if (extra_args) |extra| {
             var token_iter = Tokenizer.init(extra);
-            while (token_iter.next()) |token| {
+            while (token_iter.next(allocator) catch null) |token| {
                 if (argc >= argv_buf.len - 1) break;
                 argv_buf[argc] = token;
                 argc += 1;
             }
         }
 
-        const result = try self.runCargo(allocator, cargo_cwd, argv_buf[0..argc]);
+        const result = self.runCargo(allocator, cargo_cwd, argv_buf[0..argc]) catch |err| {
+            const msg = try std.fmt.allocPrint(allocator, "Failed to run cargo: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+        };
         defer allocator.free(result.stderr);
         if (!result.success) {
             defer allocator.free(result.stdout);
@@ -170,7 +173,7 @@ pub const CargoTool = struct {
             return .{ .input = input };
         }
 
-        fn next(self: *Tokenizer) ?[]const u8 {
+        fn next(self: *Tokenizer, allocator: std.mem.Allocator) !?[]u8 {
             // Skip leading whitespace
             while (self.pos < self.input.len and std.ascii.isWhitespace(self.input[self.pos])) {
                 self.pos += 1;
@@ -178,15 +181,18 @@ pub const CargoTool = struct {
 
             if (self.pos >= self.input.len) return null;
 
-            const start = self.pos;
             var in_quote: u8 = 0; // 0 = none, 1 = double quote, 2 = single quote
             var escaped = false;
+
+            var result: std.ArrayListUnmanaged(u8) = .empty;
+            defer result.deinit(allocator);
 
             while (self.pos < self.input.len) {
                 const ch = self.input[self.pos];
 
                 if (escaped) {
-                    // Handle escaped character
+                    // Append the character after the backslash
+                    try result.append(allocator, ch);
                     escaped = false;
                     self.pos += 1;
                     continue;
@@ -202,28 +208,24 @@ pub const CargoTool = struct {
                     if (in_quote == 1) {
                         // Closing double quote
                         in_quote = 0;
-                        self.pos += 1;
-                        continue;
                     } else {
                         // Opening double quote
                         in_quote = 1;
-                        if (self.pos == start) self.pos += 1; // Skip opening quote
-                        continue;
                     }
+                    self.pos += 1;
+                    continue;
                 }
 
                 if (ch == '\'' and in_quote != 1) {
                     if (in_quote == 2) {
                         // Closing single quote
                         in_quote = 0;
-                        self.pos += 1;
-                        continue;
                     } else {
                         // Opening single quote
                         in_quote = 2;
-                        if (self.pos == start) self.pos += 1; // Skip opening quote
-                        continue;
                     }
+                    self.pos += 1;
+                    continue;
                 }
 
                 if (in_quote == 0 and std.ascii.isWhitespace(ch)) {
@@ -231,11 +233,12 @@ pub const CargoTool = struct {
                     break;
                 }
 
+                try result.append(allocator, ch);
                 self.pos += 1;
             }
 
-            if (self.pos > start) {
-                return self.input[start..self.pos];
+            if (result.items.len > 0) {
+                return try result.toOwnedSlice(allocator);
             }
 
             return null;
@@ -291,7 +294,10 @@ pub const CargoTool = struct {
             }
         }
 
-        const result = try self.runCargo(allocator, cargo_cwd, argv_buf[0..argc]);
+        const result = self.runCargo(allocator, cargo_cwd, argv_buf[0..argc]) catch |err| {
+            const msg = try std.fmt.allocPrint(allocator, "Failed to run cargo new: {}", .{err});
+            return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
+        };
         defer allocator.free(result.stderr);
         if (!result.success) {
             defer allocator.free(result.stdout);
@@ -414,15 +420,17 @@ test "Tokenizer handles simple args" {
     const input = "--release --bins";
     var tokenizer = CargoTool.Tokenizer.init(input);
 
-    const first = tokenizer.next();
+    const first = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(first.?);
     try std.testing.expect(first != null);
     try std.testing.expectEqualStrings("--release", first.?);
 
-    const second = tokenizer.next();
+    const second = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(second.?);
     try std.testing.expect(second != null);
     try std.testing.expectEqualStrings("--bins", second.?);
 
-    const third = tokenizer.next();
+    const third = try tokenizer.next(std.testing.allocator);
     try std.testing.expect(third == null);
 }
 
@@ -430,15 +438,17 @@ test "Tokenizer handles double quoted args" {
     const input = "--features \"default feature\"";
     var tokenizer = CargoTool.Tokenizer.init(input);
 
-    const first = tokenizer.next();
+    const first = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(first.?);
     try std.testing.expect(first != null);
     try std.testing.expectEqualStrings("--features", first.?);
 
-    const second = tokenizer.next();
+    const second = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(second.?);
     try std.testing.expect(second != null);
     try std.testing.expectEqualStrings("default feature", second.?);
 
-    const third = tokenizer.next();
+    const third = try tokenizer.next(std.testing.allocator);
     try std.testing.expect(third == null);
 }
 
@@ -446,15 +456,17 @@ test "Tokenizer handles single quoted args" {
     const input = "--target 'x86_64-unknown-linux-gnu'";
     var tokenizer = CargoTool.Tokenizer.init(input);
 
-    const first = tokenizer.next();
+    const first = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(first.?);
     try std.testing.expect(first != null);
     try std.testing.expectEqualStrings("--target", first.?);
 
-    const second = tokenizer.next();
+    const second = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(second.?);
     try std.testing.expect(second != null);
     try std.testing.expectEqualStrings("x86_64-unknown-linux-gnu", second.?);
 
-    const third = tokenizer.next();
+    const third = try tokenizer.next(std.testing.allocator);
     try std.testing.expect(third == null);
 }
 
@@ -462,15 +474,17 @@ test "Tokenizer handles escaped spaces" {
     const input = "--bin\\ name test";
     var tokenizer = CargoTool.Tokenizer.init(input);
 
-    const first = tokenizer.next();
+    const first = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(first.?);
     try std.testing.expect(first != null);
     try std.testing.expectEqualStrings("--bin name", first.?);
 
-    const second = tokenizer.next();
+    const second = try tokenizer.next(std.testing.allocator);
+    defer std.testing.allocator.free(second.?);
     try std.testing.expect(second != null);
     try std.testing.expectEqualStrings("test", second.?);
 
-    const third = tokenizer.next();
+    const third = try tokenizer.next(std.testing.allocator);
     try std.testing.expect(third == null);
 }
 
@@ -478,34 +492,47 @@ test "Tokenizer handles mixed quotes and spaces" {
     const input = "--release --features \"feat1 feat2\" --bin myapp";
     var tokenizer = CargoTool.Tokenizer.init(input);
 
-    try std.testing.expectEqualStrings("--release", tokenizer.next().?);
-    try std.testing.expectEqualStrings("--features", tokenizer.next().?);
-    try std.testing.expectEqualStrings("feat1 feat2", tokenizer.next().?);
-    try std.testing.expectEqualStrings("--bin", tokenizer.next().?);
-    try std.testing.expectEqualStrings("myapp", tokenizer.next().?);
-    try std.testing.expect(tokenizer.next() == null);
+    const t1 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t1.?);
+    try std.testing.expectEqualStrings("--release", t1.?);
+    const t2 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t2.?);
+    try std.testing.expectEqualStrings("--features", t2.?);
+    const t3 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t3.?);
+    try std.testing.expectEqualStrings("feat1 feat2", t3.?);
+    const t4 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t4.?);
+    try std.testing.expectEqualStrings("--bin", t4.?);
+    const t5 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t5.?);
+    try std.testing.expectEqualStrings("myapp", t5.?);
+    try std.testing.expect((try tokenizer.next(std.testing.allocator)) == null);
 }
 
 test "Tokenizer handles equals flags" {
     const input = "-Doptimize=ReleaseFast --target=x86_64-linux";
     var tokenizer = CargoTool.Tokenizer.init(input);
 
-    try std.testing.expectEqualStrings("-Doptimize=ReleaseFast", tokenizer.next().?);
-    try std.testing.expectEqualStrings("--target=x86_64-linux", tokenizer.next().?);
-    try std.testing.expect(tokenizer.next() == null);
+    const t1 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t1.?);
+    try std.testing.expectEqualStrings("-Doptimize=ReleaseFast", t1.?);
+    const t2 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t2.?);
+    try std.testing.expectEqualStrings("--target=x86_64-linux", t2.?);
+    try std.testing.expect((try tokenizer.next(std.testing.allocator)) == null);
 }
 
 test "Tokenizer handles complex real-world cargo args" {
     const input = "--release --features \"tokio rustls\" --target \"x86_64-unknown-linux-musl\" --no-default-features";
     var tokenizer = CargoTool.Tokenizer.init(input);
 
-    try std.testing.expectEqualStrings("--release", tokenizer.next().?);
-    try std.testing.expectEqualStrings("--features", tokenizer.next().?);
-    try std.testing.expectEqualStrings("tokio rustls", tokenizer.next().?);
-    try std.testing.expectEqualStrings("--target", tokenizer.next().?);
-    try std.testing.expectEqualStrings("x86_64-unknown-linux-musl", tokenizer.next().?);
-    try std.testing.expectEqualStrings("--no-default-features", tokenizer.next().?);
-    try std.testing.expect(tokenizer.next() == null);
+    const t1 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t1.?);
+    try std.testing.expectEqualStrings("--release", t1.?);
+    const t2 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t2.?);
+    try std.testing.expectEqualStrings("--features", t2.?);
+    const t3 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t3.?);
+    try std.testing.expectEqualStrings("tokio rustls", t3.?);
+    const t4 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t4.?);
+    try std.testing.expectEqualStrings("--target", t4.?);
+    const t5 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t5.?);
+    try std.testing.expectEqualStrings("x86_64-unknown-linux-musl", t5.?);
+    const t6 = try tokenizer.next(std.testing.allocator); defer std.testing.allocator.free(t6.?);
+    try std.testing.expectEqualStrings("--no-default-features", t6.?);
+    try std.testing.expect((try tokenizer.next(std.testing.allocator)) == null);
 }
 
 // ── Agent Integration Tests ───────────────────────────────────────

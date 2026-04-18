@@ -807,8 +807,8 @@ test "all tools includes extras when enabled" {
     //        self_diagnose, self_update, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
     //        delegate, schedule, spawn, http_request, web_search, web_fetch,
-    //        browser = 21
-    try std.testing.expectEqual(@as(usize, 21), tools.len);
+    //        browser = 23
+    try std.testing.expectEqual(@as(usize, 23), tools.len);
 }
 
 test "all tools excludes extras when disabled" {
@@ -818,8 +818,8 @@ test "all tools excludes extras when disabled" {
     // Order: shell, file_read, file_write, file_edit, git, cargo, zig_build,
     //        self_diagnose, self_update, image_info,
     //        memory_store, memory_recall, memory_list, memory_forget,
-    //        delegate, schedule, spawn = 17
-    try std.testing.expectEqual(@as(usize, 17), tools.len);
+    //        delegate, schedule, spawn = 19
+    try std.testing.expectEqual(@as(usize, 19), tools.len);
 }
 
 test "all tools wires http and web_search config into tool instances" {

@@ -44,7 +44,7 @@ pub const WebFetchTool = struct {
 
         // Validate URL scheme
         if (!std.mem.startsWith(u8, url, "http://") and !std.mem.startsWith(u8, url, "https://")) {
-            log.err("web_fetch: Invalid URL scheme for {s}", .{url});
+            log.warn("web_fetch: Invalid URL scheme for {s}", .{url});
             return ToolResult.fail("Only http:// and https:// URLs are allowed");
         }
 
