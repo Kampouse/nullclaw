@@ -222,7 +222,7 @@ pub const SqliteMemory = struct {
 
         const cat_str = category.toString();
 
-        const sql = "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(key) DO UPDATE SET content = excluded.content, category = excluded.category, session_id = excluded.session_id, updated_at = excluded.updated_at";
+        const sql = "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(key, COALESCE(session_id, '__global__')) DO UPDATE SET content = excluded.content, category = excluded.category, session_id = excluded.session_id, updated_at = excluded.updated_at";
 
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
