@@ -336,6 +336,23 @@ pub const Writer = struct {
         try w.inner.writeAll(host);
     }
 
+    /// Writes the ALPN extension (RFC 7301).
+    /// protocols is a slice of protocol name strings (e.g. &.{"http/1.1"}).
+    pub fn alpnExtension(w: *Writer, protocols: []const []const u8) !void {
+        // Calculate total payload size: u16 list_length + for each: u8 name_len + name
+        var list_len: u16 = 0;
+        for (protocols) |name| {
+            list_len += @as(u16, 1) + @as(u16, @intCast(name.len));
+        }
+        try w.enumValue(proto.Extension.application_layer_protocol_negotiation);
+        try w.int(u16, @as(u16, 2) + list_len); // extension payload: u16 list_len + list
+        try w.int(u16, list_len);
+        for (protocols) |name| {
+            try w.inner.writeByte(@intCast(name.len));
+            try w.inner.writeAll(name);
+        }
+    }
+
     /// Writes header of the pre shared key extension, without binders
     pub fn preSharedKey(
         w: *Writer,

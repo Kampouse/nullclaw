@@ -535,6 +535,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("ws_karlseguin", ws_mod);
+
         // Add zquic for QUIC protocol support
         const zquic_dep = b.dependency("zquic", .{
             .target = target,
@@ -549,6 +550,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("tls", tls_mod);
+        // websocket client needs tls_zig for TLS connections
+        ws_mod.addImport("tls", tls_mod);
 
         // Add Tracy profiler module
         if (tracy_module) |tm| {

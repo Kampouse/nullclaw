@@ -71,6 +71,10 @@ pub const Options = struct {
 
     session_resumption: ?*SessionResumption = null,
 
+    /// ALPN protocol names to offer (e.g. &{"http/1.1"}).
+    /// Required for Cloudflare and some other CDNs.
+    alpn: []const []const u8 = &.{},
+
     pub const Diagnostic = struct {
         tls_version: proto.Version = @enumFromInt(0),
         cipher_suite_tag: CipherSuite = @enumFromInt(0),
@@ -467,6 +471,9 @@ pub const Handshake = struct {
         try w.extension(.supported_groups, opt.named_groups);
         try w.keyShare(opt.named_groups, shared_keys);
         try w.serverName(opt.host);
+        if (opt.alpn.len > 0) {
+            try w.alpnExtension(opt.alpn);
+        }
         // binder key placeholder
         const binder_pos: ?usize = if (resumption_ticket) |ticket| brk: {
             // Add pre shared key extension if this is session resumption. Must be last extension.

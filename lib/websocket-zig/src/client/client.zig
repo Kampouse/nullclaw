@@ -5,7 +5,7 @@ const buffer = @import("../buffer.zig");
 const ascii = std.ascii;
 const posix = std.posix;
 const ionet = std.Io.net;
-const tls = std.crypto.tls;
+const tls_zig = @import("tls");
 const log = std.log.scoped(.websocket);
 
 const Reader = proto.Reader;
@@ -328,7 +328,7 @@ pub const Client = struct {
         return self.stream.writeTimeout(ms);
     }
 
-    pub fn readTimeout(self: *const Client, ms: u32) !void {
+    pub fn readTimeout(self: *Client, ms: u32) !void {
         return self.stream.readTimeout(ms);
     }
 
@@ -443,6 +443,12 @@ pub const Stream = struct {
     stream: ionet.Stream,
     io: std.Io,
     tls_client: ?*TLSClient = null,
+    /// Absolute deadline in ms (REALTIME) for TLS reads.
+    /// When set, a watchdog thread calls shutdown(SHUT_RD) after the
+    /// deadline to interrupt a blocking tls_zig.Connection.read().
+    /// This is destructive (kills the read side permanently) — only
+    /// use for one-shot reads, NOT persistent listener loops.
+    read_deadline_ms: ?i64 = null,
 
     pub fn init(stream: ionet.Stream, tls_client: ?*TLSClient, io: std.Io) Stream {
         return .{
@@ -487,32 +493,38 @@ pub const Stream = struct {
 
     pub fn read(self: *Stream, buf: []u8) !usize {
         if (self.tls_client) |tls_client| {
-            var w: std.Io.Writer = .fixed(buf);
-            var consecutive_zeros: usize = 0;
-            while (true) {
-                const n = tls_client.client.reader.stream(&w, .limited(buf.len)) catch |err| {
-                    // If socket has SO_RCVTIMEO set, EAGAIN/EWOULDBLOCK means timeout.
-                    // Return WouldBlock so callers can handle it (e.g. break read loop).
-                    if (err == error.WouldBlock or err == error.ConnectionTimedOut) return err;
-                    return err;
-                };
-                if (n != 0) {
-                    return n;
-                }
-                // TLS returned 0 bytes — with SO_RCVTIMEO this means socket timed out.
-                // Without timeout, 0 means connection closed. Break either way.
-                consecutive_zeros += 1;
-                if (consecutive_zeros >= 3) return error.WouldBlock;
+            // Spawn watchdog if deadline is set, to interrupt blocking reads.
+            // shutdown(SHUT_RD) is destructive — only for one-shot reads.
+            const fd = self.stream.socket.handle;
+            var watchdog: ?std.Thread = null;
+            if (self.read_deadline_ms) |deadline| {
+                var ts: posix.timespec = undefined;
+                _ = posix.system.clock_gettime(.REALTIME, &ts);
+                const now_ms = @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
+                const remaining_ms = deadline - now_ms;
+                if (remaining_ms <= 0) return error.WouldBlock;
+
+                watchdog = std.Thread.spawn(.{}, struct {
+                    fn run(socket_fd: posix.fd_t, ms: u64) void {
+                        const sleep_ts = posix.timespec{
+                            .sec = @intCast(ms / 1000),
+                            .nsec = @intCast((ms % 1000) * 1_000_000),
+                        };
+                        _ = posix.system.nanosleep(&sleep_ts, null);
+                        _ = posix.system.shutdown(socket_fd, posix.SHUT.RD);
+                    }
+                }.run, .{ fd, @as(u64, @intCast(remaining_ms)) }) catch null;
             }
+            defer if (watchdog) |w| w.join();
+
+            return tls_client.conn.read(buf);
         }
         return posix.read(self.stream.socket.handle, buf);
     }
 
     pub fn writeAll(self: *Stream, data: []const u8) !void {
         if (self.tls_client) |tls_client| {
-            try tls_client.client.writer.writeAll(data);
-            try tls_client.client.writer.flush();
-            try tls_client.client.output.flush();
+            try tls_client.conn.writeAll(data);
             return;
         }
         const fd = self.stream.socket.handle;
@@ -529,7 +541,22 @@ pub const Stream = struct {
         return self.setTimeout(posix.SO.SNDTIMEO, ms);
     }
 
-    pub fn readTimeout(self: *const Stream, ms: u32) !void {
+    pub fn readTimeout(self: *Stream, ms: u32) !void {
+        if (self.tls_client != null) {
+            // SO_RCVTIMEO causes Io.Threaded to panic with ABRT on EAGAIN.
+            // For TLS connections, store an application-level deadline instead.
+            // The Stream.read() method spawns a watchdog thread that calls
+            // shutdown(SHUT_RD) when the deadline expires.
+            if (ms == 0) {
+                self.read_deadline_ms = null;
+            } else {
+                var ts: posix.timespec = undefined;
+                _ = posix.system.clock_gettime(.REALTIME, &ts);
+                const now_ms = @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
+                self.read_deadline_ms = now_ms + @as(i64, ms);
+            }
+            return;
+        }
         return self.setTimeout(posix.SO.RCVTIMEO, ms);
     }
 
@@ -551,65 +578,76 @@ pub const Stream = struct {
 };
 
 const TLSClient = struct {
-    client: tls.Client,
-    stream: ionet.Stream,
-    stream_writer: ionet.Stream.Writer,
+    conn: tls_zig.Connection,
     stream_reader: ionet.Stream.Reader,
+    stream_writer: ionet.Stream.Writer,
+    input_buf: [tls_zig.input_buffer_len]u8,
+    output_buf: [tls_zig.output_buffer_len]u8,
     arena: std.heap.ArenaAllocator,
     io: std.Io,
 
     fn init(allocator: Allocator, stream: ionet.Stream, config: *const Client.Config, io: std.Io) !*TLSClient {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
-
         const aa = arena.allocator();
 
-        const bundle = config.ca_bundle orelse blk: {
-            var b = Bundle{};
+        // Allocate TLSClient on the heap with embedded buffers.
+        // This is critical: tls_zig.Connection stores *Io.Reader and *Io.Writer
+        // pointers that must remain valid for the connection's lifetime. If the
+        // reader/writer/buffers were stack-local, the pointers would dangle
+        // after init() returns.
+        const self = try aa.create(TLSClient);
+        self.* = .{
+            .conn = undefined,
+            .stream_reader = undefined,
+            .stream_writer = undefined,
+            .input_buf = undefined,
+            .output_buf = undefined,
+            .arena = arena,
+            .io = io,
+        };
+
+        // Create stream reader/writer with our embedded persistent buffers
+        self.stream_reader = stream.reader(io, &self.input_buf);
+        self.stream_writer = stream.writer(io, &self.output_buf);
+
+        // Get the Io.Reader/Io.Writer interfaces (pointers into self, which is on the heap)
+        const input = if (@hasField(@TypeOf(self.stream_reader), "interface"))
+            &self.stream_reader.interface
+        else
+            self.stream_reader.interface();
+        const output = &self.stream_writer.interface;
+
+        // Load system root CA certificates
+        const root_ca = config.ca_bundle orelse blk: {
+            var b: std.crypto.Certificate.Bundle = .{};
             try b.rescan(aa, io, std.Io.Timestamp.now(io, .real));
             break :blk b;
         };
 
-        // The TLS input and output have to be max_ciphertext_record_len each.
-        // It isn't clear to me how big the un-encrypted reader and writer
-        // need to be. I would think 0, but that will fail an assertion. I
-        // don't think that it's right that we need 4 buffers, but apparently
-        // we do. Until i figure this out, using 4 x max_ciphertext_record_len
-        // seems like the only safe choice.
-        const buf_len = std.crypto.tls.max_ciphertext_record_len;
-        var buf = try aa.alloc(u8, buf_len * 4);
+        // Create persistent PRNG for TLS handshake
+        var seed: [8]u8 = undefined;
+        posix.system.arc4random_buf(&seed, seed.len);
+        const prng = try aa.create(std.Random.DefaultPrng);
+        prng.* = std.Random.DefaultPrng.init(std.mem.readInt(u64, &seed, .little));
 
-        const self = try aa.create(TLSClient);
-        self.* = .{
-            .stream = stream,
-            .arena = arena,
-            .client = undefined,
-            .io = io,
-            .stream_writer = ionet.Stream.writer(stream, io, buf.ptr[0..buf_len][0..buf_len]),
-            .stream_reader = ionet.Stream.reader(stream, io, buf.ptr[buf_len .. 2 * buf_len][0..buf_len]),
+        // Create TLS connection with ALPN (required for Cloudflare-fronted relays)
+        self.conn = tls_zig.client(input, output, .{
+            .host = config.host,
+            .root_ca = root_ca,
+            .insecure_skip_verify = false,
+            .now = std.Io.Timestamp.now(io, .real),
+            .rng = prng.random(),
+            .alpn = &.{"http/1.1"},
+        }) catch |err| {
+            log.err("ws_client: tls_zig handshake failed: {}", .{err});
+            return err;
         };
-
-        var entropy: [tls.Client.Options.entropy_len]u8 = undefined;
-        posix.system.arc4random_buf(&entropy, entropy.len);
-        
-        self.client = try tls.Client.init(
-            &self.stream_reader.interface,
-            &self.stream_writer.interface,
-            .{
-                .ca = .{ .bundle = bundle },
-                .host = .{ .explicit = config.host },
-                .read_buffer = buf.ptr[2 * buf_len .. 3 * buf_len][0..buf_len],
-                .write_buffer = buf.ptr[3 * buf_len .. 4 * buf_len][0..buf_len],
-                .entropy = &entropy,
-                .realtime_now_seconds = blk: { var ts: posix.timespec = undefined; _ = posix.system.clock_gettime(.REALTIME, &ts); break :blk ts.sec; },
-            },
-        );
 
         return self;
     }
 
     fn deinit(self: *TLSClient) void {
-        _ = self.client.end() catch {};
         self.arena.deinit();
     }
 };
