@@ -334,6 +334,7 @@ pub const NostrPublicChannel = struct {
         };
 
         log.info("nostr_public: reader loop started — native websocket mode", .{});
+        log.info("nostr_public: reader over_read pos = {d}", .{self.relay.?.client._reader.pos});
 
         while (self.running.load(.acquire)) {
             // readMessage returns null on close/error.
