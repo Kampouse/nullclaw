@@ -855,6 +855,14 @@ pub const NostrPublicChannel = struct {
         // Signal reader thread to stop FIRST.
         self.running.store(false, .release);
 
+        // Unblock the reader thread if it's stuck in a blocking read.
+        // Without SO_RCVTIMEO (it causes Io.Threaded ABRT panics), the
+        // reader blocks indefinitely. shutdown(SHUT_RD) causes the read
+        // to return 0, which breaks the reader loop.
+        if (self.relay) |*r| {
+            r.interruptRead();
+        }
+
         // Join reader thread BEFORE closing the relay — the reader may still
         // be mid-read on the TLS stream. Closing the fd under it corrupts
         // the global Io's TLS state and causes a segfault on next connect.

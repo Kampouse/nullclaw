@@ -734,6 +734,15 @@ pub const RelayClient = struct {
         self.client.write(@constCast(msg_str)) catch {};
     }
 
+    /// Interrupt a blocking read on the underlying socket (without closing it).
+    /// Used by vtableStop to unblock the reader thread before joining it.
+    pub fn interruptRead(self: *RelayClient) void {
+        const fd = self.client.stream.stream.socket.handle;
+        // shutdown(SHUT_RD) causes the next read to return 0 (EOF),
+        // which breaks the reader loop. Safe to call on a valid fd.
+        _ = std.posix.system.shutdown(fd, std.posix.SHUT.RD);
+    }
+
     pub fn deinit(self: *RelayClient) void {
         self.client.close(.{}) catch {};
         self.client.deinit();
