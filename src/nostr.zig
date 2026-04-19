@@ -605,12 +605,14 @@ pub fn parseRelayUrl(allocator: Allocator, url: []const u8) !ParsedUrl {
         const port_str = host_port[idx + 1 ..];
         const port = std.fmt.parseInt(u16, port_str, 10) catch 443;
         const host_copy = try allocator.dupe(u8, host);
+        errdefer allocator.free(host_copy);
         const path_copy = try allocator.dupe(u8, path);
         return .{ .host = host_copy, .port = port, .path = path_copy };
     } else {
         const is_wss = std.ascii.startsWithIgnoreCase(url, "wss://");
         const port: u16 = if (is_wss) 443 else 80;
         const host_copy = try allocator.dupe(u8, host_port);
+        errdefer allocator.free(host_copy);
         const path_copy = try allocator.dupe(u8, path);
         return .{ .host = host_copy, .port = port, .path = path_copy };
     }
