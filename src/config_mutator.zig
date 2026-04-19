@@ -361,8 +361,14 @@ pub fn mutateDefaultConfig(
                 defer backup_file.close(io);
                 var write_buf: [1024 * 1024]u8 = undefined;
                 var writer = backup_file.writer(io, &write_buf);
-                writer.interface.writeAll(current.content) catch {};
-                writer.interface.flush() catch {};
+                writer.interface.writeAll(current.content) catch |err| {
+                    const log = std.log.scoped(.config_mutator);
+                    log.warn("backup write failed: {}", .{err});
+                };
+                writer.interface.flush() catch |err| {
+                    const log = std.log.scoped(.config_mutator);
+                    log.warn("backup flush failed: {}", .{err});
+                };
                 backup_path_opt = backup_path;
             } else |_| {
                 // Backup failed, but we can still proceed

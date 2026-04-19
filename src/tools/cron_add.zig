@@ -5,6 +5,7 @@ const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
 const cron = @import("../cron.zig");
 const CronScheduler = cron.CronScheduler;
+const log = std.log.scoped(.cron_add);
 
 /// CronAdd tool — creates a new cron job with either a cron expression or a delay.
 pub const CronAddTool = struct {
@@ -57,9 +58,9 @@ pub const CronAddTool = struct {
                 return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
-            cron.saveJobs(&scheduler) catch {};
+            cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
-            const msg = try std.fmt.allocPrint(allocator, "Created cron job {s}: {s} \u{2192} {s}", .{
+            const msg = try std.fmt.allocPrint(allocator, "Created cron job {s}: {s} → {s}", .{
                 job.id,
                 job.expression,
                 job.command,
@@ -73,7 +74,7 @@ pub const CronAddTool = struct {
                 return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
-            cron.saveJobs(&scheduler) catch {};
+            cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
             const msg = try std.fmt.allocPrint(allocator, "Created cron job {s}: {s} \u{2192} {s}", .{
                 job.id,

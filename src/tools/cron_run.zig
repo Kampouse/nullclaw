@@ -9,6 +9,7 @@ const JsonObjectMap = root.JsonObjectMap;
 const cron = @import("../cron.zig");
 const CronScheduler = cron.CronScheduler;
 const loadScheduler = @import("cron_add.zig").loadScheduler;
+const log = std.log.scoped(.cron_run);
 
 /// CronRun tool — force-runs a cron job immediately by its ID, regardless of schedule.
 pub const CronRunTool = struct {
@@ -55,7 +56,7 @@ pub const CronRunTool = struct {
                 job.last_status = "ok";
                 job.last_run_secs = util.timestampUnix();
             }
-            cron.saveJobs(&scheduler) catch {};
+            cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
             const msg = try std.fmt.allocPrint(allocator, "Job {s} ran: ok (stubbed in test mode)\n{s}", .{
                 job_id,
                 command,
@@ -70,7 +71,7 @@ pub const CronRunTool = struct {
                 job.last_status = "error";
                 job.last_run_secs = util.timestampUnix();
             }
-            cron.saveJobs(&scheduler) catch {};
+            cron.saveJobs(&scheduler) catch |e| log.warn("cron save failed: {}", .{e});
 
             const msg = try std.fmt.allocPrint(allocator, "Job '{s}' execution failed: {s}", .{ job_id, @errorName(err) });
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
@@ -90,7 +91,7 @@ pub const CronRunTool = struct {
             job.last_status = status_str;
             job.last_run_secs = util.timestampUnix();
         }
-        cron.saveJobs(&scheduler) catch {};
+        cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
         const status_label: []const u8 = if (success) "ok" else "error";
         const output = if (result.stdout.len > 0) result.stdout else result.stderr;

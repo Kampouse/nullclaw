@@ -6,6 +6,7 @@ const JsonObjectMap = root.JsonObjectMap;
 const cron = @import("../cron.zig");
 const CronScheduler = cron.CronScheduler;
 const loadScheduler = @import("cron_add.zig").loadScheduler;
+const log = std.log.scoped(.schedule);
 
 /// Schedule tool — lets the agent manage recurring and one-shot scheduled tasks.
 /// Delegates to the CronScheduler from the cron module for persistent job management.
@@ -120,7 +121,7 @@ pub const ScheduleTool = struct {
                 return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
-            cron.saveJobs(&scheduler) catch {};
+            cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
             const msg = try std.fmt.allocPrint(allocator, "Created job {s} | {s} | cmd: {s}", .{
                 job.id,
@@ -146,7 +147,7 @@ pub const ScheduleTool = struct {
                 return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
             };
 
-            cron.saveJobs(&scheduler) catch {};
+            cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
             const msg = try std.fmt.allocPrint(allocator, "Created one-shot task {s} | runs at {d} | cmd: {s}", .{
                 job.id,
@@ -166,7 +167,7 @@ pub const ScheduleTool = struct {
             defer scheduler.deinit();
 
             if (scheduler.removeJob(id)) {
-                cron.saveJobs(&scheduler) catch {};
+                cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
                 const msg = try std.fmt.allocPrint(allocator, "Cancelled job {s}", .{id});
                 return ToolResult{ .success = true, .output = msg, .owns_output = true };
             }
@@ -187,7 +188,7 @@ pub const ScheduleTool = struct {
             const found = if (is_pause) scheduler.pauseJob(id) else scheduler.resumeJob(id);
 
             if (found) {
-                cron.saveJobs(&scheduler) catch {};
+                cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
                 const verb: []const u8 = if (is_pause) "Paused" else "Resumed";
                 const msg = try std.fmt.allocPrint(allocator, "{s} job {s}", .{ verb, id });
                 return ToolResult{ .success = true, .output = msg, .owns_output = true };

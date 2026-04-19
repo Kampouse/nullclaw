@@ -182,7 +182,7 @@ fn heartbeatThread(allocator: std.mem.Allocator, config: *const Config, state: *
     var next_heartbeat_tick_at_ns: i128 = util.timestampUnix() * std.time.ns_per_s + heartbeat_interval_ns;
 
     while (!isShutdownRequested()) {
-        writeStateFile(allocator, state_path, state) catch {};
+        writeStateFile(allocator, state_path, state) catch |err| log.warn("write state file failed: {}", .{err});
         health.markComponentOk("heartbeat");
 
         const now_ns = util.timestampUnix() * std.time.ns_per_s;
@@ -1049,7 +1049,7 @@ fn runInternal(allocator: std.mem.Allocator, config: *const Config, host: []cons
 
     // Write final state
     state.markError("gateway", "shutting down");
-    writeStateFile(allocator, state_path, &state) catch {};
+    writeStateFile(allocator, state_path, &state) catch |err| log.warn("write state file failed: {}", .{err});
 
     // Wait for threads
     if (inbound_thread) |t| t.join();

@@ -9,6 +9,7 @@ const path_security = @import("path_security.zig");
 const isPathSafe = path_security.isPathSafe;
 const isResolvedPathAllowed = path_security.isResolvedPathAllowed;
 const resolvePathAlloc = path_security.resolvePathAlloc;
+const log = std.log.scoped(.file_write);
 
 
 // C API for hard link creation (POSIX link function)
@@ -135,7 +136,7 @@ pub const FileWriteTool = struct {
 
         if (std.fs.path.dirname(write_path)) |parent_dir_name| {
             // Create parent directories including the target parent
-            std.Io.Dir.createDirPath(std.Io.Dir.cwd(), io, parent_dir_name) catch {};
+            std.Io.Dir.createDirPath(std.Io.Dir.cwd(), io, parent_dir_name) catch |err| log.warn("mkdir failed: {}", .{err});
         }
 
         // Write via temp file + rename so existing hard links are not modified in place.
@@ -204,7 +205,7 @@ pub const FileWriteTool = struct {
         // For regular files, write_path is the file itself
         std.Io.Dir.renameAbsolute(tmp_path, write_path, io) catch |err| {
             // Clean up temp file on failure
-            std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch {};
+            std.Io.Dir.deleteFileAbsolute(io, tmp_path) catch |e| log.warn("tmp cleanup failed: {}", .{e});
             const msg = try std.fmt.allocPrint(allocator, "Failed to rename file: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };

@@ -6,6 +6,7 @@ const JsonObjectMap = root.JsonObjectMap;
 const cron = @import("../cron.zig");
 const CronScheduler = cron.CronScheduler;
 const loadScheduler = @import("cron_add.zig").loadScheduler;
+const log = std.log.scoped(.cron_update);
 
 /// CronUpdate tool — update a cron job's expression, command, or enabled state.
 pub const CronUpdateTool = struct {
@@ -58,7 +59,7 @@ pub const CronUpdateTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         }
 
-        cron.saveJobs(&scheduler) catch {};
+        cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
         // Build summary of what changed
         var buf: [1024]u8 = undefined;
@@ -115,7 +116,7 @@ test "cron_update_expression" {
     var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
-    cron.saveJobs(&scheduler) catch {};
+    cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
     const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"job_id\": \"{s}\", \"expression\": \"*/10 * * * *\"}}", .{job.id});
     defer std.testing.allocator.free(args);
@@ -135,7 +136,7 @@ test "cron_update_disable" {
     var scheduler = CronScheduler.init(std.testing.allocator, 10, true, std.Options.debug_io);
     defer scheduler.deinit();
     const job = try scheduler.addJob("*/5 * * * *", "echo test");
-    cron.saveJobs(&scheduler) catch {};
+    cron.saveJobs(&scheduler) catch |err| log.warn("cron save failed: {}", .{err});
 
     const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"job_id\": \"{s}\", \"enabled\": false}}", .{job.id});
     defer std.testing.allocator.free(args);

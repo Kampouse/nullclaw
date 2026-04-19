@@ -737,7 +737,7 @@ pub const RelayClient = struct {
         msg.appendSlice(self.allocator, "\"]") catch return;
         const msg_str = msg.toOwnedSlice(self.allocator) catch return;
         defer self.allocator.free(msg_str);
-        self.client.write(@constCast(msg_str)) catch {};
+        self.client.write(@constCast(msg_str)) catch |err| log.warn("websocket write failed: {}", .{err});
     }
 
     /// Interrupt a blocking read on the underlying socket (without closing it).

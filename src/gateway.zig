@@ -18,6 +18,8 @@ const Config = @import("config.zig").Config;
 const config_types = @import("config_types.zig");
 const session_mod = @import("session.zig");
 const providers = @import("providers/root.zig");
+
+const log = std.log.scoped(.gateway);
 const tools_mod = @import("tools/root.zig");
 const memory_mod = @import("memory/root.zig");
 const subagent_mod = @import("subagent.zig");
@@ -1713,14 +1715,18 @@ fn handleTelegramWebhookRoute(ctx: *WebhookHandlerContext) void {
                 const sk = telegramSessionKeyRouted(ctx.req_allocator, &kb, chat_id.?, b, tg_cfg_opt, tg_account_id);
                 const reply: ?[]const u8 = sm.processMessage(sk, msg_text.?, null) catch |err| blk: {
                     if (tg_bot_token.len > 0) {
-                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, userFacingAgentError(err), ctx.io) catch {};
+                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, userFacingAgentError(err), ctx.io) catch |send_err| {
+                            log.warn("telegram error reply failed: {}", .{send_err});
+                        };
                     }
                     break :blk null;
                 };
                 if (reply) |r| {
                     defer ctx.root_allocator.free(r);
                     if (tg_bot_token.len > 0) {
-                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, r, ctx.io) catch {};
+                        sendTelegramReply(ctx.req_allocator, tg_bot_token, chat_id.?, r, ctx.io) catch |send_err| {
+                            log.warn("telegram reply failed: {}", .{send_err});
+                        };
                     }
                     ctx.response_body = "{\"status\":\"ok\"}";
                 } else {
@@ -2110,13 +2116,17 @@ fn handleSlackWebhookRoute(ctx: *WebhookHandlerContext) void {
     } else if (ctx.session_mgr_opt) |sm| {
         const reply: ?[]const u8 = sm.processMessage(sk, text, null) catch |err| blk: {
             var outbound_ch = channels.slack.SlackChannel.initFromConfig(ctx.req_allocator, slack_cfg.*);
-            outbound_ch.sendMessage(channel_id, userFacingAgentError(err)) catch {};
+            outbound_ch.sendMessage(channel_id, userFacingAgentError(err)) catch |send_err| {
+                log.warn("slack error reply failed: {}", .{send_err});
+            };
             break :blk null;
         };
         if (reply) |r| {
             defer ctx.root_allocator.free(r);
             var outbound_ch = channels.slack.SlackChannel.initFromConfig(ctx.req_allocator, slack_cfg.*);
-            outbound_ch.sendMessage(channel_id, r) catch {};
+            outbound_ch.sendMessage(channel_id, r) catch |send_err| {
+                log.warn("slack reply failed: {}", .{send_err});
+            };
         }
     }
 
@@ -2243,7 +2253,9 @@ fn handleLineWebhookRoute(ctx: *WebhookHandlerContext) void {
                                 .access_token = line_access_token,
                                 .channel_secret = line_channel_secret,
                             });
-                            line_ch.replyMessage(rt, userFacingAgentError(err)) catch {};
+                            line_ch.replyMessage(rt, userFacingAgentError(err)) catch |send_err| {
+                                log.warn("line error reply failed: {}", .{send_err});
+                            };
                         }
                         break :blk null;
                     };
@@ -2254,7 +2266,9 @@ fn handleLineWebhookRoute(ctx: *WebhookHandlerContext) void {
                                 .access_token = line_access_token,
                                 .channel_secret = line_channel_secret,
                             });
-                            line_ch.replyMessage(rt, r) catch {};
+                            line_ch.replyMessage(rt, r) catch |send_err| {
+                                log.warn("line reply failed: {}", .{send_err});
+                            };
                         }
                     }
                 }
@@ -2359,12 +2373,16 @@ fn handleLarkWebhookRoute(ctx: *WebhookHandlerContext) void {
             _ = publishToBus(eb, ctx.state.allocator, "lark", msg.sender, msg.sender, msg.content, sk, meta);
         } else if (ctx.session_mgr_opt) |sm| {
             const reply: ?[]const u8 = sm.processMessage(sk, msg.content, null) catch |err| blk: {
-                lark_ch.sendMessage(msg.sender, userFacingAgentError(err)) catch {};
+                lark_ch.sendMessage(msg.sender, userFacingAgentError(err)) catch |send_err| {
+                    log.warn("lark error reply failed: {}", .{send_err});
+                };
                 break :blk null;
             };
             if (reply) |r| {
                 defer ctx.root_allocator.free(r);
-                lark_ch.sendMessage(msg.sender, r) catch {};
+                lark_ch.sendMessage(msg.sender, r) catch |send_err| {
+                    log.warn("lark reply failed: {}", .{send_err});
+                };
             }
         }
     }
@@ -2461,12 +2479,16 @@ fn handleQqWebhookRoute(ctx: *WebhookHandlerContext) void {
 
         if (ctx.session_mgr_opt) |sm| {
             const reply: ?[]const u8 = sm.processMessage(inbound.session_key, inbound.content, null) catch |err| blk: {
-                qq_channel.sendMessage(inbound.chat_id, userFacingAgentError(err)) catch {};
+                qq_channel.sendMessage(inbound.chat_id, userFacingAgentError(err)) catch |send_err| {
+                    log.warn("qq error reply failed: {}", .{send_err});
+                };
                 break :blk null;
             };
             if (reply) |r| {
                 defer ctx.root_allocator.free(r);
-                qq_channel.sendMessage(inbound.chat_id, r) catch {};
+                qq_channel.sendMessage(inbound.chat_id, r) catch |send_err| {
+                    log.warn("qq reply failed: {}", .{send_err});
+                };
             }
         }
     }
@@ -2655,8 +2677,11 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
     }
 
     // Accept loop — read raw HTTP from TCP connections
+    var eval_in_flight: std.atomic.Value(u32) = .init(0);
+    const MAX_CONCURRENT_EVALS: u32 = 1;
+
     while (true) {
-        const client_fd = net_socket.acceptConnection(server_fd) catch continue;
+        const client_fd = net_socket.acceptConnectionTimeout(server_fd, REQUEST_TIMEOUT_SECS) catch continue;
         defer net_socket.closeSocket(client_fd);
 
         // Per-request arena — all request-scoped allocations freed in one shot
@@ -2664,11 +2689,15 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         defer arena.deinit();
         const req_allocator = arena.allocator();
 
-        // Read request line + headers from TCP stream
-        var req_buf: [4096]u8 = undefined;
-        const n = net_socket.readSocket(client_fd, &req_buf) catch continue;
-        if (n == 0) continue;
-        const raw = req_buf[0..n];
+        // Read full request (headers + body via Content-Length)
+        const raw = net_socket.readFullRequest(req_allocator, client_fd, MAX_BODY_SIZE, REQUEST_TIMEOUT_SECS) catch {
+            // Send 400 for read failures (too large, connection closed, etc.)
+            const err_resp = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\nContent-Length: 11\r\n\r\nBad Request";
+            _ = net_socket.writeAllSocket(client_fd, err_resp) catch |err| {
+                log.warn("error response write failed: {}", .{err});
+            };
+            continue;
+        };
 
         // Parse first line: "METHOD /path HTTP/1.1\r\n"
         const first_line_end = std.mem.indexOf(u8, raw, "\r\n") orelse continue;
@@ -2688,9 +2717,19 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         });
         const base_path = if (std.mem.indexOfScalar(u8, target, '?')) |qi| target[0..qi] else target;
         const is_post = std.mem.eql(u8, method_str, "POST");
+        const is_options = std.mem.eql(u8, method_str, "OPTIONS");
         var response_status: []const u8 = "200 OK";
         var response_body: []const u8 = "";
         var pair_response_buf: [256]u8 = undefined;
+
+        // CORS preflight — respond immediately to OPTIONS
+        if (is_options) {
+            const cors_resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization, X-Request-ID\r\nAccess-Control-Max-Age: 86400\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            _ = net_socket.writeAllSocket(client_fd, cors_resp) catch |err| {
+                log.warn("cors preflight write failed: {}", .{err});
+            };
+            continue;
+        }
 
         if (findWebhookRouteDescriptor(base_path)) |desc| {
             var webhook_ctx = WebhookHandlerContext{
@@ -2849,34 +2888,44 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     response_status = "405 Method Not Allowed";
                     response_body = "{\"error\":\"method not allowed\"}";
                 } else if (session_mgr_opt) |*sm| {
-                    const body = extractBody(raw);
-                    if (body) |b| {
-                        const msg_text = jsonStringField(b, "message") orelse jsonStringField(b, "text") orelse b;
-                        const session_id = jsonStringField(b, "session_id");
-
-                        var sk_buf: [128]u8 = undefined;
-                        const session_key = if (session_id) |sid|
-                            std.fmt.bufPrint(&sk_buf, "eval:{s}", .{sid}) catch "eval:default"
-                        else
-                            "eval:hermes";
-
-                        const start_seq = gateway_thread_observer.currentSeq();
-                        const reply: ?[]const u8 = sm.processMessage(session_key, msg_text, null) catch |err| blk: {
-                            response_body = userFacingAgentErrorJson(err);
-                            break :blk null;
-                        };
-                        if (reply) |r| {
-                            defer allocator.free(r);
-                            const tool_events = gateway_thread_observer.collectSince(req_allocator, start_seq) catch &.{};
-                            const thread_events_json = buildThreadEventsJson(req_allocator, tool_events) catch "[]";
-                            const json_resp = buildWebhookSuccessResponse(req_allocator, r, thread_events_json) catch null;
-                            response_body = json_resp orelse "{\"status\":\"ok\"}";
-                        } else if (response_body.len == 0) {
-                            response_body = "{\"status\":\"no_response\"}";
-                        }
+                    // Guard: reject if another eval is already in flight
+                    const current_evals = eval_in_flight.load(.seq_cst);
+                    if (current_evals >= MAX_CONCURRENT_EVALS) {
+                        response_status = "503 Service Unavailable";
+                        response_body = "{\"error\":\"eval in progress, retry after " ++ std.fmt.comptimePrint("{d}", .{REQUEST_TIMEOUT_SECS}) ++ "s\"}";
                     } else {
-                        response_status = "400 Bad Request";
-                        response_body = "{\"error\":\"missing request body\"}";
+                        eval_in_flight.store(current_evals + 1, .seq_cst);
+                        defer eval_in_flight.store(current_evals, .seq_cst);
+
+                        const body = extractBody(raw);
+                        if (body) |b| {
+                            const msg_text = jsonStringField(b, "message") orelse jsonStringField(b, "text") orelse b;
+                            const session_id = jsonStringField(b, "session_id");
+
+                            var sk_buf: [128]u8 = undefined;
+                            const session_key = if (session_id) |sid|
+                                std.fmt.bufPrint(&sk_buf, "eval:{s}", .{sid}) catch "eval:default"
+                            else
+                                "eval:hermes";
+
+                            const start_seq = gateway_thread_observer.currentSeq();
+                            const reply: ?[]const u8 = sm.processMessage(session_key, msg_text, null) catch |err| blk: {
+                                response_body = userFacingAgentErrorJson(err);
+                                break :blk null;
+                            };
+                            if (reply) |r| {
+                                defer allocator.free(r);
+                                const tool_events = gateway_thread_observer.collectSince(req_allocator, start_seq) catch &.{};
+                                const thread_events_json = buildThreadEventsJson(req_allocator, tool_events) catch "[]";
+                                const json_resp = buildWebhookSuccessResponse(req_allocator, r, thread_events_json) catch null;
+                                response_body = json_resp orelse "{\"status\":\"ok\"}";
+                            } else if (response_body.len == 0) {
+                                response_body = "{\"status\":\"no_response\"}";
+                            }
+                        } else {
+                            response_status = "400 Bad Request";
+                            response_body = "{\"error\":\"missing request body\"}";
+                        }
                     }
                 } else {
                     response_status = "503 Service Unavailable";
@@ -2888,10 +2937,24 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
             response_body = "{\"error\":\"not found\"}";
         }
 
-        // Send HTTP response
-        var resp_buf: [8192]u8 = undefined;
-        const resp = std.fmt.bufPrint(&resp_buf, "HTTP/1.1 {s}\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {d}\r\n\r\n{s}", .{ response_status, response_body.len, response_body }) catch continue;
-        _ = net_socket.writeSocket(client_fd, resp) catch continue;
+        // Send HTTP response — dynamically allocated to handle large responses
+        var resp_buf = std.ArrayListUnmanaged(u8).empty;
+        defer resp_buf.deinit(req_allocator);
+
+        // Build response header
+        const header = std.fmt.allocPrint(req_allocator, "HTTP/1.1 {s}\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {d}\r\n\r\n", .{ response_status, response_body.len }) catch continue;
+        defer req_allocator.free(header);
+
+        resp_buf.appendSlice(req_allocator, header) catch continue;
+        resp_buf.appendSlice(req_allocator, response_body) catch continue;
+
+        _ = net_socket.writeAllSocket(client_fd, resp_buf.items) catch |err| {
+            log.warn("response write failed: {}", .{err});
+        };
+
+        // Access log
+        const status_code = if (std.mem.indexOfScalar(u8, response_status, ' ')) |sp| response_status[0..sp] else response_status;
+        log.info("http {s} {s} -> {s} ({d} bytes)", .{ method_str, base_path, status_code, response_body.len });
     }
 }
 

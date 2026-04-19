@@ -300,9 +300,9 @@ pub const SessionManager = struct {
             const trimmed = std.mem.trim(u8, content, " \t\r\n");
             if (slashClearsSession(trimmed)) {
                 // Clear persisted messages on session reset
-                store.clearMessages(session_key) catch {};
+                store.clearMessages(session_key) catch |err| log.warn("clear messages failed: {}", .{err});
                 // Clear stale auto-saved memories
-                store.clearAutoSaved(session_key) catch {};
+                store.clearAutoSaved(session_key) catch |err| log.warn("clear autosave failed: {}", .{err});
                 // Reset provider state (clear error tracking, reset key rotation)
                 self.provider.reset();
                 // Clear in-memory conversation history (fix memory leak)
@@ -312,8 +312,8 @@ pub const SessionManager = struct {
                 self.provider.reset();
             } else if (!std.mem.startsWith(u8, trimmed, "/")) {
                 // Persist user + assistant messages (skip slash commands)
-                store.saveMessage(session_key, "user", content) catch {};
-                store.saveMessage(session_key, "assistant", response) catch {};
+                store.saveMessage(session_key, "user", content) catch |err| log.warn("save user message failed: {}", .{err});
+                store.saveMessage(session_key, "assistant", response) catch |err| log.warn("save assistant message failed: {}", .{err});
             }
         }
 

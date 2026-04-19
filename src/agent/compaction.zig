@@ -249,8 +249,8 @@ fn buildCompactionTranscript(
         };
         try buf.appendSlice(allocator, role_str);
         try buf.appendSlice(allocator, ": ");
-        // Truncate very long messages in transcript
-        const content = if (msg.content.len > 500) msg.content[0..500] else msg.content;
+        // Truncate very long messages in transcript (preserve tool results)
+        const content = if (msg.content.len > 1500) msg.content[0..1500] else msg.content;
         try buf.appendSlice(allocator, content);
         try buf.append(allocator, '\n');
 
@@ -279,7 +279,7 @@ fn summarizeSlice(
     const transcript = try buildCompactionTranscript(allocator, history_items, start, end, config.max_source_chars);
     defer allocator.free(transcript);
 
-    const summarizer_system = "You are a conversation compaction engine. Summarize older chat history into concise context for future turns. Preserve: user preferences, commitments, decisions, unresolved tasks, key facts. Omit: filler, repeated chit-chat, verbose tool logs. Output plain text bullet points only.";
+    const summarizer_system = "You are a conversation compaction engine. Summarize older chat history into concise context for future turns. Preserve: user preferences, commitments, decisions, unresolved tasks, key facts, identifiers (npub, hex keys, file paths, URLs), and tool output summaries. Omit: filler, repeated chit-chat, verbose tool logs. Output plain text bullet points only.";
     const summarizer_user = try std.fmt.allocPrint(allocator, "Summarize the following conversation history for context preservation. Keep it short (max 12 bullet points).\n\n{s}", .{transcript});
     defer allocator.free(summarizer_user);
 
