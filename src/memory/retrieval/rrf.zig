@@ -114,8 +114,6 @@ fn cloneCandidate(allocator: Allocator, src: RetrievalCandidate, final_score: f6
     const key = try allocator.dupe(u8, src.key);
     errdefer allocator.free(key);
     const content = try allocator.dupe(u8, src.content);
-    // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
     const snippet = try allocator.dupe(u8, src.snippet);
     errdefer allocator.free(snippet);
     const source = try allocator.dupe(u8, src.source);

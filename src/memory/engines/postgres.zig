@@ -322,8 +322,6 @@ const PostgresMemoryImpl = struct {
         const key = try dupeResultValue(allocator, result, row, 1);
         errdefer allocator.free(key);
         const content = try dupeResultValue(allocator, result, row, 2);
-        // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
         const cat_str = try dupeResultValue(allocator, result, row, 3);
         const category = MemoryCategory.fromString(cat_str);
         // Free cat_str only if it wasn't captured by .custom

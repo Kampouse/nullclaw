@@ -330,8 +330,6 @@ pub const LanceDbMemory = struct {
             const key = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(key);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
             const id = try allocator.dupe(u8, key);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");
@@ -416,8 +414,6 @@ pub const LanceDbMemory = struct {
             const key = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(key);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
             const id = try allocator.dupe(u8, key);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");
@@ -463,8 +459,6 @@ pub const LanceDbMemory = struct {
             const k = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(k);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
             const id = try allocator.dupe(u8, k);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");
@@ -540,8 +534,6 @@ pub const LanceDbMemory = struct {
             const k = try allocator.dupe(u8, std.mem.span(key_ptr));
             errdefer allocator.free(k);
             const content = try allocator.dupe(u8, std.mem.span(text_ptr));
-            // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
             const id = try allocator.dupe(u8, k);
             errdefer allocator.free(id);
             const timestamp = if (ts_ptr != null) try allocator.dupe(u8, std.mem.span(ts_ptr)) else try allocator.dupe(u8, "0");

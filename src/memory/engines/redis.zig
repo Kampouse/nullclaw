@@ -707,8 +707,6 @@ fn parseHashFields(allocator: std.mem.Allocator, key: []const u8, fields: []Resp
     const entry_key = try allocator.dupe(u8, key);
     errdefer allocator.free(entry_key);
     const content = try allocator.dupe(u8, content_val orelse "");
-    // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
     const timestamp = try allocator.dupe(u8, timestamp_val orelse "0");
     errdefer allocator.free(timestamp);
 

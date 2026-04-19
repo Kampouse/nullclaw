@@ -1133,6 +1133,26 @@ pub fn parseJson(self: *Config, content: []const u8) !void {
                     if (lc.get("auto_hydrate")) |v| if (v == .bool) {
                         self.memory.lifecycle.auto_hydrate = v.bool;
                     };
+
+                    // consolidation (lifecycle)
+                    if (lc.get("consolidation_enabled")) |v| if (v == .bool) {
+                        self.memory.lifecycle.consolidation_enabled = v.bool;
+                    };
+                    if (lc.get("consolidation_interval_minutes")) |v| if (v == .integer) {
+                        self.memory.lifecycle.consolidation_interval_minutes = @intCast(v.integer);
+                    };
+                    if (lc.get("consolidation_min_conversations")) |v| if (v == .integer) {
+                        self.memory.lifecycle.consolidation_min_conversations = @intCast(v.integer);
+                    };
+                    if (lc.get("consolidation_auto_approve_positive")) |v| if (v == .bool) {
+                        self.memory.lifecycle.consolidation_auto_approve_positive = v.bool;
+                    };
+                    if (lc.get("consolidation_auto_approve_improvement")) |v| if (v == .bool) {
+                        self.memory.lifecycle.consolidation_auto_approve_improvement = v.bool;
+                    };
+                    if (lc.get("consolidation_feedback_loop_detection")) |v| if (v == .bool) {
+                        self.memory.lifecycle.consolidation_feedback_loop_detection = v.bool;
+                    };
                 }
             }
 

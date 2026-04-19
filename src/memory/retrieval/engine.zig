@@ -123,8 +123,6 @@ pub fn entriesToCandidates(allocator: Allocator, entries: []const MemoryEntry) !
         const key = try allocator.dupe(u8, entry.key);
         errdefer allocator.free(key);
         const content = try allocator.dupe(u8, entry.content);
-        // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
         const snippet = try allocator.dupe(u8, entry.content);
         errdefer allocator.free(snippet);
         const source = try allocator.dupe(u8, "primary");
@@ -714,8 +712,6 @@ fn vectorResultsToCandidates(allocator: Allocator, vec_results: []const vector_s
         const key = try allocator.dupe(u8, vr.key);
         errdefer allocator.free(key);
         const content = try allocator.dupe(u8, vr.key); // minimal: key as content
-        // TODO: Zig 0.16.0 - disabled
-    // defer allocator.free(content);
         const snippet = try allocator.dupe(u8, vr.key);
         errdefer allocator.free(snippet);
         const source = try allocator.dupe(u8, "vector");

@@ -21,7 +21,7 @@ fn timestampUnix() i64 {
     return tv.sec;
 }
 
-const MessageEntry = struct { role: []const u8, content: []const u8 };
+pub const MessageEntry = struct { role: []const u8, content: []const u8 };
 const log = std.log.scoped(.memory_consolidation);
 
 // ── Configuration ─────────────────────────────────────────────────
@@ -212,10 +212,10 @@ pub const ConsolidationEngine = struct {
 
     /// Extract patterns from a single conversation (deprecated - use batch processing)
     fn extractPatterns(self: *Self, conv: ConversationBatch) ![]ExtractedPattern {
-        _ = conv;
-        // For now, return empty - use processBatch with LLM callback instead
-        // TODO: Integrate LLM for pattern extraction
-        return try self.allocator.alloc(ExtractedPattern, 0);
+        const result = try self.processBatch(&.{conv});
+        // Transfer ownership of patterns to caller — caller must free each pattern
+        // and the slice. Do not call result.deinit since it would free patterns.
+        return result.patterns;
     }
 
     /// Clone a pattern for storage

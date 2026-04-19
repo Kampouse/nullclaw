@@ -81,8 +81,6 @@ pub fn readBrainDb(
         const key = allocator.dupe(u8, raw_key) catch return error.OutOfMemory;
         errdefer allocator.free(key);
         const content = allocator.dupe(u8, raw_content) catch return error.OutOfMemory;
-        // TODO: Zig 0.16.0 - disabled
-        // defer allocator.free(content);
         const category = allocator.dupe(u8, raw_category) catch return error.OutOfMemory;
         errdefer allocator.free(category);
 

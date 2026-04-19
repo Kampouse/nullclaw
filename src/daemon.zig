@@ -14,6 +14,10 @@ const Config = @import("config.zig").Config;
 const CronScheduler = @import("cron.zig").CronScheduler;
 const cron = @import("cron.zig");
 const bus_mod = @import("bus.zig");
+const consolidation_scheduler_mod = @import("memory/lifecycle/consolidation_scheduler.zig");
+const consolidation_mod = @import("memory/lifecycle/consolidation.zig");
+const mem_root = @import("memory/root.zig");
+const provider_helpers = @import("providers/helpers.zig");
 const dispatch = @import("channels/dispatch.zig");
 const channel_loop = @import("channel_loop.zig");
 const channel_manager = @import("channel_manager.zig");
@@ -26,6 +30,10 @@ const streaming = @import("streaming.zig");
 const trace = @import("trace.zig");
 
 const log = std.log.scoped(.daemon);
+
+/// Thread-local config pointer for the consolidation LLM callback.
+/// Set by the scheduler thread so the bare fn pointer can access provider config.
+threadlocal var con_config_ptr: ?*const Config = null;
 
 /// How often the daemon state file is flushed (seconds).
 const STATUS_FLUSH_SECONDS: u64 = 5;
@@ -378,6 +386,76 @@ fn schedulerThread(allocator: std.mem.Allocator, config: *const Config, state: *
     state.markRunning("scheduler");
     health.markComponentOk("scheduler");
 
+    // --- Consolidation scheduler ---
+    const ConsolidationScheduler = consolidation_scheduler_mod.ConsolidationScheduler;
+    const ConsolidationSchedule = consolidation_scheduler_mod.ConsolidationSchedule;
+
+    // Build a consolidation schedule from config
+    const con_schedule = ConsolidationSchedule{
+        .enabled = config.memory.lifecycle.consolidation_enabled,
+        .interval_minutes = config.memory.lifecycle.consolidation_interval_minutes,
+        .min_conversations = config.memory.lifecycle.consolidation_min_conversations,
+        .auto_approve_positive = config.memory.lifecycle.consolidation_auto_approve_positive,
+        .auto_approve_improvement = config.memory.lifecycle.consolidation_auto_approve_improvement,
+        .feedback_loop_detection = config.memory.lifecycle.consolidation_feedback_loop_detection,
+    };
+
+    // Consolidation LLM callback — reads config from threadlocal.
+    // Signature matches consolidation_mod.LlmCallback.
+    const con_llm_callback: consolidation_mod.LlmCallback = @ptrCast(&struct {
+        fn invoke(
+            alloc: std.mem.Allocator,
+            prompt: []const u8,
+        ) anyerror![]const u8 {
+            const cfg = con_config_ptr orelse return error.NoConfig;
+            const system_prompt: []const u8 =
+                "You are a pattern extraction engine. Analyze the following conversation " ++
+                "messages and extract recurring patterns, preferences, and behavioral insights. " ++
+                "Respond with a JSON array of patterns, each with: type (positive/negative/improvement), " ++
+                "description, confidence (0.0-1.0), and reward (-1.0 to 1.0).";
+            return provider_helpers.completeWithSystem(alloc, cfg, system_prompt, prompt);
+        }
+    }.invoke);
+
+    var con_scheduler: ?ConsolidationScheduler = null;
+    defer if (con_scheduler) |*s| s.deinit();
+
+    if (con_schedule.enabled) {
+        con_config_ptr = config;
+
+        // Check if we have a provider key before attempting init with LLM callback
+        const has_provider_key = config.defaultProviderKey() != null;
+        const con_config = consolidation_mod.ConsolidationConfig{
+            .min_conversations = con_schedule.min_conversations,
+            .llm_callback = if (has_provider_key) con_llm_callback else null,
+            .min_confidence = 0.6,
+        };
+        con_scheduler = ConsolidationScheduler.init(allocator, con_config);
+        if (con_scheduler != null) {
+            log.info("consolidation scheduler enabled (interval={}m, min_convs={}, llm={})", .{
+                con_schedule.interval_minutes,
+                con_schedule.min_conversations,
+                has_provider_key,
+            });
+        }
+    }
+
+    // Init a MemoryRuntime for consolidation
+    var con_memory_rt: ?mem_root.MemoryRuntime = null;
+    defer if (con_memory_rt) |*rt| rt.deinit();
+
+    if (con_scheduler != null) {
+        con_memory_rt = mem_root.initRuntime(allocator, &config.memory, config.workspace_dir);
+        if (con_memory_rt == null) {
+            log.warn("consolidation: memory runtime init failed, disabling", .{});
+            if (con_scheduler) |*s| {
+                s.deinit();
+                con_scheduler = null;
+            }
+            con_config_ptr = null;
+        }
+    }
+
     while (!isShutdownRequested()) {
         // Refresh scheduler view from store so jobs created/updated after daemon startup are picked up.
         cron.reloadJobs(&scheduler) catch |err| {
@@ -408,6 +486,22 @@ fn schedulerThread(allocator: std.mem.Allocator, config: *const Config, state: *
 
         state.markRunning("scheduler");
         health.markComponentOk("scheduler");
+
+        // Consolidation tick (non-blocking — LLM call may take seconds)
+        if (con_scheduler) |*cs| {
+            if (con_memory_rt) |*mrt| {
+                if (cs.tick(&mrt.memory, con_schedule)) |con_result| {
+                    if (con_result) |r| {
+                        log.info("consolidation: extracted {d} patterns from {d} conversations", .{
+                            r.patterns.len,
+                            r.conversations_processed,
+                        });
+                    }
+                } else |err| {
+                    log.warn("consolidation tick failed: {}", .{err});
+                }
+            }
+        }
 
         var slept: u64 = 0;
         while (slept < poll_secs and !isShutdownRequested()) : (slept += 1) {

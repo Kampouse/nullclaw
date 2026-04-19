@@ -987,6 +987,14 @@ pub const MemoryLifecycleConfig = struct {
     snapshot_enabled: bool = false,
     snapshot_on_hygiene: bool = false,
     auto_hydrate: bool = true,
+
+    /// Consolidation: periodic pattern extraction from conversations.
+    consolidation_enabled: bool = false,
+    consolidation_interval_minutes: u32 = 30,
+    consolidation_min_conversations: usize = 10,
+    consolidation_auto_approve_positive: bool = true,
+    consolidation_auto_approve_improvement: bool = false,
+    consolidation_feedback_loop_detection: bool = true,
 };
 
 pub const MemoryResponseCacheConfig = struct {
