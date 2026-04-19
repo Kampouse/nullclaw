@@ -167,7 +167,6 @@ pub const NostrTool = struct {
                 try relay_urls.append(allocator, try allocator.dupe(u8, r));
             }
         }
-
         if (std.mem.eql(u8, action, "identity")) {
             return self.actionIdentity(allocator, sk_buf);
         } else if (std.mem.eql(u8, action, "post")) {
@@ -511,13 +510,13 @@ pub const NostrTool = struct {
         _ = self;
         const kp = nostr.keyPairFromSecret(sk) catch
             return ToolResult.fail("Failed to derive public key from private key.");
-
         const hex_pk = nostr.hexEncode32(kp.public_key);
-        const npub = nostr.npubEncode(kp.public_key);
+        const npub = nostr.npubEncodeAlloc(allocator, kp.public_key) catch
+            return ToolResult.fail("Failed to encode npub.");
 
         const result = try std.fmt.allocPrint(allocator,
             "Nostr Identity:\n  npub: {s}\n  hex:  {s}",
-            .{ &npub, &hex_pk },
+            .{ npub, &hex_pk },
         );
         return ToolResult.ok(result);
     }

@@ -91,7 +91,7 @@ pub fn curlPostWithProxy(
     try req.sendBodyComplete(body_dup);
 
     var redirect_buf: [4096]u8 = undefined;
-    var response = req.receiveHead(&redirect_buf) catch |err| {
+    const response = req.receiveHead(&redirect_buf) catch |err| {
         log.warn("curlPostWithProxy: receiveHead failed: {}", .{err});
         return err;
     };
@@ -100,7 +100,7 @@ pub fn curlPostWithProxy(
         // Read error response body to help debug
         var transfer_buf: [8192]u8 = undefined;
         const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
-        var error_buffer = std.ArrayListUnmanaged(u8){};
+        var error_buffer = std.ArrayListUnmanaged(u8).empty;
         defer error_buffer.deinit(allocator);
 
         const max_error = 8192;
@@ -136,7 +136,7 @@ pub fn curlPostWithProxy(
     const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
 
     // Read response body by actively reading from the body_reader
-    var response_buffer = std.ArrayListUnmanaged(u8){};
+    var response_buffer = std.ArrayListUnmanaged(u8).empty;
     defer response_buffer.deinit(allocator);
 
     try response_buffer.ensureTotalCapacity(allocator, 8192);
@@ -236,7 +236,7 @@ pub fn curlPostStream(
     try req.sendBodyComplete(body_dup);
 
     var redirect_buf: [4096]u8 = undefined;
-    var response = req.receiveHead(&redirect_buf) catch |err| {
+    const response = req.receiveHead(&redirect_buf) catch |err| {
         log.err("curlPostStream: receiveHead failed: {}", .{err});
         return err;
     };
@@ -387,7 +387,7 @@ pub fn curlPut(allocator: Allocator, url: []const u8, body: []const u8, headers:
         response.readerDecompressing(&transfer_buf, &decompress, &decompress_buf);
 
     // Read response body by actively reading
-    var response_buffer = std.ArrayListUnmanaged(u8){};
+    var response_buffer = std.ArrayListUnmanaged(u8).empty;
     defer response_buffer.deinit(allocator);
 
     try response_buffer.ensureTotalCapacity(allocator, 8192);
@@ -497,7 +497,7 @@ pub fn curlGetWithProxy(
         response.readerDecompressing(&transfer_buf, &decompress, &decompress_buf);
 
     // Read response body by actively reading
-    var response_buffer = std.ArrayListUnmanaged(u8){};
+    var response_buffer = std.ArrayListUnmanaged(u8).empty;
     defer response_buffer.deinit(allocator);
 
     try response_buffer.ensureTotalCapacity(allocator, 8192);
@@ -642,7 +642,7 @@ fn curlGetTlsLibrary(allocator: Allocator, url: []const u8, headers: []const []c
     log.debug("curlGetTlsLibrary: Sent HTTP GET request", .{});
 
     // Read response
-    var response_buffer = std.ArrayListUnmanaged(u8){};
+    var response_buffer = std.ArrayListUnmanaged(u8).empty;
     defer response_buffer.deinit(allocator);
     while (true) {
         const data = (try conn.next()) orelse break;

@@ -83,55 +83,61 @@ fn bech32HrpExpand(hrp: []const u8, buf: *[39]u5) []const u5 {
     return buf[0..i];
 }
 
-/// Encode a 32-byte x-only pubkey as npub1... bech32 string.
-/// Returns a stack-allocated [63]u8 (npub1 = 5 chars + 53 data chars + 6 checksum chars).
-pub fn npubEncode(pubkey: [32]u8) [63]u8 {
-    // Build witness program: version 0x00 + 32-byte pubkey = 33 bytes
-    var data8: [33]u8 = undefined;
-    data8[0] = 0x00;
-    @memcpy(data8[1..33], &pubkey);
-
-    // Convert 8-bit to 5-bit groups: 33 bytes -> 53 five-bit values
-    var data5: [53]u5 = undefined;
+/// Heap-allocated npub encoding.
+/// NIP-19: HRP "npub", data is the raw 32-byte x-only pubkey (no version byte).
+pub fn npubEncodeAlloc(allocator: std.mem.Allocator, pubkey: [32]u8) ![]const u8 {
+    // Convert 32 bytes to 5-bit groups: 32*8=256 bits, ceil(256/5)=52 values
+    var five_bit: [52]u5 = undefined;
     var acc: u32 = 0;
-    var bits: u5 = 0;
-    var di: usize = 0;
-    for (data8) |b| {
-        acc = (acc << 8) | b;
-        bits += 8;
-        while (bits >= 5) {
-            bits -= 5;
-            data5[di] = @intCast((acc >> bits) & 0x1F);
-            di += 1;
+    var num_bits: u5 = 0;
+    var idx: usize = 0;
+
+    for (pubkey) |byte| {
+        acc = (acc << 8) | byte;
+        num_bits += 8;
+        while (num_bits >= 5) : (num_bits -= 5) {
+            five_bit[idx] = @intCast((acc >> num_bits) & 0x1F);
+            idx += 1;
         }
     }
-    if (bits > 0) {
-        data5[di] = @intCast((acc << (5 - bits)) & 0x1F);
-        di += 1;
+    // Pad remaining bits with zeros (bech32 convertBits pad=true)
+    if (num_bits > 0) {
+        five_bit[idx] = @intCast((acc << @as(u5, @intCast(5 - num_bits))) & 0x1F);
+        idx += 1;
+    }
+    // idx should be exactly 52 for 32-byte input
+
+    // HRP expand for "npub"
+    var expanded: [9]u5 = .{
+        'n' >> 5, 'p' >> 5, 'u' >> 5, 'b' >> 5, 0,
+        'n' & 31, 'p' & 31, 'u' & 31, 'b' & 31,
+    };
+
+    // Polymod input: expanded(9) + five_bit(52) + 6 zeros = 67
+    var polymod_input: [67]u5 = undefined;
+    @memcpy(polymod_input[0..9], &expanded);
+    @memcpy(polymod_input[9..61], five_bit[0..52]);
+    @memset(polymod_input[61..], 0);
+
+    const chk = bech32Polymod(polymod_input[0..67]) ^ 1;
+
+    // Build result: "npub1" (5) + data (52) + checksum (6) = 63
+    const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    var result: [63]u8 = undefined;
+    result[0] = 'n'; result[1] = 'p'; result[2] = 'u'; result[3] = 'b'; result[4] = '1';
+    for (0..52) |i| {
+        result[5 + i] = CHARSET[five_bit[i]];
+    }
+    var ci: usize = 57;
+    var shift: u6 = 25;
+    for (0..6) |_| {
+        result[ci] = CHARSET[@intCast((chk >> @intCast(shift)) & 0x1F)];
+        ci += 1;
+        shift -|= 5;
     }
 
-    // Compute bech32 checksum (6 values)
-    const hrp = "npub";
-    var hrp_buf: [39]u5 = undefined;
-    const hrp_exp = bech32HrpExpand(hrp, &hrp_buf);
-    var checksum_data: [hrp_buf.len + data5.len + 6]u5 = undefined;
-    @memcpy(checksum_data[0..hrp_exp.len], hrp_exp);
-    @memcpy(checksum_data[hrp_exp.len .. hrp_exp.len + data5.len], &data5);
-    // Zero-fill checksum positions
-    for (hrp_exp.len + data5.len .. checksum_data.len) |j| {
-        checksum_data[j] = 0;
-    }
-    const chk = bech32Polymod(&checksum_data) ^ 1;
-
-    // Build output: "npub1" + 53 data chars + 6 checksum chars
-    var out: [63]u8 = undefined;
-    @memcpy(out[0..5], "npub1");
-    for (0..53) |i| {
-        out[5 + i] = BECH32_CHARSET[data5[i]];
-    }
-    for (0..6) |i| {
-        out[58 + i] = BECH32_CHARSET[(chk >> (5 * (5 - @as(u5, @intCast(i))))) & 0x1F];
-    }
+    const out = try allocator.alloc(u8, 63);
+    @memcpy(out, &result);
     return out;
 }
 

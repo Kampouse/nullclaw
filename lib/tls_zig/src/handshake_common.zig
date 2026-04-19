@@ -136,21 +136,21 @@ pub const cert = struct {
     pub const Bundle = crypto.Certificate.Bundle;
 
     pub fn fromFilePath(allocator: mem.Allocator, io: Io, dir: std.Io.Dir, path: []const u8) !Bundle {
-        var bundle: Bundle = .{};
+        var bundle: Bundle = .{ .map = .empty, .bytes = .empty };
         const now1 = Io.Clock.real.now(io);
         try bundle.addCertsFromFilePath(allocator, io, now1, dir, path);
         return bundle;
     }
 
     pub fn fromFilePathAbsolute(allocator: mem.Allocator, io: Io, path: []const u8) !Bundle {
-        var bundle: Bundle = .{};
+        var bundle: Bundle = .{ .map = .empty, .bytes = .empty };
         const now2 = Io.Clock.real.now(io);
         try bundle.addCertsFromFilePathAbsolute(allocator, io, now2, path);
         return bundle;
     }
 
     pub fn fromSystem(allocator: mem.Allocator, io: Io) !Bundle {
-        var bundle: Bundle = .{};
+        var bundle: Bundle = .{ .map = .empty, .bytes = .empty };
         const now = Io.Clock.real.now(io);
         try bundle.rescan(allocator, io, now);
         return bundle;
@@ -161,7 +161,7 @@ pub const cert = struct {
         const size = slice.len;
         const ts = Io.Clock.real.now(io);
 
-        var bundle: Bundle = .{};
+        var bundle: Bundle = .{ .map = .empty, .bytes = .empty };
 
         //Contains modified code from std.crypto.Certificate.Bundle.addCertsFromFile
         const decoded_size_upper_bound = size / 4 * 3;

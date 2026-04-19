@@ -52,7 +52,7 @@ pub const SpiTool = struct {
         }
 
         // On Linux: glob /dev/spidev*.*
-        var devices: std.ArrayList(u8) = .{};
+        var devices: std.ArrayList(u8) = .empty;
         errdefer devices.deinit(allocator);
 
         try devices.appendSlice(allocator, "{\"devices\":[");

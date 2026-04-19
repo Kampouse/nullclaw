@@ -381,7 +381,7 @@ pub const SessionManager = struct {
         var evicted: usize = 0;
 
         // Collect keys to remove (can't modify map while iterating)
-        var to_remove: std.ArrayListUnmanaged([]const u8) = .{};
+        var to_remove: std.ArrayListUnmanaged([]const u8) = .empty;
         defer to_remove.deinit(self.allocator);
 
         var it = self.sessions.iterator();

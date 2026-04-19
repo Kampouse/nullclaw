@@ -690,13 +690,13 @@ pub const OpenAiCompatibleProvider = struct {
         try req.sendBodyComplete(body_dup);
 
         var redirect_buf: [4096]u8 = undefined;
-        var response = try req.receiveHead(&redirect_buf);
+        const response = try req.receiveHead(&redirect_buf);
 
         // Read response body
         var transfer_buf: [16384]u8 = undefined;
         const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
 
-        var response_body = std.ArrayListUnmanaged(u8){};
+        var response_body = std.ArrayListUnmanaged(u8).empty;
         errdefer response_body.deinit(allocator);
 
         while (true) {

@@ -1222,8 +1222,8 @@ fn runShellCommand(self: anytype, command: []const u8, skip_approval_gate: bool)
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
-    var args = std.json.ObjectMap.init(arena);
-    try args.put("command", .{ .string = command });
+    var args = std.json.ObjectMap.empty;
+    try args.put(arena, "command", .{ .string = command });
 
     const result = shell_tool.execute(arena, args, self.io) catch |err| {
         return try std.fmt.allocPrint(self.allocator, "Bash failed: {s}", .{@errorName(err)});

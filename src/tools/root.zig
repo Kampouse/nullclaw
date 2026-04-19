@@ -299,7 +299,7 @@ pub fn defaultToolsWithPaths(
     workspace_dir: []const u8,
     allowed_paths: []const []const u8,
 ) ![]Tool {
-    var list: std.ArrayList(Tool) = .{};
+    var list: std.ArrayList(Tool) = .empty;
     errdefer {
         for (list.items) |t| {
             t.deinit(allocator);
@@ -356,7 +356,7 @@ pub fn allTools(
         repo_dir: ?[]const u8 = null,
     },
 ) ![]Tool {
-    var list: std.ArrayList(Tool) = .{};
+    var list: std.ArrayList(Tool) = .empty;
     errdefer {
         for (list.items) |t| {
             t.deinit(allocator);
@@ -619,7 +619,7 @@ pub fn subagentTools(
         policy: ?*const @import("../security/policy.zig").SecurityPolicy = null,
     },
 ) ![]Tool {
-    var list: std.ArrayList(Tool) = .{};
+    var list: std.ArrayList(Tool) = .empty;
     errdefer {
         for (list.items) |t| {
             t.deinit(allocator);

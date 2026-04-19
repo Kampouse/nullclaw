@@ -545,7 +545,7 @@ pub const GitSession = struct {
         metadata: TurnMetadata,
     ) !*const Turn {
         // Store all messages (ObjectStore has its own mutex)
-        var msg_list: std.ArrayListUnmanaged(*const Message) = .{};
+        var msg_list: std.ArrayListUnmanaged(*const Message) = .empty;
         defer msg_list.deinit(self.allocator);
 
         for (messages, contents) |role, content| {
@@ -599,7 +599,7 @@ pub const GitSession = struct {
     ) ![]const *const Turn {
         const thread = self.threads.get(thread_name) orelse return error.ThreadNotFound;
 
-        var history: std.ArrayListUnmanaged(*const Turn) = .{};
+        var history: std.ArrayListUnmanaged(*const Turn) = .empty;
         errdefer history.deinit(allocator);
 
         var current: *const Turn = thread.head;
@@ -630,7 +630,7 @@ pub const GitSession = struct {
         defer ancestors_a.deinit(self.allocator);
 
         // BFS walk of turn_a's ancestors
-        var queue_a: std.ArrayListUnmanaged(*const Turn) = .{};
+        var queue_a: std.ArrayListUnmanaged(*const Turn) = .empty;
         defer queue_a.deinit(self.allocator);
 
         queue_a.append(self.allocator, turn_a) catch return null;
@@ -643,7 +643,7 @@ pub const GitSession = struct {
         }
 
         // BFS walk of turn_b's ancestors, looking for match
-        var queue_b: std.ArrayListUnmanaged(*const Turn) = .{};
+        var queue_b: std.ArrayListUnmanaged(*const Turn) = .empty;
         defer queue_b.deinit(self.allocator);
 
         queue_b.append(self.allocator, turn_b) catch return null;
@@ -673,7 +673,7 @@ pub const GitSession = struct {
         const ancestor = self.findCommonAncestor(main.head, source.head);
 
         // Collect turns from source branch (after ancestor)
-        var source_turns: std.ArrayListUnmanaged(*const Turn) = .{};
+        var source_turns: std.ArrayListUnmanaged(*const Turn) = .empty;
         defer source_turns.deinit(self.allocator);
 
         var current: *const Turn = source.head;
@@ -690,7 +690,7 @@ pub const GitSession = struct {
         std.mem.reverse(*const Turn, source_turns.items);
 
         // Collect messages from source branch
-        var all_messages: std.ArrayListUnmanaged(*const Message) = .{};
+        var all_messages: std.ArrayListUnmanaged(*const Message) = .empty;
         defer all_messages.deinit(self.allocator);
 
         for (source_turns.items) |turn| {
@@ -745,7 +745,7 @@ pub const GitSession = struct {
 
         // Main hasn't changed - safe to merge
         // Collect turns from source branch
-        var source_turns: std.ArrayListUnmanaged(*const Turn) = .{};
+        var source_turns: std.ArrayListUnmanaged(*const Turn) = .empty;
         defer source_turns.deinit(self.allocator);
 
         var current: *const Turn = source.head;
@@ -760,7 +760,7 @@ pub const GitSession = struct {
         std.mem.reverse(*const Turn, source_turns.items);
 
         // Collect messages from source branch
-        var all_messages: std.ArrayListUnmanaged(*const Message) = .{};
+        var all_messages: std.ArrayListUnmanaged(*const Message) = .empty;
         defer all_messages.deinit(self.allocator);
 
         for (source_turns.items) |turn| {
@@ -821,7 +821,7 @@ pub const GitSession = struct {
         self: *GitSession,
         allocator: Allocator,
     ) ![]const []const u8 {
-        var names: std.ArrayListUnmanaged([]const u8) = .{};
+        var names: std.ArrayListUnmanaged([]const u8) = .empty;
         errdefer {
             for (names.items) |name| {
                 allocator.free(name);

@@ -100,7 +100,7 @@ pub const ClaudeCliProvider = struct {
         const io = std.Options.debug_io;
 
         // Build argv: claude -p <prompt> --output-format stream-json --model <model> --verbose
-        var argv_list = std.ArrayList([]const u8){};
+        var argv_list = std.ArrayList([]const u8).empty;
         try argv_list.append(allocator, "claude");
         try argv_list.append(allocator, "-p");
         try argv_list.append(allocator, prompt);

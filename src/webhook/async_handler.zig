@@ -60,7 +60,7 @@ pub const QueuedMessage = struct {
 pub const MessageQueue = struct {
     mutex: std.Io.Mutex = .{ .state = .init(.unlocked) },
     condition: std.Io.Condition = .{ .state = .init(.{ .waiters = 0, .signals = 0 }), .epoch = .init(0) },
-    messages: std.ArrayListUnmanaged(QueuedMessage) = .{},
+    messages: std.ArrayListUnmanaged(QueuedMessage) = .empty,
     running: Atomic(bool) = Atomic(bool).init(true),
 
     pub fn init(allocator: std.mem.Allocator) MessageQueue {

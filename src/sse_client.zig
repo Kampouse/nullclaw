@@ -425,16 +425,16 @@ fn ownOrFreeList(list: *std.ArrayList(u8), allocator: std.mem.Allocator) ![]u8 {
 /// - After "field:", exactly ONE leading space is stripped from the value
 /// - Empty data: lines append an empty string (producing a newline in multi-line data)
 pub fn parseEvents(allocator: std.mem.Allocator, buffer: []const u8) ![]SseEvent {
-    var events: std.ArrayList(SseEvent) = .{};
+    var events: std.ArrayList(SseEvent) = .empty;
     defer events.deinit(allocator);
 
-    var current_data: std.ArrayList(u8) = .{};
+    var current_data: std.ArrayList(u8) = .empty;
     defer current_data.deinit(allocator);
 
-    var current_event_type: std.ArrayList(u8) = .{};
+    var current_event_type: std.ArrayList(u8) = .empty;
     defer current_event_type.deinit(allocator);
 
-    var current_id: std.ArrayList(u8) = .{};
+    var current_id: std.ArrayList(u8) = .empty;
     defer current_id.deinit(allocator);
 
     var total_event_size: usize = 0;
@@ -460,9 +460,9 @@ pub fn parseEvents(allocator: std.mem.Allocator, buffer: []const u8) ![]SseEvent
                     .id = id,
                 });
 
-                current_data = .{};
-                current_event_type = .{};
-                current_id = .{};
+                current_data = .empty;
+                current_event_type = .empty;
+                current_id = .empty;
                 total_event_size = 0;
                 has_data = false;
             }
@@ -501,9 +501,9 @@ pub fn parseEvents(allocator: std.mem.Allocator, buffer: []const u8) ![]SseEvent
                     current_event_type.deinit(allocator);
                     current_id.deinit(allocator);
                 }
-                current_data = .{};
-                current_event_type = .{};
-                current_id = .{};
+                current_data = .empty;
+                current_event_type = .empty;
+                current_id = .empty;
                 total_event_size = 0;
                 has_data = false;
                 continue;
@@ -546,9 +546,9 @@ pub fn parseEvents(allocator: std.mem.Allocator, buffer: []const u8) ![]SseEvent
             .id = id,
         });
         // Mark as consumed so the defers don't double-free
-        current_data = .{};
-        current_event_type = .{};
-        current_id = .{};
+        current_data = .empty;
+        current_event_type = .empty;
+        current_id = .empty;
     }
 
     return try events.toOwnedSlice(allocator);

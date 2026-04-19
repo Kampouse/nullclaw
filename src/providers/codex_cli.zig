@@ -90,7 +90,7 @@ pub const CodexCliProvider = struct {
         const io = std.Options.debug_io;
 
         // Build argv: codex --quiet <prompt>
-        var argv_list = std.ArrayList([]const u8){};
+        var argv_list = std.ArrayList([]const u8).empty;
         try argv_list.append(allocator, "codex");
         try argv_list.append(allocator, "--quiet");
         try argv_list.append(allocator, prompt);

@@ -183,7 +183,7 @@ test "loadBenchmark: valid benchmark with all fields" {
         testing.allocator.free(path);
     }
 
-    var bench = try loadBenchmark(testing.allocator, path);
+    const bench = try loadBenchmark(testing.allocator, path);
     defer {
         // Full cleanup (includes query/rationale which Benchmark.deinit skips).
         for (bench.entries) |*e| freeEntry(testing.allocator, e);
@@ -237,7 +237,7 @@ test "loadBenchmark: optional fields default gracefully" {
         testing.allocator.free(path);
     }
 
-    var bench = try loadBenchmark(testing.allocator, path);
+    const bench = try loadBenchmark(testing.allocator, path);
     defer {
         for (bench.entries) |*e| freeEntry(testing.allocator, e);
         testing.allocator.free(bench.entries);

@@ -170,7 +170,7 @@ pub const McpServer = struct {
     }
 
     fn readLine(self: *McpServer, allocator: Allocator) ![]const u8 {
-        var line_buf: std.ArrayList(u8) = .{};
+        var line_buf: std.ArrayList(u8) = .empty;
         errdefer line_buf.deinit(allocator);
 
         var byte_buf: [1]u8 = undefined;
@@ -213,7 +213,7 @@ pub fn parseToolsListResponse(allocator: Allocator, resp: []const u8) ![]McpTool
     const tools_val = result.object.get("tools") orelse return error.MissingResult;
     if (tools_val != .array) return error.InvalidJson;
 
-    var list: std.ArrayList(McpToolDef) = .{};
+    var list: std.ArrayList(McpToolDef) = .empty;
     errdefer list.deinit(allocator);
 
     for (tools_val.array.items) |item| {
@@ -264,7 +264,7 @@ pub fn parseCallToolResponse(allocator: Allocator, resp: []const u8) ![]const u8
     if (content != .array) return error.InvalidJson;
 
     // Collect all text content
-    var output: std.ArrayList(u8) = .{};
+    var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
 
     for (content.array.items) |item| {
@@ -356,7 +356,7 @@ pub const McpToolWrapper = struct {
 /// tools, and returns them wrapped in the standard Tool vtable.
 /// Errors from individual servers are logged and skipped.
 pub fn initMcpTools(allocator: Allocator, io: std.Io, configs: []const McpServerConfig) ![]tools_mod.Tool {
-    var all_tools: std.ArrayList(tools_mod.Tool) = .{};
+    var all_tools: std.ArrayList(tools_mod.Tool) = .empty;
     errdefer {
         for (all_tools.items) |t| {
             t.deinit(allocator);

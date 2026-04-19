@@ -33,7 +33,7 @@ pub fn createProcessIo() std.Io {
         slog.logStructured("DEBUG", "util", "global_threaded_io_initialized", .{});
     }
     slog.logStructured("DEBUG", "util", "calling_io_basic", .{});
-    const io = global_threaded_io.?.ioBasic();
+    const io = global_threaded_io.?.io();
     slog.logStructured("DEBUG", "util", "returning_io", .{});
     return io;
 }

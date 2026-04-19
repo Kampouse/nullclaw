@@ -109,7 +109,7 @@ pub fn saveCredential(allocator: std.mem.Allocator, provider: []const u8, token:
     defer allocator.free(file_path);
 
     // Read existing credentials (if any)
-    var existing = loadAllCredentials(allocator, file_path) orelse std.StringArrayHashMap(StoredToken).init(allocator);
+    var existing = loadAllCredentials(allocator, file_path) orelse std.StringHashMap(StoredToken).init(allocator);
     defer {
         var it = existing.iterator();
         while (it.next()) |entry| {
@@ -126,7 +126,7 @@ pub fn saveCredential(allocator: std.mem.Allocator, provider: []const u8, token:
     var put_succeeded = false;
     const key_owned = try allocator.dupe(u8, provider);
     errdefer if (!put_succeeded) allocator.free(key_owned);
-    if (existing.fetchSwapRemove(key_owned)) |old| {
+    if (existing.fetchRemove(key_owned)) |old| {
         allocator.free(old.key);
         freeStoredToken(allocator, old.value);
     }
@@ -278,7 +278,7 @@ fn freeStoredToken(allocator: std.mem.Allocator, tok: StoredToken) void {
     allocator.free(tok.token_type);
 }
 
-fn loadAllCredentials(allocator: std.mem.Allocator, file_path: []const u8) ?std.StringArrayHashMap(StoredToken) {
+fn loadAllCredentials(allocator: std.mem.Allocator, file_path: []const u8) ?std.StringHashMap(StoredToken) {
     const json_bytes = std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(1024 * 1024)) catch return null;
     defer allocator.free(json_bytes);
 
@@ -290,7 +290,7 @@ fn loadAllCredentials(allocator: std.mem.Allocator, file_path: []const u8) ?std.
         else => return null,
     };
 
-    var map = std.StringArrayHashMap(StoredToken).init(allocator);
+    var map = std.StringHashMap(StoredToken).init(allocator);
     var it = root_obj.iterator();
     while (it.next()) |entry| {
         const prov_obj = switch (entry.value_ptr.*) {
@@ -414,7 +414,7 @@ pub fn deleteCredential(allocator: std.mem.Allocator, provider: []const u8) !boo
     if (!found) return false;
 
     // Remove and re-serialize
-    if (existing.fetchSwapRemove(provider)) |old| {
+    if (existing.fetchRemove(provider)) |old| {
         allocator.free(old.key);
         freeStoredToken(allocator, old.value);
     }

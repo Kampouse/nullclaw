@@ -10,7 +10,7 @@
 #   make agent    - start agent mode in background
 #   make clean    - clean zig build artifacts
 
-ZIG    := ~/.local/zig/zig
+ZIG    := $(shell which zig || echo ~/.local/zig/zig)
 BIN    := ./zig-out/bin/nullclaw
 PIDFILE := .nullclaw.pid
 LOGFILE := ~/nullclaw.log

@@ -40,7 +40,7 @@ pub fn runEval(
     benchmark: *const types.Benchmark,
     k: u32,
 ) !EvalResultFields {
-    var results = std.ArrayListUnmanaged(types.QueryMetrics){};
+    var results: std.ArrayListUnmanaged(types.QueryMetrics) = .empty;
     errdefer {
         // Per-query QueryMetrics only borrows the query string; nothing to free.
         results.deinit(allocator);

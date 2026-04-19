@@ -532,6 +532,9 @@ pub const Stream = struct {
     }
 
     pub fn readTimeout(self: *Stream, ms: u32) !void {
+        // SO_RCVTIMEO causes Io.Threaded to panic with ABRT on EAGAIN.
+        // For TLS connections, we can't set socket-level timeouts.
+        if (self.tls_client != null) return;
         return self.setTimeout(posix.SO.RCVTIMEO, ms);
     }
 
@@ -566,11 +569,13 @@ const TLSClient = struct {
 
         const aa = arena.allocator();
 
-        const bundle = config.ca_bundle orelse blk: {
-            var b = Bundle{};
+        var bundle: Bundle = if (config.ca_bundle) |b| b else blk: {
+            var b: Bundle = .{ .map = .empty, .bytes = .empty };
             try b.rescan(aa, io, std.Io.Timestamp.now(io, .real));
             break :blk b;
         };
+
+        var ca_lock: std.Io.RwLock = .init;
 
         // The TLS input and output have to be max_ciphertext_record_len each.
         // The reader/writer also need buffer space. Using 4 x max_ciphertext_record_len
@@ -595,16 +600,17 @@ const TLSClient = struct {
             &self.stream_reader.interface,
             &self.stream_writer.interface,
             .{
-                .ca = .{ .bundle = bundle },
+                .ca = .{ .bundle = .{
+                    .gpa = aa,
+                    .io = io,
+                    .lock = &ca_lock,
+                    .bundle = &bundle,
+                } },
                 .host = .{ .explicit = config.host },
                 .read_buffer = buf.ptr[2 * buf_len .. 3 * buf_len][0..buf_len],
                 .write_buffer = buf.ptr[3 * buf_len .. 4 * buf_len][0..buf_len],
                 .entropy = &entropy,
-                .realtime_now_seconds = blk: {
-                    var ts: posix.timespec = undefined;
-                    _ = posix.system.clock_gettime(.REALTIME, &ts);
-                    break :blk ts.sec;
-                },
+                .realtime_now = std.Io.Timestamp.now(io, .real),
             },
         );
 
@@ -707,6 +713,12 @@ const HandShakeReply = struct {
         var server_compression: bool = false;
 
         while (true) {
+            // Application-level timeout check (SO_RCVTIMEO is unsafe for TLS/Io.Threaded).
+            var hs_ts: posix.timespec = undefined;
+            _ = posix.system.clock_gettime(.REALTIME, &hs_ts);
+            const hs_now_ms = @as(i64, hs_ts.sec) * 1000 + @divTrunc(hs_ts.nsec, 1000000);
+            if (hs_now_ms >= deadline) return error.Timeout;
+
             const n = stream.read(buf[pos..]) catch |err| switch (err) {
                 error.WouldBlock, error.Unexpected => return error.Timeout,
                 else => return err,

@@ -108,7 +108,7 @@ pub const I2cTool = struct {
 
     fn detectLinux(allocator: std.mem.Allocator) !ToolResult {
         if (comptime builtin.os.tag != .linux) return ToolResult.fail("I2C is only supported on Linux");
-        var output: std.ArrayList(u8) = .{};
+        var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(allocator);
         try output.appendSlice(allocator, "{\"buses\":[");
 
@@ -145,7 +145,7 @@ pub const I2cTool = struct {
             return ToolResult.fail("Cannot open I2C bus (permission denied or bus not found)");
         defer std.posix.close(fd);
 
-        var output: std.ArrayList(u8) = .{};
+        var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(allocator);
         try output.appendSlice(allocator, "{\"bus\":");
         var bus_str_buf: [8]u8 = undefined;
@@ -207,7 +207,7 @@ pub const I2cTool = struct {
             return ToolResult.fail("Failed to read from I2C device");
 
         // Format output
-        var output: std.ArrayList(u8) = .{};
+        var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(allocator);
         try output.appendSlice(allocator, "{\"bus\":");
         var bus_buf: [8]u8 = undefined;

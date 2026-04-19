@@ -115,7 +115,7 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
         .worker_threads = .init(null),
         .disable_memory_mapping = false,
     };
-    const io = app_io.ioBasic();
+    const io = app_io.io();
 
     // Initialize tracing system FIRST
     yc.trace_simple.init(allocator, .info);

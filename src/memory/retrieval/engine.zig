@@ -304,7 +304,7 @@ pub const RetrievalEngine = struct {
     pub fn init(allocator: Allocator, query_cfg: config_types.MemoryQueryConfig) RetrievalEngine {
         return .{
             .allocator = allocator,
-            .sources = .{},
+            .sources = .empty,
             .merge_k = query_cfg.rrf_k,
             .top_k = query_cfg.max_results,
             .min_score = query_cfg.min_score,
