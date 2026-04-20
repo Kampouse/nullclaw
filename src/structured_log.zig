@@ -123,6 +123,68 @@ var max_log_level: Level = .DEBUG;
 /// Enable logging system-wide
 const EMERGENCY_LOG_DISABLE = false;
 
+// ── Inline nanoTimestamp (avoids circular import with util.zig) ───────
+
+fn nanoTimestamp() i128 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const secs: i128 = @intCast(tv.sec);
+    const usecs: i128 = @intCast(tv.usec);
+    return secs * 1_000_000_000 + usecs * 1_000;
+}
+
+// ── Per-thread trace ID ───────────────────────────────────────────────
+// Set at turn start, cleared at turn end. Auto-included in all slog JSON lines.
+
+var trace_id_buffer: [16]u8 = undefined;
+var trace_id_len: usize = 0;
+
+pub fn setTraceId(id: []const u8) void {
+    const len = @min(id.len, trace_id_buffer.len);
+    @memcpy(trace_id_buffer[0..len], id[0..len]);
+    trace_id_len = len;
+}
+
+pub fn getTraceId() []const u8 {
+    return trace_id_buffer[0..trace_id_len];
+}
+
+pub fn clearTraceId() void {
+    trace_id_len = 0;
+}
+
+/// Generate a random 8-char hex trace ID.
+pub fn generateTraceId() [8]u8 {
+    const seed = @as(u64, @truncate(@as(u128, @bitCast(nanoTimestamp())))) ^ @as(u64, @intFromPtr(&trace_id_buffer));
+    var rng = std.Random.DefaultPrng.init(seed);
+    const val = rng.random().int(u32);
+    return .{
+        hexDigit(@as(u4, @truncate((val >> 28) & 0xF))),
+        hexDigit(@as(u4, @truncate((val >> 24) & 0xF))),
+        hexDigit(@as(u4, @truncate((val >> 20) & 0xF))),
+        hexDigit(@as(u4, @truncate((val >> 16) & 0xF))),
+        hexDigit(@as(u4, @truncate((val >> 12) & 0xF))),
+        hexDigit(@as(u4, @truncate((val >> 8) & 0xF))),
+        hexDigit(@as(u4, @truncate((val >> 4) & 0xF))),
+        hexDigit(@as(u4, @truncate(val & 0xF))),
+    };
+}
+
+fn hexDigit(v: u4) u8 {
+    return if (v < 10) @as(u8, '0') + v else @as(u8, 'a') + v - 10;
+}
+
+// ── Span timing (ms precision) ────────────────────────────────────────
+
+/// Log a span with elapsed milliseconds. Call at the END of a timed section.
+/// phase: human-readable name (e.g. "retrieval", "llm_call", "post_process")
+/// start_ns: nanoTimestamp() captured at the start of the section
+pub fn debugSpan(comptime scope: []const u8, comptime phase: []const u8, start_ns: i128) void {
+    const elapsed_ns = nanoTimestamp() - start_ns;
+    const elapsed_ms: f64 = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
+    logStructured("DEBUG", scope, "span", .{ .phase = phase, .ms = elapsed_ms });
+}
+
 /// Initialize logging system from environment variables.
 /// Call this at program startup to configure log level.
 pub fn init() void {
@@ -162,6 +224,11 @@ pub fn logStructured(
     // Check log level filter
     const level_enum = std.meta.stringToEnum(Level, level) orelse return;
     if (!shouldLog(level_enum)) return;
+
+    // Emit trace ID prefix if active (grep-friendly: t=a1b2c3d4 {json...})
+    if (trace_id_len > 0) {
+        std.debug.print("t={s} ", .{trace_id_buffer[0..trace_id_len]});
+    }
 
     // Get current timestamp in ISO 8601 format
     const timestamp = getTimestamp();

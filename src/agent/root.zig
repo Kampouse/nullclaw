@@ -668,6 +668,12 @@ pub const Agent = struct {
     /// Execute a single conversation turn: send messages to LLM, parse tool calls,
     /// execute tools, and loop until a final text response is produced.
     pub fn turn(self: *Agent, user_message: []const u8) ![]const u8 {
+        // Set trace ID for this turn (appears in all slog lines)
+        const tid = slog.generateTraceId();
+        slog.setTraceId(&tid);
+        defer slog.clearTraceId();
+
+        const turn_start_ns = util.nanoTimestamp();
         slog.logStructured("DEBUG", "agent", "turn_start", .{});
         self.context_was_compacted = false;
         commands.refreshSubagentToolContext(self);
@@ -690,9 +696,12 @@ pub const Agent = struct {
         };
 
         // Flush any leftover deferred vector syncs from previous turn
+        const flush_ns = util.nanoTimestamp();
         self.flushPendingSyncs();
+        slog.debugSpan("agent", "flush_syncs", flush_ns);
 
         // Inject system prompt on first turn (or when tracked workspace files changed).
+        const sysprompt_ns = util.nanoTimestamp();
         const workspace_fp: ?u64 = prompt.workspacePromptFingerprint(self.allocator, self.workspace_dir) catch null;
         if (self.has_system_prompt and workspace_fp != null and self.workspace_prompt_fingerprint != workspace_fp) {
             self.has_system_prompt = false;
@@ -754,8 +763,10 @@ pub const Agent = struct {
             self.system_prompt_has_conversation_context = turn_has_conversation_context;
             self.workspace_prompt_fingerprint = workspace_fp;
         }
+        slog.debugSpan("agent", "system_prompt", sysprompt_ns);
 
         // Auto-save user message to memory (nanoTimestamp key to avoid collisions within the same second)
+        const autosave_ns = util.nanoTimestamp();
         if (self.auto_save) {
             if (self.mem) |mem| {
                 const ts: u128 = 0;
@@ -771,14 +782,17 @@ pub const Agent = struct {
                 }
             }
         }
+        slog.debugSpan("agent", "auto_save", autosave_ns);
 
         // Enrich message with memory context (always returns owned slice; ownership → history)
         // Uses retrieval pipeline (hybrid search, RRF, temporal decay, MMR) when MemoryRuntime is available.
+        const retrieval_ns = util.nanoTimestamp();
         const enriched = if (self.mem) |mem|
             try memory_loader.enrichMessageWithRuntime(self.allocator, mem, self.mem_rt, effective_user_message, self.memory_session_id)
         else
             try self.allocator.dupe(u8, effective_user_message);
         errdefer self.allocator.free(enriched);
+        slog.debugSpan("agent", "retrieval", retrieval_ns);
 
         try self.history.append(self.allocator, .{
             .role = .user,
@@ -807,6 +821,7 @@ pub const Agent = struct {
         }
 
         slog.debug("agent", "turn_no_cache_proceeding", .{});
+        slog.debugSpan("agent", "pre_call", turn_start_ns);
         // Record agent event
         const start_event = ObserverEvent{ .llm_request = .{
             .provider = self.provider.getName(),
@@ -837,6 +852,7 @@ pub const Agent = struct {
             var response: ChatResponse = undefined;
             var response_attempt: u32 = 1;
             slog.debug("agent", "turn_calling_provider", .{ .iteration = iteration + 1, .streaming = is_streaming, .native_tools = native_tools_enabled });
+            const llm_ns = util.nanoTimestamp();
             if (is_streaming) {
                 slog.logStructured("DEBUG", "agent", "llm_call_start", .{});
                 self.logLlmRequest(iteration + 1, 1, messages, native_tools_enabled, true);
@@ -869,6 +885,7 @@ pub const Agent = struct {
                     return err;
                 };
                 slog.logStructured("DEBUG", "agent", "llm_success", .{});
+                slog.debugSpan("agent", "llm_call", llm_ns);
                 response = ChatResponse{
                     .content = stream_result.content,
                     .tool_calls = &.{},

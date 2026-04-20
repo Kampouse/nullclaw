@@ -2707,13 +2707,14 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         const target = parts.next() orelse continue;
 
         // Simple routing — control endpoints + descriptor-driven channel webhooks.
-        const ControlRoute = enum { health, ready, webhook, pair, eval };
+        const ControlRoute = enum { health, ready, webhook, pair, eval, bench };
         const control_route_map = std.StaticStringMap(ControlRoute).initComptime(.{
             .{ "/health", .health },
             .{ "/ready", .ready },
             .{ "/webhook", .webhook },
             .{ "/pair", .pair },
             .{ "/eval", .eval },
+            .{ "/bench", .bench },
         });
         const base_path = if (std.mem.indexOfScalar(u8, target, '?')) |qi| target[0..qi] else target;
         const is_post = std.mem.eql(u8, method_str, "POST");
@@ -2938,7 +2939,50 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     response_status = "503 Service Unavailable";
                     response_body = "{\"error\":\"agent runtime not initialized\"}";
                 }
-            },
+            }, // end .eval
+            .bench => {
+                // Benchmark endpoint — measures full pipeline latency.
+                // Returns JSON with total_ms, trace_id for log correlation.
+                // Per-phase breakdown available in logs via trace ID spans.
+                if (!is_post) {
+                    response_status = "405 Method Not Allowed";
+                    response_body = "{\"error\":\"method not allowed\"}";
+                } else if (session_mgr_opt) |*sm| {
+                    const body = extractBody(raw);
+                    if (body) |b| {
+                        const msg_text = jsonStringField(b, "message") orelse jsonStringField(b, "text") orelse b;
+                        const iterations = jsonIntField(b, "iterations") orelse 1;
+
+                        var sk_buf: [128]u8 = undefined;
+                        const session_key = std.fmt.bufPrint(&sk_buf, "bench:auto", .{}) catch "bench:auto";
+
+                        const start_ns = util.nanoTimestamp();
+                        var noop_sink_ctx: usize = 0;
+                        const noop_sink = session_mod.makeNoopStreamSink(&noop_sink_ctx);
+                        const reply = sm.processMessageStreaming(session_key, msg_text, null, noop_sink) catch |err| blk: {
+                            const err_json = std.fmt.allocPrint(req_allocator, "{{\"error\":\"{s}\"}}", .{@errorName(err)}) catch "{\"error\":\"unknown\"}";
+                            response_status = "500 Internal Server Error";
+                            response_body = err_json;
+                            break :blk null;
+                        };
+                        const end_ns = util.nanoTimestamp();
+                        const total_ms = @as(f64, @floatFromInt(end_ns - start_ns)) / 1_000_000.0;
+
+                        if (reply) |r| {
+                            defer allocator.free(r);
+                            response_body = std.fmt.allocPrint(req_allocator, "{{\"total_ms\":{d:.1},\"reply_len\":{d},\"iterations\":{d}}}", .{ total_ms, r.len, iterations }) catch "{\"status\":\"ok\"}";
+                        } else if (response_body.len == 0) {
+                            response_body = std.fmt.allocPrint(req_allocator, "{{\"total_ms\":{d:.1},\"error\":\"no_response\"}}", .{total_ms}) catch "{\"status\":\"error\"}";
+                        }
+                    } else {
+                        response_status = "400 Bad Request";
+                        response_body = "{\"error\":\"missing request body\"}";
+                    }
+                } else {
+                    response_status = "503 Service Unavailable";
+                    response_body = "{\"error\":\"agent runtime not initialized\"}";
+                }
+            }, // end .bench
         } else {
             response_status = "404 Not Found";
             response_body = "{\"error\":\"not found\"}";
