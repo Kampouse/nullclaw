@@ -91,7 +91,7 @@ pub const NostrTool = struct {
     pub const tool_name = "nostr";
     pub const tool_description = "Native Nostr operations. Actions: identity (return this agent's npub and hex pubkey), post (kind 1 note), read (subscribe + fetch events from multiple relays, deduplicated), search (NIP-50 full-text search across relay events), profile (kind 0 metadata), react (kind 7 reaction), channel_create (NIP-28 create channel, kind 40), channel_send (NIP-28 send message to channel, kind 42), channel_read (NIP-28 read channel messages, kinds 41/42). Supports full NIP-01 filters (kinds, authors, #p, #e, #t, since, until, limit). Uses direct WebSocket relay connections with BIP-340 Schnorr signing.";
     pub const tool_params =
-        \\{"type":"object","properties":{"action":{"type":"string","enum":["identity","post","read","search","profile","react","channel_create","channel_send","channel_read","clawstr_post","clawstr_read"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react/channel_send/clawstr_post"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"},"deep_search":{"type":"boolean","description":"For read/search: when true, fire all relays in parallel and return as soon as 5 respond with events. Default false returns after the first relay responds (fastest response wins)."},"name":{"type":"string","description":"For channel_create: channel name"},"about":{"type":"string","description":"For channel_create: channel description/about text"},"channel_id":{"type":"string","description":"For channel_send/channel_read: event ID of the kind 40 channel creation event"},"subclaw":{"type":"string","description":"For clawstr_post/clawstr_read: subclaw community name (e.g. ai-freedom, videogames)"},"reply_to":{"type":"string","description":"For clawstr_post: event ID of the post being replied to"},"reply_pubkey":{"type":"string","description":"For clawstr_post: pubkey of the post author being replied to"}}}
+        \\{"type":"object","properties":{"action":{"type":"string","enum":["identity","post","read","search","profile","react","channel_create","channel_send","channel_read","clawstr_post","clawstr_read","relay_list"],"description":"Action to perform"},"content":{"type":"string","description":"Content for post/profile/react/channel_send/clawstr_post"},"relays":{"type":"array","items":{"type":"string"},"description":"Relay URLs (queries all relays in parallel; defaults to config)"},"private_key":{"type":"string","description":"Hex private key (default from config)"},"filter_kinds":{"type":"array","items":{"type":"integer"},"description":"For read/search: event kinds to filter"},"filter_authors":{"type":"array","items":{"type":"string"},"description":"For read/search: pubkeys to filter"},"filter_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #t tag values to filter"},"filter_p_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #p tag pubkeys to filter"},"filter_e_tags":{"type":"array","items":{"type":"string"},"description":"For read/search: #e tag event IDs to filter"},"filter_limit":{"type":"integer","description":"For read/search: max events per relay (default 20)"},"filter_since":{"type":"integer","description":"For read/search: unix timestamp lower bound"},"filter_until":{"type":"integer","description":"For read/search: unix timestamp upper bound"},"query":{"type":"string","description":"For search: NIP-50 full-text search query"},"event_id":{"type":"string","description":"For react: event ID to react to"},"event_pubkey":{"type":"string","description":"For react: pubkey of event author"},"deep_search":{"type":"boolean","description":"For read/search: when true, fire all relays in parallel and return as soon as 5 respond with events. Default false returns after the first relay responds (fastest response wins)."},"name":{"type":"string","description":"For channel_create: channel name"},"about":{"type":"string","description":"For channel_create: channel description/about text"},"channel_id":{"type":"string","description":"For channel_send/channel_read: event ID of the kind 40 channel creation event"},"subclaw":{"type":"string","description":"For clawstr_post/clawstr_read: subclaw community name (e.g. ai-freedom, videogames)"},"reply_to":{"type":"string","description":"For clawstr_post: event ID of the post being replied to"},"reply_pubkey":{"type":"string","description":"For clawstr_post: pubkey of the post author being replied to"}}}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -194,8 +194,10 @@ pub const NostrTool = struct {
             return self.actionClawstrPost(allocator, sk_buf, relay_urls.items, args);
         } else if (std.mem.eql(u8, action, "clawstr_read")) {
             return self.actionClawstrRead(allocator, relay_urls.items, args);
+        } else if (std.mem.eql(u8, action, "relay_list")) {
+            return self.actionRelayList(allocator, sk_buf, relay_urls.items, args);
         } else {
-            return ToolResult.fail("Unknown action. Use: identity, post, read, search, profile, react, channel_create, channel_send, channel_read, clawstr_post, clawstr_read.");
+            return ToolResult.fail("Unknown action. Use: identity, post, read, search, profile, react, channel_create, channel_send, channel_read, clawstr_post, clawstr_read, relay_list.");
         }
     }
 
@@ -1074,6 +1076,168 @@ pub const NostrTool = struct {
             log.info("channel read returned 0 events", .{});
         } else {
             log.info("channel read returned {} events", .{all_events.items.len});
+        }
+
+        return ToolResult.okAlloc(allocator, results.items);
+    }
+
+    // ── NIP-65 Relay List Discovery ─────────────────────────────────
+
+    /// Query NIP-65 relay list (kind 10002) for one or more pubkeys.
+    /// Parses "r" tags to extract relay URLs with read/write permissions.
+    /// Defaults to the agent's own pubkey if no filter_authors provided.
+    fn actionRelayList(self: *NostrTool, allocator: std.mem.Allocator, sk: [32]u8, relays: []const []const u8, args: JsonObjectMap) !ToolResult {
+        _ = self;
+
+        // Collect pubkeys to query
+        var pubkeys: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer { for (pubkeys.items) |p| allocator.free(p); pubkeys.deinit(allocator); }
+
+        if (root.getValue(args, "filter_authors")) |authors_val| {
+            if (authors_val == .array) {
+                for (authors_val.array.items) |item| {
+                    if (item == .string) {
+                        try pubkeys.append(allocator, try allocator.dupe(u8, item.string));
+                    }
+                }
+            }
+        }
+        if (pubkeys.items.len == 0) {
+            // Default to agent's own pubkey
+            const kp = nostr.keyPairFromSecret(sk) catch
+                return ToolResult.fail("Failed to derive public key from private key for relay list query.");
+            const hex_pk = try std.fmt.allocPrint(allocator, "{s}", .{&nostr.hexEncode32(kp.public_key)});
+            try pubkeys.append(allocator, hex_pk);
+        }
+
+        // Build filter: kind 10002, limit 1 per author
+        const filter_json = nostr.buildFilter(allocator, .{
+            .kinds = &[_]u16{10002},
+            .authors = pubkeys.items,
+            .limit = 1,
+            .since = null,
+            .until = null,
+            .p_tags = &[_][]const u8{},
+            .e_tags = &[_][]const u8{},
+            .t_tags = &[_][]const u8{},
+        }) catch return ToolResult.fail("Failed to build NIP-65 relay list filter.");
+        defer allocator.free(filter_json);
+
+        // Query relays
+        const query_result = try queryRelaysParallel(allocator, relays, filter_json, 1);
+        var all_events = query_result.events;
+        defer { for (all_events.items) |ev| nostr.freeEvent(ev, allocator); all_events.deinit(allocator); }
+        var relay_errors = query_result.errors;
+        defer relay_errors.deinit(allocator);
+
+        // Deduplicated relay entries: url -> permission bitmask
+        // bit 0 = read, bit 1 = write
+        var relay_map: std.StringHashMapUnmanaged(u2) = .empty;
+        defer {
+            var it = relay_map.keyIterator();
+            while (it.next()) |key| allocator.free(key.*);
+            relay_map.deinit(allocator);
+        }
+
+        for (all_events.items) |ev| {
+            for (ev.tags) |tag| {
+                if (tag.fields.len < 2) continue;
+                if (!std.mem.eql(u8, tag.fields[0], "r")) continue;
+                const url = tag.fields[1];
+
+                // Deduplicate by normalizing URL (strip trailing slash)
+                const trimmed = std.mem.trimEnd(u8, url, "/");
+                // Look up or insert
+                const existing = relay_map.get(trimmed);
+                var perm: u2 = if (existing) |p| p else 0;
+                // Parse optional third field: "read" or "write"
+                // If absent, implies both read+write
+                if (tag.fields.len >= 3) {
+                    if (std.mem.eql(u8, tag.fields[2], "read")) {
+                        perm |= 0b01;
+                    } else if (std.mem.eql(u8, tag.fields[2], "write")) {
+                        perm |= 0b10;
+                    }
+                    // Unknown marker — ignore
+                } else {
+                    // No permission specified = read+write
+                    perm = 0b11;
+                }
+                const gop = try relay_map.getOrPut(allocator, trimmed);
+                if (!gop.found_existing) {
+                    gop.key_ptr.* = try allocator.dupe(u8, trimmed);
+                }
+                gop.value_ptr.* = perm;
+            }
+        }
+
+        // Build output grouped by permission
+        var read_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer { for (read_list.items) |r| allocator.free(r); read_list.deinit(allocator); }
+        var write_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer { for (write_list.items) |r| allocator.free(r); write_list.deinit(allocator); }
+        var rw_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer { for (rw_list.items) |r| allocator.free(r); rw_list.deinit(allocator); }
+
+        var map_it = relay_map.iterator();
+        while (map_it.next()) |entry| {
+            const url = entry.key_ptr.*;
+            const perm = entry.value_ptr.*;
+            if (perm == 0b11) {
+                try rw_list.append(allocator, try allocator.dupe(u8, url));
+            } else {
+                if (perm & 0b01 != 0) try read_list.append(allocator, try allocator.dupe(u8, url));
+                if (perm & 0b10 != 0) try write_list.append(allocator, try allocator.dupe(u8, url));
+            }
+        }
+
+        // Sort each group for stable output
+        const str_sort_ctx = struct {
+            fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.order(u8, a, b) == .lt;
+            }
+        };
+        std.mem.sort([]const u8, rw_list.items, {}, str_sort_ctx.lessThan);
+        std.mem.sort([]const u8, read_list.items, {}, str_sort_ctx.lessThan);
+        std.mem.sort([]const u8, write_list.items, {}, str_sort_ctx.lessThan);
+
+        var results: std.ArrayListUnmanaged(u8) = .empty;
+        const w = struct {
+            fn print(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, comptime fmt: []const u8, ap: anytype) !void {
+                const line = try std.fmt.allocPrint(alloc, fmt, ap);
+                defer alloc.free(line);
+                try buf.appendSlice(alloc, line);
+            }
+            fn writeAll(buf: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, data: []const u8) !void {
+                try buf.appendSlice(alloc, data);
+            }
+        };
+
+        try w.print(&results, allocator, "NIP-65 Relay List ({d} relays from {d} events)\n", .{
+            relay_map.count(), all_events.items.len,
+        });
+
+        if (rw_list.items.len > 0) {
+            try w.writeAll(&results, allocator, "\nRead+Write:\n");
+            for (rw_list.items) |url| {
+                try w.print(&results, allocator, "  {s}\n", .{url});
+            }
+        }
+        if (read_list.items.len > 0) {
+            try w.writeAll(&results, allocator, "\nRead-only:\n");
+            for (read_list.items) |url| {
+                try w.print(&results, allocator, "  {s}\n", .{url});
+            }
+        }
+        if (write_list.items.len > 0) {
+            try w.writeAll(&results, allocator, "\nWrite-only:\n");
+            for (write_list.items) |url| {
+                try w.print(&results, allocator, "  {s}\n", .{url});
+            }
+        }
+
+        if (relay_map.count() == 0) {
+            try w.writeAll(&results, allocator, "\nNo relay lists found for the queried pubkey(s).\n");
         }
 
         return ToolResult.okAlloc(allocator, results.items);
