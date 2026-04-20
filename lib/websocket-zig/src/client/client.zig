@@ -569,13 +569,11 @@ const TLSClient = struct {
 
         const aa = arena.allocator();
 
-        var bundle: Bundle = if (config.ca_bundle) |b| b else blk: {
+        const bundle: Bundle = if (config.ca_bundle) |b| b else blk: {
             var b: Bundle = .{ .map = .empty, .bytes = .empty };
             try b.rescan(aa, io, std.Io.Timestamp.now(io, .real));
             break :blk b;
         };
-
-        var ca_lock: std.Io.RwLock = .init;
 
         // The TLS input and output have to be max_ciphertext_record_len each.
         // The reader/writer also need buffer space. Using 4 x max_ciphertext_record_len
@@ -596,21 +594,20 @@ const TLSClient = struct {
         var entropy: [tls.Client.Options.entropy_len]u8 = undefined;
         posix.system.arc4random_buf(&entropy, entropy.len);
 
+        var ts: std.posix.timespec = undefined;
+        _ = std.posix.system.clock_gettime(.REALTIME, &ts);
+        const now_sec: i64 = @intCast(ts.sec);
+
         self.client = try tls.Client.init(
             &self.stream_reader.interface,
             &self.stream_writer.interface,
             .{
-                .ca = .{ .bundle = .{
-                    .gpa = aa,
-                    .io = io,
-                    .lock = &ca_lock,
-                    .bundle = &bundle,
-                } },
+                .ca = .{ .bundle = bundle },
                 .host = .{ .explicit = config.host },
                 .read_buffer = buf.ptr[2 * buf_len .. 3 * buf_len][0..buf_len],
                 .write_buffer = buf.ptr[3 * buf_len .. 4 * buf_len][0..buf_len],
                 .entropy = &entropy,
-                .realtime_now = std.Io.Timestamp.now(io, .real),
+                .realtime_now_seconds = now_sec,
             },
         );
 

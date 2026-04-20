@@ -70,7 +70,7 @@ pub const WsClient = struct {
     ) !WsClient {
         // DNS + TCP
         const address = try std.Io.net.IpAddress.resolve(std.Options.debug_io, host, port);
-        const stream = try std.Io.net.IpAddress.connect(&address, std.Options.debug_io, .{ .mode = .stream });
+        const stream = try address.connect(std.Options.debug_io, .{ .mode = .stream });
         errdefer stream.close(std.Options.debug_io);
 
         // Allocate TLS buffers (pattern from irc.zig)
@@ -96,36 +96,32 @@ pub const WsClient = struct {
         tls_state.stream_reader = stream_reader.interface;
         tls_state.stream_writer = stream_writer.interface;
 
-        var ca_bundle = std.crypto.Certificate.Bundle.empty;
-        var has_ca_bundle = false;
-        var ca_lock: std.Io.RwLock = .init;
-        const now = std.Io.Timestamp.now(std.Options.debug_io, .real);
-        if (ca_bundle.rescan(allocator, std.Options.debug_io, now)) |_| {
-            has_ca_bundle = true;
-        } else |err| {
+        var ca_bundle: std.crypto.Certificate.Bundle = .{};
+        defer ca_bundle.deinit(allocator);
+        const ca_now = std.Io.Clock.real.now(std.Options.debug_io);
+        ca_bundle.rescan(allocator, std.Options.debug_io, ca_now) catch |err| {
             // Preserve current behavior on platforms/environments where system CAs
             // are unavailable, but prefer verified TLS whenever possible.
             log.warn("WS TLS: system CA bundle unavailable, fallback to no verification: {}", .{err});
-        }
-        defer if (has_ca_bundle) ca_bundle.deinit(allocator);
+        };
 
         // Allocate and fill entropy buffer for TLS client
         var entropy_buf: [240]u8 = undefined;
         util.randomBytes(&entropy_buf);
 
+        // Get current time for TLS (seconds since epoch)
+        var ts: std.posix.timespec = undefined;
+        _ = std.posix.system.clock_gettime(.REALTIME, &ts);
+        const realtime_now_seconds: i64 = @intCast(ts.sec);
+
         const tls_options: std.crypto.tls.Client.Options = .{
             .host = .{ .explicit = host },
-            .ca = if (has_ca_bundle) .{ .bundle = .{
-                .gpa = allocator,
-                .io = std.Options.debug_io,
-                .lock = &ca_lock,
-                .bundle = &ca_bundle,
-            } } else .no_verification,
+            .ca = .{ .bundle = ca_bundle },
             .read_buffer = tls_read_buf,
             .write_buffer = tls_write_buf,
             .allow_truncation_attacks = true,
             .entropy = &entropy_buf,
-            .realtime_now = now,
+            .realtime_now_seconds = realtime_now_seconds,
         };
 
         tls_state.tls_client = std.crypto.tls.Client.init(

@@ -502,8 +502,10 @@ pub const IrcChannel = struct {
         var entropy: [240]u8 = undefined; // std.crypto.tls.Client.entropy_len
         std.Io.random(std.Options.debug_io, &entropy);
 
-        // Get current time for TLS
-        const timestamp_ns = std.Io.Clock.real.now(std.Options.debug_io);
+        // Get current time for TLS (seconds since epoch)
+        var ts: std.posix.timespec = undefined;
+        _ = std.posix.system.clock_gettime(.REALTIME, &ts);
+        const realtime_now_seconds: i64 = @intCast(ts.sec);
 
         tls.tls_client = std.crypto.tls.Client.init(
             &tls.socket_reader.interface,
@@ -514,7 +516,7 @@ pub const IrcChannel = struct {
                 .read_buffer = tls_read_buf,
                 .write_buffer = tls_write_buf,
                 .entropy = &entropy,
-                .realtime_now = timestamp_ns,
+                .realtime_now_seconds = realtime_now_seconds,
                 .allow_truncation_attacks = true,
             },
         ) catch return error.TlsInitializationFailed;

@@ -37,7 +37,7 @@ const OllamaChatResponse = struct {
 /// 2. Prefixed names: "tool.shell" -> "shell"
 /// 3. Normal: return as-is
 fn extractToolNameAndArgs(
-    _: std.mem.Allocator,
+    allocator: std.mem.Allocator,
     name: []const u8,
     arguments: std.json.Value,
 ) struct { name: []const u8, args: std.json.Value } {
@@ -50,7 +50,7 @@ fn extractToolNameAndArgs(
         if (arguments == .object) {
             if (arguments.object.get("name")) |nested_name_val| {
                 if (nested_name_val == .string) {
-                    const nested_args = if (arguments.object.get("arguments")) |a| a else std.json.Value{ .object = std.json.ObjectMap.empty };
+                    const nested_args = if (arguments.object.get("arguments")) |a| a else std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
                     return .{ .name = nested_name_val.string, .args = nested_args };
                 }
             }
@@ -341,7 +341,7 @@ pub const OllamaProvider = struct {
         }
 
         // Extract parameters
-        var args_obj = std.json.ObjectMap.empty;
+        var args_obj = std.json.ObjectMap.init(allocator);
         var param_idx = std.mem.indexOf(u8, content, "<parameter");
         while (param_idx != null) : (param_idx = std.mem.indexOfPos(u8, content, param_idx.?, "<parameter")) {
             const param_start = param_idx.? + "<parameter".len;
@@ -368,7 +368,7 @@ pub const OllamaProvider = struct {
             // Store in args object
             const key_copy = try allocator.dupe(u8, param_name);
             const val_copy = try allocator.dupe(u8, param_value);
-            try args_obj.put(allocator, key_copy, std.json.Value{ .string = val_copy });
+            try args_obj.put(key_copy, std.json.Value{ .string = val_copy });
 
             param_idx = close_tag + "</parameter>".len;
         }
