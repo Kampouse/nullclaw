@@ -762,6 +762,10 @@ pub const Agent = struct {
             self.has_system_prompt = true;
             self.system_prompt_has_conversation_context = turn_has_conversation_context;
             self.workspace_prompt_fingerprint = workspace_fp;
+
+            slog.logStructured("DEBUG", "agent", "system_prompt_size", .{
+                .chars = full_system.len,
+            });
         }
         slog.debugSpan("agent", "system_prompt", sysprompt_ns);
 
@@ -1009,6 +1013,12 @@ pub const Agent = struct {
             self.total_tokens += response.usage.total_tokens;
             self.last_turn_usage = response.usage;
 
+            slog.logStructured("DEBUG", "agent", "token_usage", .{
+                .prompt_tokens = response.usage.prompt_tokens,
+                .completion_tokens = response.usage.completion_tokens,
+                .total_tokens = response.usage.total_tokens,
+            });
+
             const response_text = response.contentOrEmpty();
             const use_native = response.hasToolCalls();
 
@@ -1217,6 +1227,7 @@ pub const Agent = struct {
             slog.debug("agent", "turn_history_append_complete", .{});
 
             // Execute each tool call
+            const tools_ns = util.nanoTimestamp();
             var results_buf: std.ArrayListUnmanaged(ToolExecutionResult) = .empty;
             defer results_buf.deinit(self.allocator);
             try results_buf.ensureTotalCapacity(self.allocator, parsed_calls.len);
@@ -1297,6 +1308,8 @@ pub const Agent = struct {
                     try results_buf.append(self.allocator, result);
                 }
             }
+
+            slog.debugSpan("agent", "tool_execution", tools_ns);
 
             // Format tool results, scrub credentials, add reflection prompt, and add to history
             slog.debug("agent", "turn_formatting_tool_results", .{ .count = results_buf.items.len });

@@ -29,6 +29,7 @@ const security = @import("security/policy.zig");
 const PairingGuard = @import("security/pairing.zig").PairingGuard;
 const channels = @import("channels/root.zig");
 const bus_mod = @import("bus.zig");
+const prompt = @import("agent/prompt.zig");
 
 /// Maximum request body size (64KB) — prevents memory exhaustion.
 pub const MAX_BODY_SIZE: usize = 65_536;
@@ -2496,6 +2497,52 @@ fn handleQqWebhookRoute(ctx: *WebhookHandlerContext) void {
     ctx.response_body = "{\"status\":\"ok\"}";
 }
 
+/// Cold-start warmup: eagerly initialize system prompt build and memory backend
+/// so the first real request doesn't pay a 2-5s initialization penalty.
+/// Runs inline after the listen socket is bound (server already accepting).
+fn warmup(
+    allocator: std.mem.Allocator,
+    workspace_dir: []const u8,
+    model_name: []const u8,
+    tools: []const tools_mod.Tool,
+    mem_rt: ?*memory_mod.MemoryRuntime,
+) void {
+    const t0 = util.nanoTimestamp();
+    var prompt_ok = false;
+    var memory_ok = false;
+
+    // 1. Build system prompt — triggers workspace file reads (AGENTS.md, SOUL.md, etc.)
+    if (workspace_dir.len > 0) {
+        if (prompt.buildSystemPrompt(allocator, .{
+            .workspace_dir = workspace_dir,
+            .model_name = model_name,
+            .tools = tools,
+        })) |built| {
+            allocator.free(built);
+            prompt_ok = true;
+        } else |err| {
+            log.warn("warmup: system prompt build skipped: {}", .{err});
+        }
+    }
+
+    // 2. Trigger a dummy memory recall — forces SQLite open + FTS5 init + vector store lazy init
+    if (mem_rt) |rt| {
+        if (rt.memory.recall(allocator, "__warmup__", 1, null)) |entries| {
+            defer memory_mod.freeEntries(allocator, entries);
+            memory_ok = true;
+        } else |err| {
+            log.warn("warmup: memory probe skipped: {}", .{err});
+        }
+    }
+
+    const elapsed_ms = @divTrunc(util.nanoTimestamp() - t0, 1_000_000);
+    log.info("cold-start warmup complete: prompt={} memory={} elapsed={}ms", .{
+        prompt_ok,
+        memory_ok,
+        elapsed_ms,
+    });
+}
+
 /// Run the HTTP gateway. Binds to host:port and serves HTTP requests.
 /// Endpoints: GET /health, GET /ready, POST /pair, POST /webhook, GET|POST /whatsapp, POST /telegram, POST /slack/events, POST /line, POST /lark, POST /qq
 /// If config_ptr is null, loads config internally (for backward compatibility).
@@ -2674,6 +2721,19 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
             try stdout.print("Gateway pairing code: {s}\n", .{code});
             try stdout.flush();
         }
+    }
+
+    // Cold-start warmup — runs after listen socket is bound so the server
+    // is already reachable, but before the accept loop so the first real
+    // request hits pre-warmed caches.
+    if (config_opt) |cfg| {
+        warmup(
+            allocator,
+            cfg.workspace_dir,
+            cfg.default_model orelse "warmup",
+            tools_slice,
+            if (mem_rt) |*rt| rt else null,
+        );
     }
 
     // Accept loop — read raw HTTP from TCP connections

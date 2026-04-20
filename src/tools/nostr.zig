@@ -84,6 +84,106 @@ const CLAWSTR_RELAYS = [_][]const u8{
     "wss://relay.crostr.com",
 };
 
+// ── Relay health tracking ──────────────────────────────────────────
+// In-memory tracker that remembers recent connection failures per relay
+// and skips them with exponential backoff (30s / 60s / 120s).
+// Thread-safe via spinlock.
+
+const RelaySpinlock = @import("../spinlock.zig").Spinlock;
+
+const RelayHealth = struct {
+    const MAX_ENTRIES = 64;
+    const BACKOFF_NS_1 = 30 * std.time.ns_per_s;
+    const BACKOFF_NS_2 = 60 * std.time.ns_per_s;
+    const BACKOFF_NS_3 = 120 * std.time.ns_per_s;
+
+    const Entry = struct {
+        url: []const u8 = "",
+        fail_count: u32 = 0,
+        last_fail_ns: u64 = 0,
+    };
+
+    mu: RelaySpinlock = .{},
+    entries: [MAX_ENTRIES]Entry = [_]Entry{.{}} ** MAX_ENTRIES,
+    len: u32 = 0,
+
+    fn findEntry(self: *RelayHealth, url: []const u8) ?*Entry {
+        for (self.entries[0..self.len]) |*e| {
+            if (std.mem.eql(u8, e.url, url)) return e;
+        }
+        return null;
+    }
+
+    /// Record a connection failure for the given relay URL.
+    pub fn recordFailure(self: *RelayHealth, url: []const u8) void {
+        self.mu.lock();
+        defer self.mu.unlock();
+
+        const now: u64 = @intCast(util.nanoTimestamp());
+
+        if (self.findEntry(url)) |e| {
+            e.fail_count += 1;
+            e.last_fail_ns = now;
+        } else if (self.len < MAX_ENTRIES) {
+            self.entries[self.len] = .{
+                .url = url,
+                .fail_count = 1,
+                .last_fail_ns = now,
+            };
+            self.len += 1;
+        }
+        // If MAX_ENTRIES reached and url not found, silently drop (unlikely).
+    }
+
+    /// Record a successful connection — resets the failure counter for this relay.
+    pub fn recordSuccess(self: *RelayHealth, url: []const u8) void {
+        self.mu.lock();
+        defer self.mu.unlock();
+
+        if (self.findEntry(url)) |e| {
+            e.fail_count = 0;
+            e.last_fail_ns = 0;
+        }
+    }
+
+    /// Check whether a relay is healthy (not in backoff period).
+    pub fn isHealthy(self: *RelayHealth, url: []const u8) bool {
+        self.mu.lock();
+        defer self.mu.unlock();
+
+        const now: u64 = @intCast(util.nanoTimestamp());
+
+        if (self.findEntry(url)) |e| {
+            if (e.fail_count == 0) return true;
+            const backoff: u64 = switch (e.fail_count) {
+                1 => BACKOFF_NS_1,
+                2 => BACKOFF_NS_2,
+                else => BACKOFF_NS_3,
+            };
+            return now >= e.last_fail_ns + backoff;
+        }
+        return true; // no entry = never failed
+    }
+
+    /// Filter a relay list, returning only the healthy ones.
+    /// Caller must free the returned slice with `allocator`.
+    pub fn filterHealthy(self: *RelayHealth, allocator: std.mem.Allocator, relays: []const []const u8) ![]const []const u8 {
+        var filtered: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer filtered.deinit(allocator);
+
+        for (relays) |r| {
+            if (self.isHealthy(r)) {
+                try filtered.append(allocator, r);
+            }
+        }
+
+        return filtered.toOwnedSlice(allocator);
+    }
+};
+
+/// Global relay health tracker — lives for the process lifetime.
+var global_relay_health: RelayHealth = .{};
+
 pub const NostrTool = struct {
     config_dir: []const u8,
     allocator: std.mem.Allocator,
@@ -355,10 +455,31 @@ pub const NostrTool = struct {
         }
     };
 
-    fn queryRelaysParallel(allocator: std.mem.Allocator, relays: []const []const u8, filter_json: []const u8, min_results: usize) !struct {
+    /// Result type for parallel relay queries.
+    const QueryResult = struct {
         events: std.ArrayListUnmanaged(nostr.Event),
         errors: std.ArrayListUnmanaged(u8),
-    } {
+    };
+
+    fn queryRelaysParallel(allocator: std.mem.Allocator, relays: []const []const u8, filter_json: []const u8, min_results: usize) !QueryResult {
+        // Filter out relays that failed recently (backoff).
+        const healthy_relays = try global_relay_health.filterHealthy(allocator, relays);
+        defer allocator.free(healthy_relays);
+
+        if (healthy_relays.len == 0) {
+            log.warn("all {d} relays are in backoff, using full list", .{relays.len});
+            return queryRelaysParallelInner(allocator, relays, filter_json, min_results);
+        }
+        if (healthy_relays.len < relays.len) {
+            log.info("relay health: skipped {d}/{d} unhealthy relays", .{
+                relays.len - healthy_relays.len, relays.len,
+            });
+        }
+
+        return queryRelaysParallelInner(allocator, healthy_relays, filter_json, min_results);
+    }
+
+    fn queryRelaysParallelInner(allocator: std.mem.Allocator, relays: []const []const u8, filter_json: []const u8, min_results: usize) !QueryResult {
         // Wrap allocator in mutex for thread safety (GPA is not thread-safe).
         var safe_alloc: ThreadSafeAllocator = .{ .backing = allocator };
         const thread_alloc = safe_alloc.allocator();
@@ -436,6 +557,13 @@ pub const NostrTool = struct {
         var relay_errors: std.ArrayListUnmanaged(u8) = .empty;
 
         for (results) |result| {
+            // Record health outcome for each relay.
+            if (result.error_msg != null) {
+                global_relay_health.recordFailure(result.relay);
+            } else {
+                global_relay_health.recordSuccess(result.relay);
+            }
+
             if (result.error_msg) |err_msg| {
                 try relay_errors.appendSlice(thread_alloc, err_msg);
                 try relay_errors.appendSlice(thread_alloc, "; ");
