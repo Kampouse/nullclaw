@@ -29,6 +29,12 @@ pub const SqliteMemory = struct {
     allocator: std.mem.Allocator,
     owns_self: bool = false,
 
+    // Cached prepared statements — avoid repeated parse+plan overhead.
+    // Initialized lazily on first use; finalized in deinit().
+    stmt_get: ?*c.sqlite3_stmt = null,
+    stmt_count: ?*c.sqlite3_stmt = null,
+    stmt_forget: ?*c.sqlite3_stmt = null,
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, db_path: [*:0]const u8) !Self {
@@ -51,6 +57,19 @@ pub const SqliteMemory = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Finalize cached prepared statements before closing the database
+        if (self.stmt_get) |s| {
+            _ = c.sqlite3_finalize(s);
+            self.stmt_get = null;
+        }
+        if (self.stmt_count) |s| {
+            _ = c.sqlite3_finalize(s);
+            self.stmt_count = null;
+        }
+        if (self.stmt_forget) |s| {
+            _ = c.sqlite3_finalize(s);
+            self.stmt_forget = null;
+        }
         if (self.db) |db| {
             _ = c.sqlite3_close(db);
             self.db = null;
@@ -78,6 +97,7 @@ pub const SqliteMemory = struct {
             "PRAGMA synchronous  = NORMAL;",
             "PRAGMA temp_store   = MEMORY;",
             "PRAGMA cache_size   = -2000;",
+            "PRAGMA optimize;",
         };
         for (pragmas) |pragma| {
             var err_msg: [*c]u8 = null;
@@ -104,6 +124,7 @@ pub const SqliteMemory = struct {
             \\CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
             \\CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_session ON memories(key, COALESCE(session_id, '__global__'));
             \\CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
+            \\CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
             \\
             \\-- FTS5 full-text search (BM25 scoring)
             \\CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -223,22 +244,12 @@ pub const SqliteMemory = struct {
 
         const cat_str = category.toString();
 
-        // Delete any existing row with the same key first, so that changing
-        // session_id on an existing key works correctly (upsert semantics).
-        // Without this, the composite unique index (key, COALESCE(session_id))
-        // would allow duplicate keys when session_id differs.
-        {
-            const del_sql = "DELETE FROM memories WHERE key = ?1";
-            var del_stmt: ?*c.sqlite3_stmt = null;
-            const del_rc = c.sqlite3_prepare_v2(self_.db, del_sql, -1, &del_stmt, null);
-            if (del_rc == c.SQLITE_OK) {
-                defer _ = c.sqlite3_finalize(del_stmt);
-                _ = c.sqlite3_bind_text(del_stmt, 1, key.ptr, @intCast(key.len), SQLITE_STATIC);
-                _ = c.sqlite3_step(del_stmt);
-            }
-        }
-
-        const sql = "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+        // Single UPSERT — avoids DELETE+INSERT (2 round-trips + double FTS5 trigger)
+        const sql =
+            "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) " ++
+            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) " ++
+            "ON CONFLICT(key, COALESCE(session_id, '__global__')) " ++
+            "DO UPDATE SET content=excluded.content, category=excluded.category, updated_at=excluded.updated_at";
 
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
@@ -278,17 +289,22 @@ pub const SqliteMemory = struct {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
         // Prefer global (session_id IS NULL) entries, fall back to any matching key
-        const sql = "SELECT id, key, content, category, created_at, session_id FROM memories WHERE key = ?1 ORDER BY CASE WHEN session_id IS NULL THEN 0 ELSE 1 END LIMIT 1";
-        var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
-        if (rc != c.SQLITE_OK) return error.PrepareFailed;
-        defer _ = c.sqlite3_finalize(stmt);
+        if (self_.stmt_get == null) {
+            const sql = "SELECT id, key, content, category, created_at, session_id FROM memories WHERE key = ?1 ORDER BY CASE WHEN session_id IS NULL THEN 0 ELSE 1 END LIMIT 1";
+            var stmt: ?*c.sqlite3_stmt = null;
+            const rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
+            if (rc != c.SQLITE_OK) return error.PrepareFailed;
+            self_.stmt_get = stmt;
+        }
 
+        const stmt = self_.stmt_get.?;
+        _ = c.sqlite3_reset(stmt);
+        _ = c.sqlite3_clear_bindings(stmt);
         _ = c.sqlite3_bind_text(stmt, 1, key.ptr, @intCast(key.len), SQLITE_STATIC);
 
-        rc = c.sqlite3_step(stmt);
+        const rc = c.sqlite3_step(stmt);
         if (rc == c.SQLITE_ROW) {
-            return try readEntryFromRow(stmt.?, allocator);
+            return try readEntryFromRow(stmt, allocator);
         }
         return null;
     }
@@ -359,15 +375,20 @@ pub const SqliteMemory = struct {
 
         // Only delete global (session_id IS NULL) entries to avoid accidentally
         // removing session-scoped memories when the tool API has no session param.
-        const sql = "DELETE FROM memories WHERE key = ?1 AND session_id IS NULL";
-        var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
-        if (rc != c.SQLITE_OK) return error.PrepareFailed;
-        defer _ = c.sqlite3_finalize(stmt);
+        if (self_.stmt_forget == null) {
+            const sql = "DELETE FROM memories WHERE key = ?1 AND session_id IS NULL";
+            var stmt: ?*c.sqlite3_stmt = null;
+            const rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
+            if (rc != c.SQLITE_OK) return error.PrepareFailed;
+            self_.stmt_forget = stmt;
+        }
 
+        const stmt = self_.stmt_forget.?;
+        _ = c.sqlite3_reset(stmt);
+        _ = c.sqlite3_clear_bindings(stmt);
         _ = c.sqlite3_bind_text(stmt, 1, key.ptr, @intCast(key.len), SQLITE_STATIC);
 
-        rc = c.sqlite3_step(stmt);
+        const rc = c.sqlite3_step(stmt);
         if (rc != c.SQLITE_DONE) return error.StepFailed;
 
         return c.sqlite3_changes(self_.db) > 0;
@@ -376,13 +397,19 @@ pub const SqliteMemory = struct {
     fn implCount(ptr: *anyopaque) anyerror!usize {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
-        const sql = "SELECT COUNT(*) FROM memories";
-        var stmt: ?*c.sqlite3_stmt = null;
-        var rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
-        if (rc != c.SQLITE_OK) return error.PrepareFailed;
-        defer _ = c.sqlite3_finalize(stmt);
+        if (self_.stmt_count == null) {
+            const sql = "SELECT COUNT(*) FROM memories";
+            var stmt: ?*c.sqlite3_stmt = null;
+            const rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
+            if (rc != c.SQLITE_OK) return error.PrepareFailed;
+            self_.stmt_count = stmt;
+        }
 
-        rc = c.sqlite3_step(stmt);
+        const stmt = self_.stmt_count.?;
+        _ = c.sqlite3_reset(stmt);
+        _ = c.sqlite3_clear_bindings(stmt);
+
+        const rc = c.sqlite3_step(stmt);
         if (rc == c.SQLITE_ROW) {
             const count = c.sqlite3_column_int64(stmt, 0);
             return @intCast(count);

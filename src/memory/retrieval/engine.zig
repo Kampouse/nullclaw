@@ -6,11 +6,14 @@
 
 const std = @import("std");
 
-fn timestamp() i64 {
-    var tv: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv, null);
-    return tv.sec;
-}
+// TODO(FIX-16): Dead code — temporal_decay stage is in pipeline_order but never invoked.
+// This timestamp() helper was intended for temporal decay but the result was never used.
+// Re-enable when temporal_decay stage is implemented.
+// fn timestamp() i64 {
+//     var tv: std.c.timeval = undefined;
+//     _ = std.c.gettimeofday(&tv, null);
+//     return tv.sec;
+// }
 const build_options = @import("build_options");
 const profiling = @import("../../profiling.zig");
 const Allocator = std.mem.Allocator;
@@ -63,7 +66,7 @@ pub const pipeline_order = [_]RetrievalStage{
     .vector,
     .merge_rrf,
     .min_relevance,
-    .temporal_decay,
+    .temporal_decay, // TODO(FIX-16): Stage placeholder — not yet implemented
     .mmr,
     .llm_rerank,
     .limit,

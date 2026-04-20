@@ -576,7 +576,6 @@ const TLSClient = struct {
             break :blk ptr;
         };
         if (config.ca_bundle) |b| bundle_ptr.* = b;
-        var bundle_lock: std.Io.RwLock = .init;
 
         // The TLS input and output have to be max_ciphertext_record_len each.
         // The reader/writer also need buffer space. Using 4 x max_ciphertext_record_len
@@ -597,6 +596,7 @@ const TLSClient = struct {
         var entropy: [tls.Client.Options.entropy_len]u8 = undefined;
         posix.system.arc4random_buf(&entropy, entropy.len);
 
+        var bundle_lock: std.Io.RwLock = .init;
         self.client = try tls.Client.init(
             &self.stream_reader.interface,
             &self.stream_writer.interface,

@@ -311,6 +311,24 @@ pub const Agent = struct {
     /// Whether context was force-compacted due to exhaustion during the current turn.
     context_was_compacted: bool = false,
 
+    // ── Performance caches (FIX 13, 19, 20, 21) ──
+
+    /// Cached capabilities section to avoid 15 allocations per system prompt rebuild.
+    cached_capabilities_section: ?[]u8 = null,
+    /// Whether the capabilities cache needs to be rebuilt.
+    capabilities_dirty: bool = true,
+
+    /// Pre-computed FNV1a-64 hash of the system prompt for cache key partial hashing.
+    cached_sys_prompt_hash: u64 = 0,
+
+    /// Whether the allowed-dirs list for buildProviderMessages has been built.
+    cached_allowed_dirs_built: bool = false,
+    /// Cached allowed-dirs slice (arena-allocated, valid until arena reset).
+    cached_allowed_dirs: []const []const u8 = &.{},
+
+    /// Running character count across all history messages for fast tokenEstimate.
+    total_history_chars: u64 = 0,
+
     /// Pending vector sync keys for deferred processing after LLM call.
     /// Stores (key, content) pairs to sync after the response is ready.
     pending_sync_keys: [4]?PendingSyncEntry = [_]?PendingSyncEntry{null} ** 4,
@@ -410,6 +428,8 @@ pub const Agent = struct {
         if (self.pending_exec_command_owned and self.pending_exec_command != null) self.allocator.free(self.pending_exec_command.?);
         if (self.focus_target_owned and self.focus_target != null) self.allocator.free(self.focus_target.?);
         if (self.dock_target_owned and self.dock_target != null) self.allocator.free(self.dock_target.?);
+        if (self.cached_capabilities_section) |section| self.allocator.free(section);
+        if (self.cached_allowed_dirs.len > 0) self.allocator.free(self.cached_allowed_dirs);
         for (self.history.items) |*msg| {
             msg.deinit(self.allocator);
         }
@@ -418,13 +438,36 @@ pub const Agent = struct {
     }
 
     /// Estimate total tokens in conversation history.
+    /// FIX 21: Uses running character counter instead of scanning all messages.
     pub fn tokenEstimate(self: *const Agent) u64 {
-        return compaction.tokenEstimate(self.history.items);
+        return compaction.tokenEstimateFromTotal(self.total_history_chars);
+    }
+
+    /// FIX 19: Compute cache key using pre-hashed system prompt + user message.
+    /// Avoids re-hashing the entire system prompt every turn.
+    pub fn computeCacheKeyHex(self: *const Agent, buf: *[16]u8, user_message: []const u8) []const u8 {
+        // Hash the user message
+        var user_hasher = std.hash.Fnv1a_64.init();
+        user_hasher.update(std.mem.asBytes(&@as(u32, @intCast(user_message.len))));
+        user_hasher.update(user_message);
+        const user_hash = user_hasher.final();
+
+        // XOR with cached system prompt hash for final key
+        const final_hash = self.cached_sys_prompt_hash ^ user_hash;
+        return std.fmt.bufPrint(buf, "{x:0>16}", .{final_hash}) catch "0000000000000000";
+    }
+
+    /// FIX 19: Compute FNV1a-64 hash of the system prompt.
+    fn hashSystemPrompt(sys_prompt: []const u8) u64 {
+        var hasher = std.hash.Fnv1a_64.init();
+        hasher.update(std.mem.asBytes(&@as(u32, @intCast(sys_prompt.len))));
+        hasher.update(sys_prompt);
+        return hasher.final();
     }
 
     /// Auto-compact history when it exceeds thresholds.
     pub fn autoCompactHistory(self: *Agent) !bool {
-        return compaction.autoCompactHistory(self.allocator, &self.history, self.provider, self.model_name, .{
+        const result = try compaction.autoCompactHistory(self.allocator, &self.history, self.provider, self.model_name, .{
             .keep_recent = self.compaction_keep_recent,
             .max_summary_chars = self.compaction_max_summary_chars,
             .max_source_chars = self.compaction_max_source_chars,
@@ -432,11 +475,30 @@ pub const Agent = struct {
             .max_history_messages = self.max_history_messages,
             .workspace_dir = self.workspace_dir,
         });
+        if (result) {
+            // FIX 21: Recalculate total_history_chars after compaction
+            self.total_history_chars = self.recalculateHistoryChars();
+        }
+        return result;
     }
 
     /// Force-compress history for context exhaustion recovery.
     pub fn forceCompressHistory(self: *Agent) bool {
-        return compaction.forceCompressHistory(self.allocator, &self.history);
+        const result = compaction.forceCompressHistory(self.allocator, &self.history);
+        if (result) {
+            // FIX 21: Recalculate total_history_chars after compression
+            self.total_history_chars = self.recalculateHistoryChars();
+        }
+        return result;
+    }
+
+    /// FIX 21: Recalculate total_history_chars from current history.
+    fn recalculateHistoryChars(self: *const Agent) u64 {
+        var total: u64 = 0;
+        for (self.history.items) |*msg| {
+            total += msg.content.len;
+        }
+        return total;
     }
 
     fn appendUniqueString(
@@ -449,6 +511,12 @@ pub const Agent = struct {
             if (std.mem.eql(u8, existing, value)) return;
         }
         try list.append(allocator, value);
+    }
+
+    /// FIX 21: Append message to history and update running char counter.
+    fn appendToHistory(self: *Agent, role: providers.Role, content: []const u8) !void {
+        try self.history.append(self.allocator, .{ .role = role, .content = content });
+        self.total_history_chars += content.len;
     }
 
     fn providerIsFallback(self: *const Agent, provider_name: []const u8) bool {
@@ -712,16 +780,28 @@ pub const Agent = struct {
             self.system_prompt_has_conversation_context != turn_has_conversation_context;
 
         if (!self.has_system_prompt or conversation_context_changed) {
-            var cfg_for_caps_opt: ?Config = Config.load(self.allocator, std.Options.debug_io) catch null;
-            defer if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded.deinit();
-            const cfg_for_caps_ptr: ?*const Config = if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded else null;
+            // FIX 13: Use cached capabilities section when available and not dirty
+            const capabilities_section: ?[]const u8 = if (!self.capabilities_dirty and self.cached_capabilities_section != null)
+                self.cached_capabilities_section.?
+            else blk: {
+                var cfg_for_caps_opt: ?Config = Config.load(self.allocator, std.Options.debug_io) catch null;
+                defer if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded.deinit();
+                const cfg_for_caps_ptr: ?*const Config = if (cfg_for_caps_opt) |*cfg_loaded| cfg_loaded else null;
 
-            const capabilities_section = capabilities_mod.buildPromptSection(
-                self.allocator,
-                cfg_for_caps_ptr,
-                self.tools,
-            ) catch null;
-            defer if (capabilities_section) |section| self.allocator.free(section);
+                const section = capabilities_mod.buildPromptSection(
+                    self.allocator,
+                    cfg_for_caps_ptr,
+                    self.tools,
+                ) catch null;
+                if (section) |sec| {
+                    // Update cache
+                    if (self.cached_capabilities_section) |old| self.allocator.free(old);
+                    self.cached_capabilities_section = sec;
+                    self.capabilities_dirty = false;
+                    break :blk sec;
+                }
+                break :blk null;
+            };
 
             const system_prompt = try prompt.buildSystemPrompt(self.allocator, .{
                 .workspace_dir = self.workspace_dir,
@@ -743,25 +823,32 @@ pub const Agent = struct {
             // Keep exactly one canonical system prompt at history[0].
             // This allows /model to invalidate and refresh the prompt in place.
             if (self.history.items.len > 0 and self.history.items[0].role == .system) {
+                self.total_history_chars -= self.history.items[0].content.len;
                 self.history.items[0].deinit(self.allocator);
                 self.history.items[0] = .{
                     .role = .system,
                     .content = full_system,
                 };
+                self.total_history_chars += full_system.len;
             } else if (self.history.items.len > 0) {
                 try self.history.insert(self.allocator, 0, .{
                     .role = .system,
                     .content = full_system,
                 });
+                self.total_history_chars += full_system.len;
             } else {
                 try self.history.append(self.allocator, .{
                     .role = .system,
                     .content = full_system,
                 });
+                self.total_history_chars += full_system.len;
             }
             self.has_system_prompt = true;
             self.system_prompt_has_conversation_context = turn_has_conversation_context;
             self.workspace_prompt_fingerprint = workspace_fp;
+
+            // FIX 19: Pre-compute system prompt hash for fast cache key computation
+            self.cached_sys_prompt_hash = hashSystemPrompt(full_system);
 
             slog.logStructured("DEBUG", "agent", "system_prompt_size", .{
                 .chars = full_system.len,
@@ -769,7 +856,18 @@ pub const Agent = struct {
         }
         slog.debugSpan("agent", "system_prompt", sysprompt_ns);
 
-        // Auto-save user message to memory (nanoTimestamp key to avoid collisions within the same second)
+        // Enrich message with memory context (always returns owned slice; ownership → history)
+        // Uses retrieval pipeline (hybrid search, RRF, temporal decay, MMR) when MemoryRuntime is available.
+        const retrieval_ns = util.nanoTimestamp();
+        const enriched = if (self.mem) |mem|
+            try memory_loader.enrichMessageWithRuntime(self.allocator, mem, self.mem_rt, effective_user_message, self.memory_session_id)
+        else
+            try self.allocator.dupe(u8, effective_user_message);
+        errdefer self.allocator.free(enriched);
+        slog.debugSpan("agent", "retrieval", retrieval_ns);
+
+        // FIX 15: Auto-save user message to memory AFTER retrieval to avoid
+        // FTS5 trigger updates contending with the subsequent FTS5 read.
         const autosave_ns = util.nanoTimestamp();
         if (self.auto_save) {
             if (self.mem) |mem| {
@@ -788,37 +886,17 @@ pub const Agent = struct {
         }
         slog.debugSpan("agent", "auto_save", autosave_ns);
 
-        // Enrich message with memory context (always returns owned slice; ownership → history)
-        // Uses retrieval pipeline (hybrid search, RRF, temporal decay, MMR) when MemoryRuntime is available.
-        const retrieval_ns = util.nanoTimestamp();
-        const enriched = if (self.mem) |mem|
-            try memory_loader.enrichMessageWithRuntime(self.allocator, mem, self.mem_rt, effective_user_message, self.memory_session_id)
-        else
-            try self.allocator.dupe(u8, effective_user_message);
-        errdefer self.allocator.free(enriched);
-        slog.debugSpan("agent", "retrieval", retrieval_ns);
+        try self.appendToHistory(.user, enriched);
 
-        try self.history.append(self.allocator, .{
-            .role = .user,
-            .content = enriched,
-        });
-
-        // ── Response cache check ──
+        // ── Response cache check (FIX 19: uses pre-hashed system prompt) ──
         if (self.response_cache) |rc| {
             var key_buf: [16]u8 = undefined;
-            const system_prompt = if (self.history.items.len > 0 and self.history.items[0].role == .system)
-                self.history.items[0].content
-            else
-                null;
-            const key_hex = cache.ResponseCache.cacheKeyHex(&key_buf, self.model_name, system_prompt, effective_user_message);
+            const key_hex = self.computeCacheKeyHex(&key_buf, effective_user_message);
             if (rc.get(self.allocator, key_hex) catch null) |cached_response| {
                 errdefer self.allocator.free(cached_response);
                 const history_copy = try self.allocator.dupe(u8, cached_response);
                 errdefer self.allocator.free(history_copy);
-                try self.history.append(self.allocator, .{
-                    .role = .assistant,
-                    .content = history_copy,
-                });
+                try self.appendToHistory(.assistant, history_copy);
                 slog.debug("agent", "turn_cache_hit", .{});
                 return cached_response;
             }
@@ -1102,16 +1180,10 @@ pub const Agent = struct {
                     iteration + 1 < self.max_tool_iterations and
                     shouldForceActionFollowThrough(display_text))
                 {
-                    try self.history.append(self.allocator, .{
-                        .role = .assistant,
-                        .content = try self.allocator.dupe(u8, display_text),
-                    });
-                    try self.history.append(self.allocator, .{
-                        .role = .user,
-                        .content = try self.allocator.dupe(u8, "SYSTEM: You just promised to take action now (for example: \"I'll try/check now\"). " ++
-                            "Do it in this turn by issuing the appropriate tool call(s). " ++
-                            "If no tool can perform it, respond with a clear limitation now and do not promise another future attempt."),
-                    });
+                    try self.appendToHistory(.assistant, try self.allocator.dupe(u8, display_text));
+                    try self.appendToHistory(.user, try self.allocator.dupe(u8, "SYSTEM: You just promised to take action now (for example: \"I'll try/check now\"). " ++
+                        "Do it in this turn by issuing the appropriate tool call(s). " ++
+                        "If no tool can perform it, respond with a clear limitation now and do not promise another future attempt."));
                     self.trimHistory();
                     self.freeResponseFields(&response);
                     forced_follow_through_count += 1;
@@ -1129,10 +1201,7 @@ pub const Agent = struct {
                 errdefer self.allocator.free(final_text);
 
                 // Dupe from display_text directly (not from final_text) to avoid double-dupe
-                try self.history.append(self.allocator, .{
-                    .role = .assistant,
-                    .content = try self.allocator.dupe(u8, display_text),
-                });
+                try self.appendToHistory(.assistant, try self.allocator.dupe(u8, display_text));
 
                 // Auto-compaction before hard trimming to preserve context
                 self.last_turn_compacted = self.autoCompactHistory() catch false;
@@ -1177,14 +1246,10 @@ pub const Agent = struct {
                 self.freeResponseFields(&response);
                 self.allocator.free(base_text);
 
-                // ── Cache store (only for direct responses, no tool calls) ──
+                // ── Cache store (only for direct responses, no tool calls) (FIX 19) ──
                 if (self.response_cache) |rc| {
                     var store_key_buf: [16]u8 = undefined;
-                    const sys_prompt = if (self.history.items.len > 0 and self.history.items[0].role == .system)
-                        self.history.items[0].content
-                    else
-                        null;
-                    const store_key_hex = cache.ResponseCache.cacheKeyHex(&store_key_buf, self.model_name, sys_prompt, effective_user_message);
+                    const store_key_hex = self.computeCacheKeyHex(&store_key_buf, effective_user_message);
                     const token_count: u32 = @intCast(@min(self.last_turn_usage.total_tokens, std.math.maxInt(u32)));
                     rc.put(self.allocator, store_key_hex, self.model_name, final_text, token_count) catch {};
                 }
@@ -1219,10 +1284,7 @@ pub const Agent = struct {
             } else try self.allocator.dupe(u8, assistant_history_content);
             errdefer self.allocator.free(assistant_content);
 
-            try self.history.append(self.allocator, .{
-                .role = .assistant,
-                .content = assistant_content,
-            });
+            try self.appendToHistory(.assistant, assistant_content);
 
             slog.debug("agent", "turn_history_append_complete", .{});
 
@@ -1270,13 +1332,10 @@ pub const Agent = struct {
                     slog.debug("agent", "turn_recording_tool_call_start_event", .{});
                     const tool_start_event = ObserverEvent{ .tool_call_start = .{ .tool = call.name } };
                     self.observer.recordEvent(&tool_start_event);
-                    slog.debug("agent", "turn_tool_call_start_event_recorded", .{});
 
                     const tool_timer = util.timestampUnix();
 
-                    slog.debug("agent", "turn_checking_duplicate_memory_store", .{});
                     const result = if (should_skip_tools_memory_store_duplicate(arena, batch_updates_tools_md, call)) blk: {
-                        slog.debug("agent", "turn_skipping_duplicate_memory_store", .{});
                         break :blk ToolExecutionResult{
                             .name = call.name,
                             .output = "Skipped duplicate memory_store: TOOLS.md was updated in the same tool batch",
@@ -1284,10 +1343,8 @@ pub const Agent = struct {
                             .tool_call_id = call.tool_call_id,
                         };
                     } else blk: {
-                        slog.debug("agent", "turn_calling_execute_tool", .{ .tool = call.name });
                         break :blk self.executeTool(arena, call);
                     };
-                    slog.debug("agent", "turn_execute_tool_returned", .{ .tool = call.name });
                     const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
 
                     if (self.log_tool_calls) {
@@ -1328,10 +1385,7 @@ pub const Agent = struct {
             );
             slog.debug("agent", "turn_reflection_prompt_created", .{});
 
-            try self.history.append(self.allocator, .{
-                .role = .user,
-                .content = try self.allocator.dupe(u8, with_reflection),
-            });
+            try self.appendToHistory(.user, try self.allocator.dupe(u8, with_reflection));
             slog.debug("agent", "turn_history_appended_trimming", .{});
 
             self.trimHistory();
@@ -1351,12 +1405,9 @@ pub const Agent = struct {
         log.warn("Tool iterations exhausted ({d}/{d}), requesting summary", .{ self.max_tool_iterations, self.max_tool_iterations });
 
         // Append a pseudo-user message forcing a text-only summary
-        try self.history.append(self.allocator, .{
-            .role = .user,
-            .content = try self.allocator.dupe(u8, "SYSTEM: You have reached the maximum number of tool iterations. " ++
+        try self.appendToHistory(.user, try self.allocator.dupe(u8, "SYSTEM: You have reached the maximum number of tool iterations. " ++
                 "You MUST NOT call any more tools. Summarize what you have accomplished " ++
-                "so far and what remains to be done. Respond in the same language the user used."),
-        });
+                "so far and what remains to be done. Respond in the same language the user used."));
 
         // Build messages for the summary call
         slog.debug("agent", "turn_building_summary_messages", .{});
@@ -1399,10 +1450,7 @@ pub const Agent = struct {
         errdefer self.allocator.free(prefixed);
 
         // Store in history (dupe the raw summary, not the prefixed version)
-        try self.history.append(self.allocator, .{
-            .role = .assistant,
-            .content = try self.allocator.dupe(u8, summary_text),
-        });
+        try self.appendToHistory(.assistant, try self.allocator.dupe(u8, summary_text));
 
         // Compact/trim history so the next turn doesn't start with bloated context
         self.last_turn_compacted = self.autoCompactHistory() catch false;
@@ -1889,22 +1937,26 @@ pub const Agent = struct {
             return error.ProviderDoesNotSupportVision;
         }
 
-        // Allow local multimodal reads from:
-        // - workspace (e.g. screenshot tool output),
-        // - autonomy.allowed_paths,
-        // - platform temp dir (e.g. Telegram downloaded files).
-        var allowed_dirs_list: std.ArrayListUnmanaged([]const u8) = .empty;
-        try appendMultimodalAllowedDir(arena, &allowed_dirs_list, self.workspace_dir);
-        for (self.allowed_paths) |dir| {
-            try appendMultimodalAllowedDir(arena, &allowed_dirs_list, dir);
+        // FIX 20: Cache allowed-dirs list across iterations (allocated with agent allocator).
+        // workspace_dir, allowed_paths, and temp dir don't change within a session.
+        if (!self.cached_allowed_dirs_built) {
+            var allowed_dirs_list: std.ArrayListUnmanaged([]const u8) = .empty;
+            try appendMultimodalAllowedDir(self.allocator, &allowed_dirs_list, self.workspace_dir);
+            for (self.allowed_paths) |dir| {
+                try appendMultimodalAllowedDir(self.allocator, &allowed_dirs_list, dir);
+            }
+            // Use a temporary arena for temp dir allocation
+            var tmp_arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer tmp_arena.deinit();
+            if (platform.getTempDir(tmp_arena.allocator()) catch null) |tmp_dir| {
+                try appendMultimodalAllowedDir(self.allocator, &allowed_dirs_list, tmp_dir);
+            }
+            self.cached_allowed_dirs = try allowed_dirs_list.toOwnedSlice(self.allocator);
+            self.cached_allowed_dirs_built = true;
         }
-        if (platform.getTempDir(arena) catch null) |tmp_dir| {
-            try appendMultimodalAllowedDir(arena, &allowed_dirs_list, tmp_dir);
-        }
-        const allowed = try allowed_dirs_list.toOwnedSlice(arena);
 
         return multimodal.prepareMessagesForProvider(arena, m, .{
-            .allowed_dirs = allowed,
+            .allowed_dirs = self.cached_allowed_dirs,
         }, self.io);
     }
 
@@ -1982,7 +2034,12 @@ pub const Agent = struct {
 
     /// Trim history to prevent unbounded growth.
     fn trimHistory(self: *Agent) void {
+        const before = self.history.items.len;
         compaction.trimHistory(self.allocator, &self.history, self.max_history_messages);
+        // FIX 21: Recalculate if messages were trimmed
+        if (self.history.items.len != before) {
+            self.total_history_chars = self.recalculateHistoryChars();
+        }
     }
 
     /// Run a single message through the agent and return the response.
@@ -1999,6 +2056,10 @@ pub const Agent = struct {
         self.has_system_prompt = false;
         self.system_prompt_has_conversation_context = false;
         self.workspace_prompt_fingerprint = null;
+        self.total_history_chars = 0;
+        self.cached_sys_prompt_hash = 0;
+        self.capabilities_dirty = true;
+        self.cached_allowed_dirs_built = false;
     }
 
     /// Get total tokens used.
@@ -2022,10 +2083,8 @@ pub const Agent = struct {
                 .system
             else
                 .user;
-            try self.history.append(self.allocator, .{
-                .role = role,
-                .content = try self.allocator.dupe(u8, entry.content),
-            });
+            const content = try self.allocator.dupe(u8, entry.content);
+            try self.appendToHistory(role, content);
         }
     }
 

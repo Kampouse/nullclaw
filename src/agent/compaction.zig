@@ -65,6 +65,12 @@ pub fn tokenEstimate(history: []const OwnedMessage) u64 {
     for (history) |*msg| {
         total_chars += msg.content.len;
     }
+    return tokenEstimateFromTotal(total_chars);
+}
+
+/// Estimate tokens from a pre-computed character count using the same heuristic as tokenEstimate.
+/// Useful when maintaining a running character counter across multiple calls.
+pub fn tokenEstimateFromTotal(total_chars: u64) u64 {
     return (total_chars + 3) / 4;
 }
 

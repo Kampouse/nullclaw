@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.memory_loader);
 const memory_mod = @import("../memory/root.zig");
 const multimodal = @import("../multimodal.zig");
 const Memory = memory_mod.Memory;
@@ -27,11 +28,15 @@ fn truncateUtf8(s: []const u8, max_len: usize) []const u8 {
     return s[0..end];
 }
 
-fn containsKey(entries: []const MemoryEntry, key: []const u8) bool {
+/// Build a StringHashMap from entry keys for O(1) dedup lookups.
+/// Caller owns the returned map; call deinit() when done.
+fn buildKeySet(allocator: std.mem.Allocator, entries: []const MemoryEntry) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
     for (entries) |entry| {
-        if (std.mem.eql(u8, entry.key, key)) return true;
+        try set.put(entry.key, {});
     }
-    return false;
+    return set;
 }
 
 fn isInternalMemoryKey(key: []const u8) bool {
@@ -108,9 +113,16 @@ pub fn loadContext(
 
     if (appended < DEFAULT_RECALL_LIMIT and buf.items.len < MAX_CONTEXT_BYTES and session_id != null) {
         if (global_entries) |entries| {
+            // Build a HashSet from scoped keys for O(1) dedup instead of O(n) linear scan
+            var scoped_keys = buildKeySet(allocator, scoped_entries) catch |err| {
+                log.warn("failed to build key set for dedup: {}", .{err});
+                return try buf.toOwnedSlice(allocator);
+            };
+            defer scoped_keys.deinit();
+
             for (entries) |entry| {
                 if (entry.session_id != null) continue; // keep scoped isolation (no cross-session bleed)
-                if (containsKey(scoped_entries, entry.key)) continue;
+                if (scoped_keys.contains(entry.key)) continue;
                 if (isInternalMemoryEntry(entry)) continue;
 
                 if (!wrote_header) {

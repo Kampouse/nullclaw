@@ -39,6 +39,11 @@ pub const Level = enum(u2) {
 /// making timestamp generation thread-safe without locks.
 threadlocal var timestamp_buffer: [32]u8 = undefined;
 
+/// Thread-local cache for formatted timestamp — avoids recomputing the
+/// year-by-year loop when the Unix second hasn't changed.
+threadlocal var cached_second: i64 = 0;
+threadlocal var cached_timestamp_len: usize = 0;
+
 /// Get current timestamp in ISO 8601 format (UTC).
 /// Format: 2025-03-12T10:30:45.000Z
 fn getTimestamp() []const u8 {
@@ -49,8 +54,16 @@ fn getTimestamp() []const u8 {
         // Fallback to placeholder if time() fails
         const placeholder = "1970-01-01T00:00:00.000Z";
         @memcpy(timestamp_buffer[0..placeholder.len], placeholder);
+        cached_second = -1;
+        cached_timestamp_len = placeholder.len;
         return timestamp_buffer[0..placeholder.len];
     }
+
+    // Cache at second granularity — skip year-by-year loop when unchanged
+    if (unix_timestamp == cached_second and cached_timestamp_len > 0) {
+        return timestamp_buffer[0..cached_timestamp_len];
+    }
+    cached_second = unix_timestamp;
 
     // Convert Unix timestamp to datetime
     // For simplicity, we'll use a basic calculation for UTC time
@@ -105,6 +118,7 @@ fn getTimestamp() []const u8 {
         @as(u32, @intCast(year)), month, day, hours, minutes, seconds, milliseconds,
     }) catch unreachable;
 
+    cached_timestamp_len = written.len;
     return written;
 }
 

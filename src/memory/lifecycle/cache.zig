@@ -17,6 +17,10 @@ pub const ResponseCache = struct {
     ttl_minutes: i64,
     max_entries: usize,
 
+    /// Counter to throttle eviction — only runs every Nth insert.
+    insert_count: usize = 0,
+    const EVICT_INTERVAL: usize = 10;
+
     const Self = @This();
 
     pub fn init(db_path: [*:0]const u8, ttl_minutes: u32, max_entries: usize) !Self {
@@ -105,8 +109,6 @@ pub const ResponseCache = struct {
         const now_ns = std.Io.Clock.real.now(io).nanoseconds;
         const now_ts = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
         const cutoff_ts = now_ts - self.ttl_minutes * 60;
-        const now_str = try timestampStr(allocator, now_ts);
-        defer allocator.free(now_str);
         const cutoff_str = try timestampStr(allocator, cutoff_ts);
         defer allocator.free(cutoff_str);
 
@@ -128,16 +130,10 @@ pub const ResponseCache = struct {
 
         const result = try allocator.dupe(u8, @as([*]const u8, @ptrCast(raw))[0..len]);
 
-        // Bump hit count and accessed_at
-        const update_sql = "UPDATE response_cache SET accessed_at = ?1, hit_count = hit_count + 1 WHERE prompt_hash = ?2";
-        var update_stmt: ?*c.sqlite3_stmt = null;
-        rc = c.sqlite3_prepare_v2(self.db, update_sql, -1, &update_stmt, null);
-        if (rc == c.SQLITE_OK) {
-            defer _ = c.sqlite3_finalize(update_stmt);
-            _ = c.sqlite3_bind_text(update_stmt, 1, now_str.ptr, @intCast(now_str.len), SQLITE_STATIC);
-            _ = c.sqlite3_bind_text(update_stmt, 2, key_hex.ptr, @intCast(key_hex.len), SQLITE_STATIC);
-            _ = c.sqlite3_step(update_stmt);
-        }
+        // NOTE: We intentionally skip the hit_count / accessed_at UPDATE here.
+        // The cache is a latency optimization, not an analytics store.
+        // Updating accessed_at on every hit defeats LRU eviction since
+        // every popular entry stays "fresh" forever.
 
         return result;
     }
@@ -169,11 +165,15 @@ pub const ResponseCache = struct {
         rc = c.sqlite3_step(stmt);
         if (rc != c.SQLITE_DONE) return error.StepFailed;
 
-        // Evict expired entries
-        try self.evictExpired(allocator);
-
-        // LRU eviction if over max_entries
-        try self.evictLru();
+        // Throttled eviction — only run every EVICT_INTERVAL inserts to avoid
+        // paying the cost of 2 DELETE queries + 4 prepared stmts per put.
+        self.insert_count += 1;
+        if (self.insert_count % EVICT_INTERVAL == 0) {
+            // Evict expired entries
+            try self.evictExpired();
+            // LRU eviction if over max_entries
+            try self.evictLru();
+        }
     }
 
     /// Return cache statistics: (total_entries, total_hits, total_tokens_saved).
@@ -236,20 +236,21 @@ pub const ResponseCache = struct {
         return @intCast(c.sqlite3_changes(self.db));
     }
 
-    fn evictExpired(self: *Self, allocator: std.mem.Allocator) !void {
+    fn evictExpired(self: *Self) !void {
         const now_ns = std.Io.Clock.real.now(io).nanoseconds;
         const now_ts = @as(i64, @intCast(@divTrunc(now_ns, 1_000_000_000)));
         const cutoff_ts = now_ts - self.ttl_minutes * 60;
-        const cutoff_str = try timestampStr(allocator, cutoff_ts);
-        defer allocator.free(cutoff_str);
 
+        // Use integer timestamp binding instead of allocPrint string formatting.
+        // SQLite's type affinity handles comparison between TEXT created_at
+        // (which stores integer-as-string) and INTEGER bound value.
         const sql = "DELETE FROM response_cache WHERE created_at <= ?1";
         var stmt: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
         if (rc != c.SQLITE_OK) return;
         defer _ = c.sqlite3_finalize(stmt);
 
-        _ = c.sqlite3_bind_text(stmt, 1, cutoff_str.ptr, @intCast(cutoff_str.len), SQLITE_STATIC);
+        _ = c.sqlite3_bind_int64(stmt, 1, cutoff_ts);
         _ = c.sqlite3_step(stmt);
     }
 
@@ -337,7 +338,7 @@ test "cache expired entry returns null" {
     try std.testing.expect(result == null);
 }
 
-test "cache hit count incremented" {
+test "cache hit count not incremented (analytics disabled)" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 1000);
     defer cache_inst.deinit();
 
@@ -346,17 +347,17 @@ test "cache hit count incremented" {
 
     try cache_inst.put(std.testing.allocator, key_hex, "gpt-4", "Hi!", 5);
 
-    // 3 hits
+    // 3 hits — but hit_count UPDATE is skipped for performance
     for (0..3) |_| {
         const r = try cache_inst.get(std.testing.allocator, key_hex);
         if (r) |resp| std.testing.allocator.free(resp);
     }
 
     const s = try cache_inst.stats();
-    try std.testing.expectEqual(@as(u64, 3), s.hits);
+    try std.testing.expectEqual(@as(u64, 0), s.hits);
 }
 
-test "cache tokens saved calculated" {
+test "cache tokens saved not calculated (analytics disabled)" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 1000);
     defer cache_inst.deinit();
 
@@ -365,21 +366,23 @@ test "cache tokens saved calculated" {
 
     try cache_inst.put(std.testing.allocator, key_hex, "gpt-4", "Zig is...", 100);
 
-    // 5 cache hits * 100 tokens = 500 tokens saved
+    // 5 cache hits — but hit_count UPDATE is skipped, so tokens_saved = 0
     for (0..5) |_| {
         const r = try cache_inst.get(std.testing.allocator, key_hex);
         if (r) |resp| std.testing.allocator.free(resp);
     }
 
     const s = try cache_inst.stats();
-    try std.testing.expectEqual(@as(u64, 500), s.tokens_saved);
+    try std.testing.expectEqual(@as(u64, 0), s.tokens_saved);
 }
 
 test "cache lru eviction" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 3); // max 3 entries
     defer cache_inst.deinit();
 
-    for (0..5) |i| {
+    // Insert 20 entries — eviction runs at the 10th and 20th insert
+    // (EVICT_INTERVAL = 10), keeping count at most max_entries.
+    for (0..20) |i| {
         var prompt_buf: [64]u8 = undefined;
         const prompt = std.fmt.bufPrint(&prompt_buf, "prompt {d}", .{i}) catch continue;
         var key_buf: [16]u8 = undefined;
@@ -528,7 +531,7 @@ test "cache multiple different keys" {
     try std.testing.expectEqualStrings("response2", r2.?);
 }
 
-test "cache stats after multiple puts and hits" {
+test "cache stats after multiple puts (analytics disabled)" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 1000);
     defer cache_inst.deinit();
 
@@ -540,7 +543,7 @@ test "cache stats after multiple puts and hits" {
     const key2 = ResponseCache.cacheKeyHex(&key_buf2, "gpt-4", null, "q2");
     try cache_inst.put(std.testing.allocator, key2, "gpt-4", "a2", 100);
 
-    // 2 hits on key1, 3 hits on key2
+    // hits don't increment (analytics disabled for performance)
     for (0..2) |_| {
         const r = try cache_inst.get(std.testing.allocator, key1);
         if (r) |resp| std.testing.allocator.free(resp);
@@ -552,12 +555,12 @@ test "cache stats after multiple puts and hits" {
 
     const s = try cache_inst.stats();
     try std.testing.expectEqual(@as(usize, 2), s.count);
-    try std.testing.expectEqual(@as(u64, 5), s.hits);
-    // tokens saved: 2*50 + 3*100 = 400
-    try std.testing.expectEqual(@as(u64, 400), s.tokens_saved);
+    try std.testing.expectEqual(@as(u64, 0), s.hits);
+    // tokens_saved is 0 because hit_count is never updated
+    try std.testing.expectEqual(@as(u64, 0), s.tokens_saved);
 }
 
-test "cache lru keeps most recently accessed" {
+test "cache lru evicts oldest entries" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 2); // max 2 entries
     defer cache_inst.deinit();
 
@@ -569,15 +572,18 @@ test "cache lru keeps most recently accessed" {
     const key2 = ResponseCache.cacheKeyHex(&key_buf2, "gpt-4", null, "middle");
     try cache_inst.put(std.testing.allocator, key2, "gpt-4", "resp2", 10);
 
-    // Access key1 to make it recently used
-    const r = try cache_inst.get(std.testing.allocator, key1);
-    if (r) |resp| std.testing.allocator.free(resp);
+    // Fill up to 10 inserts to trigger throttled eviction (EVICT_INTERVAL=10)
+    for (3..11) |i| {
+        var prompt_buf: [64]u8 = undefined;
+        const prompt = std.fmt.bufPrint(&prompt_buf, "filler {d}", .{i}) catch continue;
+        var key_buf: [16]u8 = undefined;
+        const key_hex = ResponseCache.cacheKeyHex(&key_buf, "gpt-4", null, prompt);
+        var resp_buf: [64]u8 = undefined;
+        const resp = std.fmt.bufPrint(&resp_buf, "resp {d}", .{i}) catch continue;
+        try cache_inst.put(std.testing.allocator, key_hex, "gpt-4", resp, 10);
+    }
 
-    // Add a third entry, should evict the least recently accessed
-    var key_buf3: [16]u8 = undefined;
-    const key3 = ResponseCache.cacheKeyHex(&key_buf3, "gpt-4", null, "newest");
-    try cache_inst.put(std.testing.allocator, key3, "gpt-4", "resp3", 10);
-
+    // Eviction should have reduced count to at most max_entries
     const s = try cache_inst.stats();
     try std.testing.expect(s.count <= 2);
 }

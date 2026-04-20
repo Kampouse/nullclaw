@@ -71,6 +71,10 @@ pub const OpenAiCompatibleProvider = struct {
     native_tools: bool = true,
     allocator: std.mem.Allocator,
     http_client: std.http.Client,
+    /// Cached chat completions URI (computed once, invalidated if base_url changes).
+    cached_chat_uri: ?std.Uri = null,
+    /// Cached auth header value (computed once in init for bearer style).
+    cached_auth_header: ?[]u8 = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -87,6 +91,8 @@ pub const OpenAiCompatibleProvider = struct {
             .auth_style = auth_style,
             .allocator = allocator,
             .http_client = .{ .allocator = allocator, .io = io },
+            .cached_chat_uri = null,
+            .cached_auth_header = null,
         };
     }
 
@@ -105,6 +111,15 @@ pub const OpenAiCompatibleProvider = struct {
             return try allocator.dupe(u8, trimmed);
         }
         return std.fmt.allocPrint(allocator, "{s}/chat/completions", .{trimmed});
+    }
+
+    /// Get a cached parsed URI for chat completions. Computes and caches on first call.
+    pub fn cachedChatCompletionsUri(self: *OpenAiCompatibleProvider, allocator: std.mem.Allocator) !std.Uri {
+        if (self.cached_chat_uri) |uri| return uri;
+        const url = try self.chatCompletionsUrl(allocator);
+        defer allocator.free(url);
+        self.cached_chat_uri = std.Uri.parse(url) catch return error.InvalidUrl;
+        return self.cached_chat_uri.?;
     }
 
     /// Build the full URL for the responses API.
@@ -160,7 +175,7 @@ pub const OpenAiCompatibleProvider = struct {
         system_prompt: ?[]const u8,
         message: []const u8,
         model: []const u8,
-    ) ![]const u8 {
+    ) ![]u8 {
         if (system_prompt) |sys| {
             return std.fmt.allocPrint(allocator,
                 \\{{"model":"{s}","input":[{{"role":"user","content":"{s}"}}],"instructions":"{s}","stream":false}}
@@ -270,7 +285,7 @@ pub const OpenAiCompatibleProvider = struct {
         message: []const u8,
         model: []const u8,
         temperature: f64,
-    ) ![]const u8 {
+    ) ![]u8 {
         var buf: std.ArrayListUnmanaged(u8) = .empty;
         errdefer buf.deinit(allocator);
 
@@ -298,13 +313,37 @@ pub const OpenAiCompatibleProvider = struct {
     }
 
     /// Build the authorization header value.
-    pub fn authHeaderValue(self: OpenAiCompatibleProvider, allocator: std.mem.Allocator) !?AuthHeaderResult {
+    pub fn authHeaderValue(self: *OpenAiCompatibleProvider, allocator: std.mem.Allocator) !?AuthHeaderResult {
+        // Return cached auth header if available
+        if (self.cached_auth_header) |cached| {
+            return switch (self.auth_style) {
+                .bearer => .{
+                    .name = "authorization",
+                    .value = cached,
+                    .needs_free = false,
+                },
+                .x_api_key => .{
+                    .name = "x-api-key",
+                    .value = self.api_key orelse return null,
+                    .needs_free = false,
+                },
+                .custom => .{
+                    .name = self.custom_header orelse "authorization",
+                    .value = self.api_key orelse return null,
+                    .needs_free = false,
+                },
+            };
+        }
         const key = self.api_key orelse return null;
         return switch (self.auth_style) {
-            .bearer => .{
-                .name = "authorization",
-                .value = try std.fmt.allocPrint(allocator, "Bearer {s}", .{key}),
-                .needs_free = true,
+            .bearer => blk: {
+                const formatted = try std.fmt.allocPrint(allocator, "Bearer {s}", .{key});
+                self.cached_auth_header = formatted;
+                break :blk .{
+                    .name = "authorization",
+                    .value = formatted,
+                    .needs_free = false,
+                };
             },
             .x_api_key => .{
                 .name = "x-api-key",
@@ -538,15 +577,13 @@ pub const OpenAiCompatibleProvider = struct {
         const extra_headers = header_buf[0..n_headers];
 
         slog.logStructured("DEBUG", "compatible", "http_stream_post_start", .{});
-        const uri = try std.Uri.parse(url);
+        const uri = try self.cachedChatCompletionsUri(allocator);
         var req = try self.http_client.request(.POST, uri, .{
             .extra_headers = extra_headers,
         });
         defer req.deinit();
 
-        const body_dup = try allocator.dupe(u8, body);
-        defer allocator.free(body_dup);
-        try req.sendBodyComplete(body_dup);
+        try req.sendBodyComplete(body);
 
         var redirect_buf: [4096]u8 = undefined;
         const response = try req.receiveHead(&redirect_buf);
@@ -602,27 +639,43 @@ pub const OpenAiCompatibleProvider = struct {
         callback: root.StreamCallback,
         callback_ctx: *anyopaque,
     ) !void {
-        for (data) |byte| {
-            if (byte == '\n') {
-                // Process complete line
-                const line = line_buf[0..line_pos.*];
-                const result = sse.parseSseLine(allocator, line) catch continue;
-                switch (result) {
-                    .delta => |delta| {
-                        callback(callback_ctx, root.StreamChunk.textDelta(delta));
-                        try accumulated.appendSlice(allocator, delta);
-                        allocator.free(delta);
-                    },
-                    .done => return,
-                    .skip => {},
-                }
-                line_pos.* = 0;
-            } else if (byte != '\r') {
-                if (line_pos.* < line_buf.len) {
-                    line_buf[line_pos.*] = byte;
-                    line_pos.* += 1;
-                }
+        var remaining = data;
+        while (std.mem.indexOfScalar(u8, remaining, '\n')) |nl_pos| {
+            // Copy the segment before '\n' into line_buf, stripping trailing '\r'
+            var seg = remaining[0..nl_pos];
+            if (seg.len > 0 and seg[seg.len - 1] == '\r') {
+                seg = seg[0 .. seg.len - 1];
             }
+            const available = line_buf.len - line_pos.*;
+            const copy_len = @min(seg.len, available);
+            @memcpy(line_buf[line_pos.* .. line_pos.* + copy_len], seg[0..copy_len]);
+            line_pos.* += copy_len;
+
+            // Process complete line
+            const line = line_buf[0..line_pos.*];
+            const result = sse.parseSseLine(allocator, line) catch {
+                line_pos.* = 0;
+                remaining = remaining[nl_pos + 1 ..];
+                continue;
+            };
+            switch (result) {
+                .delta => |delta| {
+                    callback(callback_ctx, root.StreamChunk.textDelta(delta));
+                    try accumulated.appendSlice(allocator, delta);
+                    allocator.free(delta);
+                },
+                .done => return,
+                .skip => {},
+            }
+            line_pos.* = 0;
+            remaining = remaining[nl_pos + 1 ..];
+        }
+        // Append any leftover bytes (no trailing '\n' in this chunk) to line_buf
+        if (remaining.len > 0) {
+            const available = line_buf.len - line_pos.*;
+            const copy_len = @min(remaining.len, available);
+            @memcpy(line_buf[line_pos.* .. line_pos.* + copy_len], remaining[0..copy_len]);
+            line_pos.* += copy_len;
         }
     }
 
@@ -755,7 +808,7 @@ pub const OpenAiCompatibleProvider = struct {
     }
 
     /// Persistent HTTP POST using the provider's HTTP client (connection reuse).
-    pub fn httpPost(self: *OpenAiCompatibleProvider, allocator: std.mem.Allocator, url: []const u8, body: []const u8, headers: []const []const u8, timeout_secs: u64) ![]u8 {
+    pub fn httpPost(self: *OpenAiCompatibleProvider, allocator: std.mem.Allocator, url: []const u8, body: []u8, headers: []const []const u8, timeout_secs: u64) ![]u8 {
         const start_ns: ?i128 = if (timeout_secs > 0) util.nanoTimestamp() else null;
         const timeout_ns = @as(i128, timeout_secs) * @as(i128, std.time.ns_per_s);
 
@@ -781,9 +834,7 @@ pub const OpenAiCompatibleProvider = struct {
         });
         defer req.deinit();
 
-        const body_dup = try allocator.dupe(u8, body);
-        defer allocator.free(body_dup);
-        try req.sendBodyComplete(body_dup);
+        try req.sendBodyComplete(body);
 
         if (start_ns) |s| {
             if (util.nanoTimestamp() - s > timeout_ns) return error.ConnectionTimedOut;
@@ -917,7 +968,7 @@ fn buildChatRequestBody(
     model: []const u8,
     temperature: f64,
     merge_system: bool,
-) ![]const u8 {
+) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
 
@@ -949,7 +1000,7 @@ fn buildStreamingChatRequestBody(
     model: []const u8,
     temperature: f64,
     merge_system: bool,
-) ![]const u8 {
+) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
 
