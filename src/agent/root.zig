@@ -1229,9 +1229,10 @@ pub const Agent = struct {
 
             slog.debug("agent", "turn_entering_tool_execution_loop", .{ .parsed_calls_count = parsed_calls.len });
 
-            // Choose execution strategy based on number of tools and configuration
-            const use_parallel = parsed_calls.len > 1 and
-                (self.max_parallel_tools == 0 or self.max_parallel_tools > 1);
+            // Parallel tool execution is safe: RateTracker uses an internal spinlock,
+            // tools iteration is over a const slice, std.Io is passed by value,
+            // and the observer already has its own mutex.
+            const use_parallel = parsed_calls.len > 1;
 
             if (use_parallel) {
                 // Parallel execution for multiple tools
@@ -1633,7 +1634,6 @@ pub const Agent = struct {
                 };
             } else blk: {
                 // Execute the tool
-                // Note: We need to clone agent data for thread safety
                 break :blk context.agent.executeTool(arena, call);
             };
 

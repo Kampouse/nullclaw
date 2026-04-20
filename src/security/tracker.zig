@@ -6,6 +6,9 @@ const io = std.Options.debug_io;
 ///
 /// Tracks actions in a sliding window (default 1 hour) and provides
 /// rate limiting functionality.
+///
+/// Thread-safe: all public methods acquire an internal spinlock, so this
+/// tracker can be shared across threads (e.g. parallel tool execution).
 pub const RateTracker = struct {
     /// Timestamps of recent actions in nanoseconds (monotonic)
     timestamps: std.ArrayList(i128) = .empty,
@@ -14,6 +17,9 @@ pub const RateTracker = struct {
     /// Maximum allowed actions per window
     max_actions: u32,
     allocator: std.mem.Allocator,
+    /// Spinlock protecting concurrent access to timestamps.
+    /// Needed because executeTool() calls recordAction() from parallel threads.
+    mu: @import("../spinlock.zig").Spinlock = .{},
 
     /// Default window: 1 hour
     const DEFAULT_WINDOW_NS: i128 = 3600 * std.time.ns_per_s;
@@ -31,43 +37,56 @@ pub const RateTracker = struct {
     }
 
     pub fn deinit(self: *RateTracker) void {
+        self.mu.lock();
+        defer self.mu.unlock();
         self.timestamps.deinit(self.allocator);
     }
 
     /// Record an action. Returns true if the action is allowed (within limit),
     /// false if rate-limited.
     pub fn recordAction(self: *RateTracker) !bool {
+        self.mu.lock();
+        defer self.mu.unlock();
         const now = std.Io.Clock.real.now(io).nanoseconds;
-        self.prune();
+        self.pruneLocked();
         try self.timestamps.append(self.allocator, now);
         return self.timestamps.items.len <= self.max_actions;
     }
 
     /// Check if the rate limit would be exceeded without recording.
     pub fn isLimited(self: *RateTracker) bool {
-        self.prune();
+        self.mu.lock();
+        defer self.mu.unlock();
+        self.pruneLocked();
         return self.timestamps.items.len >= self.max_actions;
     }
 
     /// Current count of actions in the window.
     pub fn count(self: *RateTracker) usize {
-        self.prune();
+        self.mu.lock();
+        defer self.mu.unlock();
+        self.pruneLocked();
         return self.timestamps.items.len;
     }
 
     /// Remaining allowed actions before hitting the limit.
     pub fn remaining(self: *RateTracker) u32 {
-        self.prune();
+        self.mu.lock();
+        defer self.mu.unlock();
+        self.pruneLocked();
         const used: u32 = @intCast(@min(self.timestamps.items.len, self.max_actions));
         return self.max_actions - used;
     }
 
     /// Reset the tracker (clear all recorded actions).
     pub fn reset(self: *RateTracker) void {
+        self.mu.lock();
+        defer self.mu.unlock();
         self.timestamps.clearRetainingCapacity();
     }
 
-    fn prune(self: *RateTracker) void {
+    /// Internal prune — caller must hold mu.
+    fn pruneLocked(self: *RateTracker) void {
         const now = std.Io.Clock.real.now(io).nanoseconds;
         const cutoff = now - self.window_ns;
         var write_idx: usize = 0;
