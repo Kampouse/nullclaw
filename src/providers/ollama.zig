@@ -40,7 +40,7 @@ fn extractToolNameAndArgs(
     allocator: std.mem.Allocator,
     name: []const u8,
     arguments: std.json.Value,
-) struct { name: []const u8, args: std.json.Value } {
+) !struct { name: []const u8, args: std.json.Value } {
     // Pattern 1: Nested tool_call wrapper
     if (std.mem.eql(u8, name, "tool_call") or
         std.mem.eql(u8, name, "tool.call") or
@@ -50,7 +50,7 @@ fn extractToolNameAndArgs(
         if (arguments == .object) {
             if (arguments.object.get("name")) |nested_name_val| {
                 if (nested_name_val == .string) {
-                    const nested_args = if (arguments.object.get("arguments")) |a| a else std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+                    const nested_args = if (arguments.object.get("arguments")) |a| a else std.json.Value{ .object = try std.json.ObjectMap.init(allocator, &[_][]const u8{}, &[_]std.json.Value{}) };
                     return .{ .name = nested_name_val.string, .args = nested_args };
                 }
             }
@@ -88,7 +88,7 @@ fn formatToolCallsForLoop(
     for (tool_calls, 0..) |tc, i| {
         if (i > 0) try result.append(allocator, ',');
 
-        const extracted = extractToolNameAndArgs(allocator, tc.function.name, tc.function.arguments);
+        const extracted = try extractToolNameAndArgs(allocator, tc.function.name, tc.function.arguments);
 
         // Serialize arguments to string
         const args_str = if (extracted.args == .null)
@@ -341,7 +341,7 @@ pub const OllamaProvider = struct {
         }
 
         // Extract parameters
-        var args_obj = std.json.ObjectMap.init(allocator);
+        var args_obj = try std.json.ObjectMap.init(allocator, &[_][]const u8{}, &[_]std.json.Value{});
         var param_idx = std.mem.indexOf(u8, content, "<parameter");
         while (param_idx != null) : (param_idx = std.mem.indexOfPos(u8, content, param_idx.?, "<parameter")) {
             const param_start = param_idx.? + "<parameter".len;
@@ -368,7 +368,7 @@ pub const OllamaProvider = struct {
             // Store in args object
             const key_copy = try allocator.dupe(u8, param_name);
             const val_copy = try allocator.dupe(u8, param_value);
-            try args_obj.put(key_copy, std.json.Value{ .string = val_copy });
+            try args_obj.put(allocator, key_copy, std.json.Value{ .string = val_copy });
 
             param_idx = close_tag + "</parameter>".len;
         }

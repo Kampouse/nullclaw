@@ -115,11 +115,11 @@ fn parseValueInput(allocator: std.mem.Allocator, raw_input: []const u8) !std.jso
     return parsed.value;
 }
 
-fn ensureObject(value: *std.json.Value, allocator: std.mem.Allocator) *std.json.ObjectMap {
+fn ensureObject(value: *std.json.Value, allocator: std.mem.Allocator) !*std.json.ObjectMap {
     switch (value.*) {
         .object => |*obj| return obj,
         else => {
-            value.* = .{ .object = std.json.ObjectMap.init(allocator) };
+            value.* = .{ .object = try std.json.ObjectMap.init(allocator, &[_][]const u8{}, &[_]std.json.Value{}) };
             return &value.object;
         },
     }
@@ -149,26 +149,26 @@ fn setAtPath(
     if (tokens.len == 0) return;
 
     for (tokens[0 .. tokens.len - 1]) |token| {
-        const obj = ensureObject(current, allocator);
+        const obj = try ensureObject(current, allocator);
         if (obj.getPtr(token)) |next| {
             current = next;
             continue;
         }
 
         const key_copy = try allocator.dupe(u8, token);
-        try obj.put(key_copy, .{ .object = std.json.ObjectMap.init(allocator) });
+        try obj.put(allocator, key_copy, .{ .object = try std.json.ObjectMap.init(allocator, &[_][]const u8{}, &[_]std.json.Value{}) });
         current = obj.getPtr(token).?;
     }
 
     const last = tokens[tokens.len - 1];
-    const obj = ensureObject(current, allocator);
+    const obj = try ensureObject(current, allocator);
     if (obj.getPtr(last)) |slot| {
         slot.* = value;
         return;
     }
 
     const key_copy = try allocator.dupe(u8, last);
-    try obj.put(key_copy, value);
+    try obj.put(allocator, key_copy, value);
 }
 
 fn unsetAtPath(root: *std.json.Value, tokens: []const []const u8) bool {
@@ -271,7 +271,7 @@ pub fn getPathValueJson(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 
     var root = parsed.value;
     if (root != .object) {
-        root = .{ .object = std.json.ObjectMap.init(a) };
+        root = .{ .object = try std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
     }
 
     const tokens = try splitPathTokens(a, path);
@@ -314,7 +314,7 @@ pub fn mutateDefaultConfig(
     const parsed = std.json.parseFromSlice(std.json.Value, a, current.content, .{}) catch return error.InvalidJson;
     var root = parsed.value;
     if (root != .object) {
-        root = .{ .object = std.json.ObjectMap.init(a) };
+        root = .{ .object = try std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
     }
 
     const tokens = try splitPathTokens(a, trimmed_path);
@@ -411,7 +411,7 @@ test "setAtPath creates nested objects and stores value" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var root = std.json.Value{ .object = std.json.ObjectMap.init(a) };
+    var root = std.json.Value{ .object = std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
     const tokens = [_][]const u8{ "memory", "backend" };
     const value = std.json.Value{ .string = try a.dupe(u8, "sqlite") };
 
@@ -427,7 +427,7 @@ test "unsetAtPath removes existing key" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var root = std.json.Value{ .object = std.json.ObjectMap.init(a) };
+    var root = std.json.Value{ .object = std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
     const tokens = [_][]const u8{ "gateway", "port" };
     try setAtPath(&root, a, &tokens, .{ .integer = 3000 });
 

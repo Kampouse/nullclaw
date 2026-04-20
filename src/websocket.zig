@@ -96,7 +96,7 @@ pub const WsClient = struct {
         tls_state.stream_reader = stream_reader.interface;
         tls_state.stream_writer = stream_writer.interface;
 
-        var ca_bundle: std.crypto.Certificate.Bundle = .{};
+        var ca_bundle: std.crypto.Certificate.Bundle = .empty;
         defer ca_bundle.deinit(allocator);
         const ca_now = std.Io.Clock.real.now(std.Options.debug_io);
         ca_bundle.rescan(allocator, std.Options.debug_io, ca_now) catch |err| {
@@ -109,19 +109,22 @@ pub const WsClient = struct {
         var entropy_buf: [240]u8 = undefined;
         util.randomBytes(&entropy_buf);
 
-        // Get current time for TLS (seconds since epoch)
-        var ts: std.posix.timespec = undefined;
-        _ = std.posix.system.clock_gettime(.REALTIME, &ts);
-        const realtime_now_seconds: i64 = @intCast(ts.sec);
+        const realtime_now = std.Io.Timestamp.now(std.Options.debug_io, .real);
+        var bundle_lock: std.Io.RwLock = .init;
 
         const tls_options: std.crypto.tls.Client.Options = .{
             .host = .{ .explicit = host },
-            .ca = .{ .bundle = ca_bundle },
+            .ca = .{ .bundle = .{
+                .gpa = allocator,
+                .io = std.Options.debug_io,
+                .lock = &bundle_lock,
+                .bundle = &ca_bundle,
+            } },
             .read_buffer = tls_read_buf,
             .write_buffer = tls_write_buf,
             .allow_truncation_attacks = true,
             .entropy = &entropy_buf,
-            .realtime_now_seconds = realtime_now_seconds,
+            .realtime_now = realtime_now,
         };
 
         tls_state.tls_client = std.crypto.tls.Client.init(

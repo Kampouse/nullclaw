@@ -27,28 +27,31 @@ const DEFAULT_RELAY = "wss://relay.ditto.pub";
 
 /// Well-known public relays for read/post (no NIP-50 required).
 /// Selected for reliability, speed, and open write access (no auth/payment).
+/// Ordered by handshake latency (fastest first). Refreshed via NIP-65 relay list
+/// discovery from fiatjaf, jb55, and live latency testing.
 const WELL_KNOWN_RELAYS = [_][]const u8{
+    "wss://relay.spacetomatoes.net",
+    "wss://nostr-relay.moe.gift",
+    "wss://relay.cloistr.xyz",
+    "wss://dm.czas.xyz",
+    "wss://cdn.czas.xyz",
+    "wss://relay.damus.io",
+    "wss://relay.44billion.net",
     "wss://relay.ditto.pub",
-    "wss://nos.lol",
-    "wss://relay.nostr.net",
+    "wss://relay.og.coop",
+    "wss://relay.gulugulu.moe",
+    "wss://henhouse.social/relay",
+    "wss://relay.primal.net",
     "wss://relay.crostr.com",
     "wss://private.nostr.bar",
-    "wss://relay.gulugulu.moe",
-    "wss://nostr-relay.moe.gift",
-    "wss://relay.spacetomatoes.net",
-    "wss://dev.relay.stream",
     "wss://relay.nostrverse.net",
-    "wss://cdn.czas.xyz",
-    "wss://dm.czas.xyz",
-    "wss://relay.og.coop",
-    "wss://nostr.wine",
-    "wss://relay.44billion.net",
-    "wss://relay.cloistr.xyz",
-    "wss://henhouse.social/relay",
+    "wss://relay.nostr.net",
+    "wss://nos.lol",
 };
 
 /// Relays confirmed to support NIP-50 full-text search.
 /// Tested live — all returned search results for "bitcoin" queries.
+/// Dead relays removed (orly-relay.imwald.eu, nostr.wine, us.nostr.wine).
 const SEARCH_RELAYS = [_][]const u8{
     "wss://relay.noswhere.com",
     "wss://nostrja-kari-nip50.heguro.com",
@@ -56,10 +59,7 @@ const SEARCH_RELAYS = [_][]const u8{
     "wss://cobrafuma.com/relay",
     "wss://relay.gulugulu.moe",
     "wss://relay.spacetomatoes.net",
-    "wss://orly-relay.imwald.eu",
     "wss://relay2.veganostr.com",
-    "wss://nostr.wine",
-    "wss://us.nostr.wine",
     "wss://nostr.me/relay",
     "wss://librepress.libretechsystems.xyz",
     "wss://aeon.libretechsystems.xyz",
