@@ -311,6 +311,17 @@ pub const Agent = struct {
     /// Whether context was force-compacted due to exhaustion during the current turn.
     context_was_compacted: bool = false,
 
+    /// Pending vector sync keys for deferred processing after LLM call.
+    /// Stores (key, content) pairs to sync after the response is ready.
+    pending_sync_keys: [4]?PendingSyncEntry = [_]?PendingSyncEntry{null} ** 4,
+    pending_sync_count: usize = 0,
+
+    /// Entry for deferred vector sync queue.
+    pub const PendingSyncEntry = struct {
+        key: []const u8,
+        content: []const u8,
+    };
+
     /// An owned copy of a ChatMessage, where content is heap-allocated.
     pub const OwnedMessage = struct {
         role: providers.Role,
@@ -678,6 +689,9 @@ pub const Agent = struct {
             break :blk user_message;
         };
 
+        // Flush any leftover deferred vector syncs from previous turn
+        self.flushPendingSyncs();
+
         // Inject system prompt on first turn (or when tracked workspace files changed).
         const workspace_fp: ?u64 = prompt.workspacePromptFingerprint(self.allocator, self.workspace_dir) catch null;
         if (self.has_system_prompt and workspace_fp != null and self.workspace_prompt_fingerprint != workspace_fp) {
@@ -749,9 +763,9 @@ pub const Agent = struct {
                 if (save_key) |key| {
                     defer self.allocator.free(key);
                     if (mem.store(key, effective_user_message, .conversation, self.memory_session_id)) |_| {
-                        // Vector sync after auto-save
-                        if (self.mem_rt) |rt| {
-                            rt.syncVectorAfterStore(self.allocator, key, effective_user_message);
+                        // Defer vector sync to after LLM response (avoids blocking the call)
+                        if (self.mem_rt) |_| {
+                            self.queueVectorSync(key, effective_user_message);
                         }
                     } else |_| {}
                 }
@@ -1111,14 +1125,17 @@ pub const Agent = struct {
                         if (save_key) |key| {
                             defer self.allocator.free(key);
                             if (mem.store(key, summary, .conversation, self.memory_session_id)) |_| {
-                                // Vector sync after auto-save
-                                if (self.mem_rt) |rt| {
-                                    rt.syncVectorAfterStore(self.allocator, key, summary);
+                                // Defer vector sync to after LLM response
+                                if (self.mem_rt) |_| {
+                                    self.queueVectorSync(key, summary);
                                 }
                             } else |_| {}
                         }
                     }
                 }
+
+                // Flush deferred vector syncs (runs after response is ready)
+                self.flushPendingSyncs();
 
                 // Drain durable outbox after turn completion (best-effort)
                 if (self.mem_rt) |rt| {
@@ -1626,6 +1643,32 @@ pub const Agent = struct {
             context.results[index] = result;
         }
     };
+
+    // ── Deferred vector sync (queue for post-response processing) ──
+
+    /// Queue a vector sync for processing after the LLM response.
+    /// The key and content pointers must remain valid until flushPendingSyncs is called.
+    fn queueVectorSync(self: *Agent, key: []const u8, content: []const u8) void {
+        if (self.pending_sync_count < self.pending_sync_keys.len) {
+            self.pending_sync_keys[self.pending_sync_count] = .{ .key = key, .content = content };
+            self.pending_sync_count += 1;
+        }
+    }
+
+    /// Process all queued vector syncs. Called after the LLM response is ready.
+    fn flushPendingSyncs(self: *Agent) void {
+        if (self.mem_rt) |rt| {
+            for (self.pending_sync_keys[0..self.pending_sync_count]) |item| {
+                if (item) |sync| {
+                    rt.syncVectorAfterStore(self.allocator, sync.key, sync.content);
+                }
+            }
+        }
+        self.pending_sync_count = 0;
+        for (&self.pending_sync_keys) |*slot| {
+            slot.* = null;
+        }
+    }
 
     /// Execute multiple tools in parallel using threads.
     /// Returns results in the same order as the input calls.

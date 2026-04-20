@@ -2909,9 +2909,16 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                                 "eval:hermes";
 
                             const start_seq = gateway_thread_observer.currentSeq();
-                            const reply: ?[]const u8 = sm.processMessage(session_key, msg_text, null) catch |err| blk: {
-                                response_body = userFacingAgentErrorJson(err);
-                                break :blk null;
+
+                            // Use streaming to avoid connection timeouts on slow models.
+                            // No-op sink absorbs chunks; full response delivered in HTTP body.
+                            const reply: ?[]const u8 = blk: {
+                                var noop_sink_ctx: usize = 0;
+                                const noop_sink = session_mod.makeNoopStreamSink(&noop_sink_ctx);
+                                break :blk sm.processMessageStreaming(session_key, msg_text, null, noop_sink) catch |err| blk2: {
+                                    response_body = userFacingAgentErrorJson(err);
+                                    break :blk2 null;
+                                };
                             };
                             if (reply) |r| {
                                 defer allocator.free(r);

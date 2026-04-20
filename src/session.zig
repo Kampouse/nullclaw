@@ -36,6 +36,22 @@ fn messageLogPreview(text: []const u8) struct { slice: []const u8, truncated: bo
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// No-op streaming sink
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Create a no-op streaming.Sink that absorbs chunks without forwarding.
+/// Enables provider-side streaming (avoids timeouts on slow models) while
+/// still delivering the full accumulated response as a single message.
+pub fn makeNoopStreamSink(ctx: *anyopaque) streaming.Sink {
+    return .{
+        .callback = noopSinkCallback,
+        .ctx = ctx,
+    };
+}
+
+fn noopSinkCallback(_: *anyopaque, _: streaming.Event) void {}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Session
 // ═══════════════════════════════════════════════════════════════════════════
 

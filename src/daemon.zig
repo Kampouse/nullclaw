@@ -741,6 +741,11 @@ const StreamingOutboundCtx = struct {
     chat_id: []const u8,
 };
 
+/// No-op sink callback — absorbs streaming chunks without forwarding.
+/// This enables provider-side streaming (avoids timeouts on slow models)
+/// while still delivering the full response as a single message.
+fn noopStreamSink(_: *anyopaque, _: streaming.Event) void {}
+
 fn publishStreamingChunk(ctx_ptr: *anyopaque, event: streaming.Event) void {
     if (event.stage != .chunk or event.text.len == 0) return;
     const ctx: *StreamingOutboundCtx = @ptrCast(@alignCast(ctx_ptr));
@@ -813,6 +818,9 @@ fn inboundDispatcherThread(
             .chat_id = msg.chat_id,
         };
 
+        // Always use provider-side streaming to avoid connection timeouts on slow models.
+        // For non-web channels, chunks are absorbed (no-op sink) and the full
+        // response is delivered as a single message after accumulation.
         const reply = runtime.session_mgr.processMessageStreaming(
             session_key,
             msg.content,
@@ -823,7 +831,10 @@ fn inboundDispatcherThread(
                     .ctx = @ptrCast(&streaming_ctx),
                 }
             else
-                null,
+                streaming.Sink{
+                    .callback = noopStreamSink,
+                    .ctx = undefined,
+                },
         ) catch |err| {
             log.warn("inbound dispatch process failed: {}", .{err});
 

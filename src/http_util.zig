@@ -18,6 +18,9 @@ const tls = @import("tls");
 threadlocal var threaded_io: ?std.Io.Threaded = null;
 threadlocal var cached_io: ?std.Io = null;
 threadlocal var ca_bundle_loaded = false;
+/// Thread-local HTTP client for connection reuse across calls within the same thread.
+/// Avoids recreating TCP+TLS connections for each HTTP request in utility functions.
+threadlocal var cached_http_client: ?std.http.Client = null;
 
 /// Get or create a Threaded Io instance for HTTP/network requests.
 ///
@@ -34,6 +37,15 @@ pub fn getThreadedIo() std.Io {
     });
     cached_io = threaded_io.?.io();
     return cached_io.?;
+}
+
+/// Get or create a thread-local HTTP client for connection reuse.
+/// The client uses page_allocator for internal allocations; callers use their own
+/// allocator for response data. The client persists for the thread's lifetime.
+pub fn getThreadLocalHttpClient() *std.http.Client {
+    if (cached_http_client) |*client| return client;
+    cached_http_client = .{ .allocator = std.heap.page_allocator, .io = getThreadedIo() };
+    return &cached_http_client.?;
 }
 
 pub const HttpResponse = struct {
@@ -58,9 +70,7 @@ pub fn curlPostWithProxy(
     _ = proxy;
     _ = max_time;
 
-    const io = getThreadedIo();
-    var client: std.http.Client = .{ .allocator = allocator, .io = io };
-    defer client.deinit();
+    const client = getThreadLocalHttpClient();
 
     // Build headers array - always include Content-Type: application/json
     var header_buf: [32]std.http.Header = undefined;
@@ -203,10 +213,8 @@ pub fn curlPostStream(
 ) !void {
     const zone = profiling.zoneNamed(@src(), "http_post_stream");
     defer zone.end();
-    
-    const io = getThreadedIo();
-    var client: std.http.Client = .{ .allocator = allocator, .io = io };
-    defer client.deinit();
+
+    const client = getThreadLocalHttpClient();
 
     // Build headers array - always include Content-Type: application/json
     var header_buf: [32]std.http.Header = undefined;
@@ -291,9 +299,7 @@ pub fn curlPostWithStatus(
     body: []const u8,
     headers: []const []const u8,
 ) !HttpResponse {
-    const io = getThreadedIo();
-    var client: std.http.Client = .{ .allocator = allocator, .io = io };
-    defer client.deinit();
+    const client = getThreadLocalHttpClient();
 
     const uri = try std.Uri.parse(url);
 
@@ -345,9 +351,7 @@ pub fn curlPostWithStatus(
 
 /// HTTP PUT (no proxy, no timeout).
 pub fn curlPut(allocator: Allocator, url: []const u8, body: []const u8, headers: []const []const u8) ![]u8 {
-    const io = getThreadedIo();
-    var client: std.http.Client = .{ .allocator = allocator, .io = io };
-    defer client.deinit();
+    const client = getThreadLocalHttpClient();
 
     const uri = try std.Uri.parse(url);
 
@@ -449,9 +453,7 @@ pub fn curlGetWithProxy(
     // Use stdlib for HTTP
     log.debug("curlGetWithProxy: Using stdlib for HTTP: {s}", .{url});
 
-    const io = getThreadedIo();
-    var client: std.http.Client = .{ .allocator = allocator, .io = io };
-    defer client.deinit();
+    const client = getThreadLocalHttpClient();
 
     log.debug("curlGetWithProxy: Parsed URI, scheme={s}, host={s}", .{uri.scheme, uri.host.?.percent_encoded});
 

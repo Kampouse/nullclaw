@@ -3,6 +3,7 @@ const root = @import("root.zig");
 const sse = @import("sse.zig");
 const error_classify = @import("error_classify.zig");
 const slog = @import("../structured_log.zig");
+const util = @import("../util.zig");
 
 const Provider = root.Provider;
 const ChatMessage = root.ChatMessage;
@@ -519,16 +520,110 @@ pub const OpenAiCompatibleProvider = struct {
             if (a.needs_free) allocator.free(a.value);
         };
 
-        var auth_hdr_buf: [512]u8 = undefined;
-        const auth_hdr: ?[]const u8 = if (auth) |a|
-            std.fmt.bufPrint(&auth_hdr_buf, "{s}: {s}", .{ a.name, a.value }) catch return error.CompatibleApiError
-        else
-            null;
+        // Build headers using self.http_client (same as httpPost — avoids broken SSE client)
+        var header_buf: [32]std.http.Header = undefined;
+        var n_headers: usize = 0;
+        header_buf[n_headers] = .{ .name = "content-type", .value = "application/json" };
+        n_headers += 1;
+        if (auth) |a| {
+            var auth_hdr_buf: [512]u8 = undefined;
+            const auth_str = std.fmt.bufPrint(&auth_hdr_buf, "{s}: {s}", .{ a.name, a.value }) catch return error.CompatibleApiError;
+            const colon_idx = std.mem.indexOfScalar(u8, auth_str, ':') orelse return error.InvalidHeader;
+            header_buf[n_headers] = .{
+                .name = auth_str[0..colon_idx],
+                .value = std.mem.trim(u8, auth_str[colon_idx + 1 ..], " \t\r\n"),
+            };
+            n_headers += 1;
+        }
+        const extra_headers = header_buf[0..n_headers];
 
-        slog.logStructured("DEBUG", "compatible", "curl_stream_start", .{});
-        const result = sse.curlStream(allocator, url, body, auth_hdr, &.{}, request.timeout_secs, callback, callback_ctx);
-        slog.logStructured("DEBUG", "compatible", "curl_stream_complete", .{});
-        return result;
+        slog.logStructured("DEBUG", "compatible", "http_stream_post_start", .{});
+        const uri = try std.Uri.parse(url);
+        var req = try self.http_client.request(.POST, uri, .{
+            .extra_headers = extra_headers,
+        });
+        defer req.deinit();
+
+        const body_dup = try allocator.dupe(u8, body);
+        defer allocator.free(body_dup);
+        try req.sendBodyComplete(body_dup);
+
+        var redirect_buf: [4096]u8 = undefined;
+        const response = try req.receiveHead(&redirect_buf);
+        slog.logStructured("DEBUG", "compatible", "http_stream_got_response", .{});
+
+        // Read streaming response body line by line
+        var transfer_buf: [16384]u8 = undefined;
+        const body_reader = req.reader.bodyReader(&transfer_buf, response.head.transfer_encoding, response.head.content_length);
+
+        var accumulated = std.ArrayListUnmanaged(u8).empty;
+        defer accumulated.deinit(allocator);
+
+        // Line buffer for SSE parsing
+        var line_buf: [4096]u8 = undefined;
+        var line_pos: usize = 0;
+
+        while (true) {
+            body_reader.fill(4096) catch |err| {
+                if (err == error.EndOfStream) {
+                    const buffered = body_reader.bufferedLen();
+                    if (buffered == 0) break;
+                    // Process remaining buffered data
+                    const data = try body_reader.take(buffered);
+                    try processStreamChunk(allocator, data, &line_buf, &line_pos, &accumulated, callback, callback_ctx);
+                    break;
+                }
+                return err;
+            };
+
+            const buffered = body_reader.bufferedLen();
+            if (buffered == 0) break;
+            const data = try body_reader.take(buffered);
+            if (data.len == 0) break;
+
+            try processStreamChunk(allocator, data, &line_buf, &line_pos, &accumulated, callback, callback_ctx);
+        }
+
+        slog.logStructured("DEBUG", "compatible", "http_stream_complete", .{});
+        return .{
+            .content = try accumulated.toOwnedSlice(allocator),
+            .usage = .{ .total_tokens = 0 },
+            .model = "",
+        };
+    }
+
+    /// Process a raw chunk of streaming data — split into lines, parse SSE events.
+    fn processStreamChunk(
+        allocator: std.mem.Allocator,
+        data: []const u8,
+        line_buf: *[4096]u8,
+        line_pos: *usize,
+        accumulated: *std.ArrayListUnmanaged(u8),
+        callback: root.StreamCallback,
+        callback_ctx: *anyopaque,
+    ) !void {
+        for (data) |byte| {
+            if (byte == '\n') {
+                // Process complete line
+                const line = line_buf[0..line_pos.*];
+                const result = sse.parseSseLine(allocator, line) catch continue;
+                switch (result) {
+                    .delta => |delta| {
+                        callback(callback_ctx, root.StreamChunk.textDelta(delta));
+                        try accumulated.appendSlice(allocator, delta);
+                        allocator.free(delta);
+                    },
+                    .done => return,
+                    .skip => {},
+                }
+                line_pos.* = 0;
+            } else if (byte != '\r') {
+                if (line_pos.* < line_buf.len) {
+                    line_buf[line_pos.*] = byte;
+                    line_pos.* += 1;
+                }
+            }
+        }
     }
 
     fn supportsStreamingImpl(_: *anyopaque) bool {
@@ -661,7 +756,8 @@ pub const OpenAiCompatibleProvider = struct {
 
     /// Persistent HTTP POST using the provider's HTTP client (connection reuse).
     pub fn httpPost(self: *OpenAiCompatibleProvider, allocator: std.mem.Allocator, url: []const u8, body: []const u8, headers: []const []const u8, timeout_secs: u64) ![]u8 {
-        _ = timeout_secs; // TODO: Add timeout support
+        const start_ns: ?i128 = if (timeout_secs > 0) util.nanoTimestamp() else null;
+        const timeout_ns = @as(i128, timeout_secs) * @as(i128, std.time.ns_per_s);
 
         const uri = try std.Uri.parse(url);
 
@@ -689,6 +785,10 @@ pub const OpenAiCompatibleProvider = struct {
         defer allocator.free(body_dup);
         try req.sendBodyComplete(body_dup);
 
+        if (start_ns) |s| {
+            if (util.nanoTimestamp() - s > timeout_ns) return error.ConnectionTimedOut;
+        }
+
         var redirect_buf: [4096]u8 = undefined;
         const response = try req.receiveHead(&redirect_buf);
 
@@ -700,6 +800,11 @@ pub const OpenAiCompatibleProvider = struct {
         errdefer response_body.deinit(allocator);
 
         while (true) {
+            // Check timeout before each read
+            if (start_ns) |s| {
+                if (util.nanoTimestamp() - s > timeout_ns) return error.ConnectionTimedOut;
+            }
+
             body_reader.fill(4096) catch |err| {
                 if (err == error.EndOfStream) {
                     const buffered = body_reader.bufferedLen();

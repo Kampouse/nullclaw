@@ -429,9 +429,14 @@ pub const RetrievalEngine = struct {
         defer if (vector_candidates) |vc| freeCandidates(allocator, vc);
 
         if (self.hybrid_cfg.enabled and run_vector) hybrid_blk: {
-            log.debug("shadow/hybrid path active: running vector search alongside keyword (sources={d})", .{self.sources.items.len});
             const provider = self.embedding_provider orelse break :hybrid_blk;
             const vs = self.vector_store orelse break :hybrid_blk;
+
+            // Skip embedding API call if vector store is empty — saves a remote round-trip
+            const vs_count = vs.count() catch break :hybrid_blk;
+            if (vs_count == 0) break :hybrid_blk;
+
+            log.debug("shadow/hybrid path active: running vector search alongside keyword (sources={d})", .{self.sources.items.len});
 
             // Check circuit breaker
             if (self.circuit_breaker) |cb| {
