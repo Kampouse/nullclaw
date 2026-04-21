@@ -5,8 +5,8 @@ const Atomic = @import("portable_atomic.zig").Atomic;
 /// Events the observer can record.
 pub const ObserverEvent = union(enum) {
     agent_start: struct { provider: []const u8, model: []const u8 },
-    llm_request: struct { provider: []const u8, model: []const u8, messages_count: usize },
-    llm_response: struct { provider: []const u8, model: []const u8, duration_ms: u64, success: bool, error_message: ?[]const u8 },
+    llm_request: struct { provider: []const u8, model: []const u8, messages_count: usize, messages_snapshot: []const u8 = "" },
+    llm_response: struct { provider: []const u8, model: []const u8, duration_ms: u64, success: bool, error_message: ?[]const u8, response_preview: []const u8 = "", tool_calls_json: []const u8 = "" },
     agent_end: struct { duration_ms: u64, tokens_used: ?u64 },
     tool_call_start: struct { tool: []const u8 },
     tool_call: struct { tool: []const u8, duration_ms: u64, success: bool, detail: ?[]const u8 = null },

@@ -19,6 +19,9 @@ pub const RING_SIZE: usize = 512;
 /// Maximum detail string length stored per event (truncated if longer).
 pub const MAX_DETAIL_LEN: usize = 256;
 
+/// Maximum content payload for llm events (message snapshots, response previews).
+pub const MAX_CONTENT_LEN: usize = 8192;
+
 /// Event types for JSON serialization (simpler than the full ObserverEvent union).
 pub const TapEventType = enum {
     agent_start,
@@ -58,6 +61,8 @@ pub const TapEvent = struct {
     /// Optional detail string (truncated).
     detail: [MAX_DETAIL_LEN]u8 = [_]u8{0} ** MAX_DETAIL_LEN,
     detail_len: u16 = 0,
+    content: [MAX_CONTENT_LEN]u8 = [_]u8{0} ** MAX_CONTENT_LEN,
+    content_len: u16 = 0,
 
     fn copyString(dst: []u8, src: []const u8) u8 {
         const len = @min(src.len, dst.len);
@@ -136,6 +141,7 @@ pub const EventTap = struct {
         entry.value2 = 0;
         entry.flag = false;
         entry.detail_len = 0;
+        entry.content_len = 0;
 
         switch (event.*) {
             .agent_start => |e| {
@@ -148,6 +154,9 @@ pub const EventTap = struct {
                 entry.provider_len = TapEvent.copyString(&entry.provider, e.provider);
                 entry.model_len = TapEvent.copyString(&entry.model, e.model);
                 entry.value1 = @intCast(e.messages_count);
+                if (e.messages_snapshot.len > 0) {
+                    entry.content_len = @intCast(TapEvent.copyString(&entry.content, e.messages_snapshot));
+                }
             },
             .llm_response => |e| {
                 entry.event_type = .llm_response;
@@ -157,6 +166,15 @@ pub const EventTap = struct {
                 entry.flag = e.success;
                 if (e.error_message) |msg| {
                     entry.detail_len = @intCast(TapEvent.copyString(&entry.detail, msg));
+                }
+                if (e.response_preview.len > 0 and e.tool_calls_json.len > 0) {
+                    var cbuf: [MAX_CONTENT_LEN]u8 = [_]u8{0} ** MAX_CONTENT_LEN;
+                    const combined = std.fmt.bufPrint(&cbuf, "{{\"r\":\"{s}\",\"t\":{s}}}", .{ e.response_preview, e.tool_calls_json }) catch "";
+                    entry.content_len = @intCast(TapEvent.copyString(&entry.content, combined));
+                } else if (e.response_preview.len > 0) {
+                    entry.content_len = @intCast(TapEvent.copyString(&entry.content, e.response_preview));
+                } else if (e.tool_calls_json.len > 0) {
+                    entry.content_len = @intCast(TapEvent.copyString(&entry.content, e.tool_calls_json));
                 }
             },
             .agent_end => |e| {
@@ -281,7 +299,24 @@ pub const EventTap = struct {
                 fbs.writeAll("\"") catch break;
             }
 
-            fbs.writeAll("}") catch break;
+                        // content payload
+            if (entry.content_len > 0) {
+                fbs.writeAll(",\"content\":\"") catch break;
+                const cdata = entry.content[0..entry.content_len];
+                for (cdata) |cc| {
+                    switch (cc) {
+                        0x22 => fbs.writeAll("\\\"") catch break,
+                        0x5c => fbs.writeAll("\\\\") catch break,
+                        0x0a => fbs.writeAll("\\n") catch break,
+                        0x0d => fbs.writeAll("\\r") catch break,
+                        0x09 => fbs.writeAll("\\t") catch break,
+                        else => fbs.writeAll(&.{cc}) catch break,
+                    }
+                }
+                fbs.writeAll("\"") catch break;
+            }
+
+fbs.writeAll("}") catch break;
             count += 1;
             pos += 1;
         }

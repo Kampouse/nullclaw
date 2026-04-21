@@ -915,13 +915,6 @@ pub const Agent = struct {
 
         slog.debug("agent", "turn_no_cache_proceeding", .{});
         slog.debugSpan("agent", "pre_call", turn_start_ns);
-        // Record agent event
-        const start_event = ObserverEvent{ .llm_request = .{
-            .provider = self.provider.getName(),
-            .model = self.model_name,
-            .messages_count = self.history.items.len,
-        } };
-        self.observer.recordEvent(&start_event);
 
         // Tool call loop — reuse a single arena across iterations (retains pages)
         var iter_arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -936,6 +929,16 @@ pub const Agent = struct {
 
             // Build messages slice for provider (arena-owned; freed at end of iteration)
             const messages = try self.buildProviderMessages(arena);
+
+            // Record llm_request with message content snapshot for spy dashboard
+            const msg_snapshot = self.snapshotMessages(arena, messages);
+            const req_event = ObserverEvent{ .llm_request = .{
+                .provider = self.provider.getName(),
+                .model = self.model_name,
+                .messages_count = messages.len,
+                .messages_snapshot = msg_snapshot,
+            } };
+            self.observer.recordEvent(&req_event);
 
             const timer_start = util.timestampUnix();
             const is_streaming = self.stream_callback != null and self.provider.supportsStreaming();
@@ -1089,12 +1092,20 @@ pub const Agent = struct {
             slog.debug("agent", "turn_after_log_llm_response", .{});
 
             const duration_ms: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
+
+            // Build response preview + tool calls JSON for spy dashboard
+            const resp_text = response.contentOrEmpty();
+            const resp_preview = if (resp_text.len > 0) resp_text[0..@min(resp_text.len, 2048)] else "";
+            const tools_json = self.snapshotToolCalls(arena, response.tool_calls);
+
             const resp_event = ObserverEvent{ .llm_response = .{
                 .provider = self.provider.getName(),
                 .model = self.model_name,
                 .duration_ms = duration_ms,
                 .success = true,
                 .error_message = null,
+                .response_preview = resp_preview,
+                .tool_calls_json = tools_json,
             } };
             self.observer.recordEvent(&resp_event);
 
@@ -1844,6 +1855,98 @@ pub const Agent = struct {
             return .{ .slice = text, .truncated = false };
         }
         return .{ .slice = text[0..LLM_LOG_MAX_BYTES], .truncated = true };
+    }
+
+    /// Maximum content preview per message in snapshot (bytes).
+    const SNAPSHOT_MSG_PREVIEW: usize = 300;
+    /// Maximum total snapshot size (bytes).
+    const SNAPSHOT_MAX_SIZE: usize = 7680;
+
+    fn snapshotMessages(self: *Agent, arena: std.mem.Allocator, messages: []const ChatMessage) []const u8 {
+        _ = self;
+        if (messages.len == 0) return "";
+        var sbuf: [SNAPSHOT_MAX_SIZE]u8 = undefined;
+        var w = util.fixedBufferStream(&sbuf);
+        const writer = w.writer();
+        writer.writeAll("[") catch return "";
+        for (messages, 0..) |msg, idx| {
+            if (idx > 0) writer.writeAll(",") catch return "";
+            writer.writeAll("{") catch return "";
+            writer.writeAll("\"r\":") catch return "";
+            writer.writeAll("\"") catch return "";
+            writer.writeAll(msg.role.toSlice()) catch return "";
+            writer.writeAll("\"") catch return "";
+            const content = msg.content;
+            if (content.len > 0) {
+                writer.writeAll(",") catch return "";
+                writer.writeAll("\"c\":") catch return "";
+                writer.writeAll("\"") catch return "";
+                const preview_len = @min(content.len, SNAPSHOT_MSG_PREVIEW);
+                for (content[0..preview_len]) |ch| {
+                    switch (ch) {
+                        0x22 => { writer.writeAll("\\\"") catch return ""; },
+                        0x5c => { writer.writeAll("\\\\") catch return ""; },
+                        0x0a => { writer.writeAll("\\\n") catch return ""; },
+                        0x0d => { writer.writeAll("\\\r") catch return ""; },
+                        0x09 => { writer.writeAll("\\\t") catch return ""; },
+                        else => { writer.writeAll(&.{ch}) catch return ""; },
+                    }
+                }
+                if (content.len > preview_len) writer.writeAll("...") catch return "";
+                writer.writeAll("\"") catch return "";
+            }
+            writer.writeAll("}") catch return "";
+            if (w.getWritten().len > SNAPSHOT_MAX_SIZE - 50) {
+                return w.getWritten();
+            }
+        }
+        writer.writeAll("]") catch return "";
+        // Copy to arena so it persists
+        const written = w.getWritten();
+        const copy = arena.alloc(u8, written.len) catch return "";
+        @memcpy(copy, written);
+        return copy;
+    }
+
+    fn snapshotToolCalls(self: *Agent, arena: std.mem.Allocator, tool_calls: []const providers.ToolCall) []const u8 {
+        _ = self;
+        if (tool_calls.len == 0) return "";
+        var sbuf: [SNAPSHOT_MAX_SIZE]u8 = undefined;
+        var w = util.fixedBufferStream(&sbuf);
+        const writer = w.writer();
+        writer.writeAll("[") catch return "";
+        for (tool_calls, 0..) |tc, idx| {
+            if (idx > 0) writer.writeAll(",") catch return "";
+            writer.writeAll("{") catch return "";
+            writer.writeAll("\"n\":") catch return "";
+            writer.writeAll("\"") catch return "";
+            writer.writeAll(tc.name) catch return "";
+            writer.writeAll("\"") catch return "";
+            if (tc.arguments.len > 0) {
+                writer.writeAll(",") catch return "";
+                writer.writeAll("\"a\":") catch return "";
+                writer.writeAll("\"") catch return "";
+                const preview_len = @min(tc.arguments.len, SNAPSHOT_MSG_PREVIEW);
+                for (tc.arguments[0..preview_len]) |ch| {
+                    switch (ch) {
+                        0x22 => { writer.writeAll("\\\"") catch return ""; },
+                        0x5c => { writer.writeAll("\\\\") catch return ""; },
+                        0x0a => { writer.writeAll("\\\n") catch return ""; },
+                        0x0d => { writer.writeAll("\\\r") catch return ""; },
+                        0x09 => { writer.writeAll("\\\t") catch return ""; },
+                        else => { writer.writeAll(&.{ch}) catch return ""; },
+                    }
+                }
+                if (tc.arguments.len > preview_len) writer.writeAll("...") catch return "";
+                writer.writeAll("\"") catch return "";
+            }
+            writer.writeAll("}") catch return "";
+        }
+        writer.writeAll("]") catch return "";
+        const written = w.getWritten();
+        const copy = arena.alloc(u8, written.len) catch return "";
+        @memcpy(copy, written);
+        return copy;
     }
 
     fn logLlmRequest(self: *Agent, iteration: u32, attempt: u32, messages: []const ChatMessage, native_tools_enabled: bool, is_streaming: bool) void {

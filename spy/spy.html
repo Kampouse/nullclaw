@@ -173,7 +173,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .dtab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
 
 /* Dossier content */
-#dossier-content { flex: 1; overflow-y: auto; padding: 8px 12px; }
+#dossier-content { flex: 1; overflow: hidden; padding: 0; position: relative; }
 .dossier-section { margin-bottom: 12px; }
 .dossier-section .section-title {
   color: var(--text-dim); font-size: 9px; letter-spacing: 1.5px;
@@ -278,6 +278,64 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .search-result:hover { background: rgba(74,192,232,0.06); }
 .search-result .sr-time { color: var(--text-dim); }
 .search-result .sr-body { color: var(--text); }
+
+/* PALANTIR GRAPH */
+#palantir-graph { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg-card); overflow: hidden; }
+#pg-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+#pg-canvas:active { cursor: grabbing; }
+.pg-tooltip { display: none; position: absolute; z-index: 50; background: rgba(12,14,20,0.95); border: 1px solid var(--border-active); border-radius: 4px; padding: 6px 10px; pointer-events: none; font-size: 11px; line-height: 1.5; color: var(--text); box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 280px; }
+
+/* Context tab styles */
+.ctx-bar-container { margin-bottom: 12px; }
+.ctx-bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; display: flex; }
+.ctx-bar-fill { height: 100%; transition: width 0.3s; }
+.ctx-bar-fill.ctx-input { background: var(--blue); }
+.ctx-bar-fill.ctx-output { background: var(--green); }
+.ctx-bar-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; }
+.ctx-bar-tokens { color: var(--text-dim); font-size: 10px; }
+.ctx-bar-legend { display: flex; gap: 12px; margin-top: 4px; }
+.ctx-legend-item { display: flex; align-items: center; gap: 4px; font-size: 9px; color: var(--text-dim); }
+.ctx-legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+
+.ctx-summary { display: flex; gap: 6px; margin-bottom: 8px; }
+.ctx-stat { flex: 1; text-align: center; padding: 8px 4px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); }
+.ctx-stat-val { font-size: 16px; font-weight: 700; color: var(--text-bright); }
+.ctx-stat-lbl { font-size: 8px; color: var(--text-dim); letter-spacing: 1px; margin-top: 2px; }
+
+.ctx-turns { display: flex; flex-direction: column; gap: 6px; max-height: calc(100% - 140px); overflow-y: auto; }
+.ctx-turn { padding: 8px 10px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); cursor: pointer; transition: border-color 0.15s; }
+.ctx-turn:hover { border-color: var(--border-active); }
+.ctx-turn-active { border-color: var(--cyan) !important; background: var(--cyan-dim); }
+
+.ctx-turn-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.ctx-turn-num { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 20px; }
+.ctx-turn-model { font-size: 11px; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-turn-time { font-size: 9px; color: var(--text-dim); }
+
+.ctx-turn-bar-track { height: 4px; background: rgba(0,0,0,0.3); border-radius: 2px; overflow: hidden; display: flex; margin-bottom: 3px; }
+.ctx-turn-bar-in { height: 100%; background: var(--blue); }
+.ctx-turn-bar-out { height: 100%; background: var(--green); }
+.ctx-turn-tokens { font-size: 9px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.ctx-turn-tools { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.ctx-tool-tag { font-size: 9px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border-active); color: var(--text-dim); }
+.ctx-turn-errors { margin-top: 4px; }
+.ctx-error { font-size: 9px; color: var(--red); padding: 1px 0; }
+.ctx-turn-messages { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.ctx-msg { padding: 4px 8px; background: rgba(0,0,0,0.25); border-radius: 3px; border-left: 2px solid var(--border-active); cursor: pointer; }
+.ctx-msg:hover { background: rgba(0,0,0,0.35); }
+.ctx-msg-role { font-size: 9px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 2px; }
+.ctx-msg-role.role-system { color: var(--amber); }
+.ctx-msg-role.role-user { color: var(--cyan); }
+.ctx-msg-role.role-assistant { color: var(--green); }
+.ctx-msg-role.role-tool { color: var(--blue); }
+.ctx-msg-body { font-size: 10px; color: var(--text-dim); max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+.ctx-msg.expanded .ctx-msg-body { max-height: none; }
+.ctx-msg-truncated { font-size: 9px; color: var(--text-dim); opacity: 0.6; margin-top: 2px; }
+.ctx-msg.expanded .ctx-msg-truncated { display: none; }
+.ctx-turn-response { margin-top: 4px; padding: 4px 8px; background: rgba(0,0,0,0.2); border-radius: 3px; border-left: 2px solid var(--green); font-size: 10px; color: var(--text-dim); max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; cursor: pointer; }
+.ctx-turn-response:hover { background: rgba(0,0,0,0.3); }
+.ctx-turn-response.expanded { max-height: none; }
 </style>
 </head>
 <body>
@@ -325,6 +383,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
       <div class="dtab active" data-tab="overview">OVERVIEW</div>
       <div class="dtab" data-tab="graph">GRAPH</div>
       <div class="dtab" data-tab="timeline">TIMELINE</div>
+      <div class="dtab" data-tab="context">CONTEXT</div>
     </div>
     <div id="dossier-content">
       <div class="empty-state" id="dossier-empty">
@@ -636,6 +695,7 @@ function switchTab(tab) {
     case 'overview': renderDossierOverview(primary, ev); break;
     case 'graph': renderDossierGraph(primary); break;
     case 'timeline': renderDossierTimeline(primary); break;
+    case 'context': renderDossierContext(primary); break;
   }
 }
 
@@ -712,64 +772,223 @@ function renderDossierOverview(primary, ev) {
 
 function renderDossierGraph(primary) {
   const content = $('dossier-content');
-  const entityData = S.entities[primary.name];
-  if (!entityData || Object.keys(entityData.related).length === 0) {
-    content.innerHTML = '<div class="empty-state"><div class="icon">◎</div><div>No relationships found</div></div>';
+  const allNames = Object.keys(S.entities);
+  if (allNames.length === 0) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">◎</div><div>No entities tracked yet</div></div>';
     return;
   }
 
-  const sorted = Object.entries(entityData.related).sort((a, b) => b[1] - a[1]).slice(0, 10);
-
-  // Simple force-directed-ish layout
-  const nodes = [{ name: primary.name, type: primary.type, x: 0, y: 0 }];
-  const cx = 180, cy = 65;
-
-  sorted.forEach(([name, count], i) => {
-    const angle = (i / sorted.length) * Math.PI * 2 - Math.PI / 2;
-    const radius = 50 + Math.min(count * 8, 30);
-    nodes.push({
-      name, type: S.entities[name] ? S.entities[name].type : '?',
-      x: cx + Math.cos(angle) * radius,
-      y: cy + Math.sin(angle) * radius,
-      count
+  // build graph from ALL entities
+  const nodes = [], edges = [], nmap = {};
+  allNames.forEach(name => {
+    const e = S.entities[name];
+    if (!e || e.events.length === 0) return;
+    nmap[name] = nodes.length;
+    nodes.push({ id: name, type: e.type, label: name.split('/').pop(), weight: e.events.length, x: 0, y: 0, vx: 0, vy: 0 });
+  });
+  allNames.forEach(name => {
+    const e = S.entities[name];
+    if (!e) return;
+    Object.entries(e.related).forEach(([rn, cnt]) => {
+      if (nmap[name] === undefined || nmap[rn] === undefined) return;
+      const dup = edges.find(ed => (ed.s===nmap[name]&&ed.t===nmap[rn])||(ed.s===nmap[rn]&&ed.t===nmap[name]));
+      if (!dup) edges.push({ s: nmap[name], t: nmap[rn], w: cnt });
     });
   });
+  if (nodes.length === 0) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">◎</div><div>No entities tracked yet</div></div>';
+    return;
+  }
 
-  let svgEdges = '';
-  sorted.forEach(([name], i) => {
-    const target = nodes[i + 1];
-    svgEdges += `<line x1="${cx}" y1="${cy}" x2="${target.x}" y2="${target.y}" />`;
+  content.innerHTML = '<div id="palantir-graph"><canvas id="pg-canvas"></canvas><div id="pg-tooltip" class="pg-tooltip"></div></div>';
+  const wrap = $('palantir-graph'), canvas = $('pg-canvas'), tip = $('pg-tooltip');
+  const ctx = canvas.getContext('2d');
+
+  const TYPE_COL = { provider: '#a070f0', model: '#4a9eff', tool: '#4ac0e8', file: '#3dd68c', channel: '#f060c0', error: '#f05050', err: '#f05050' };
+  const col = t => TYPE_COL[t] || '#8888aa';
+
+  const dpr = window.devicePixelRatio || 1;
+  function resize() {
+    const r = wrap.getBoundingClientRect();
+    canvas.width = r.width * dpr; canvas.height = r.height * dpr;
+    canvas.style.width = r.width + 'px'; canvas.style.height = r.height + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { w: r.width, h: r.height };
+  }
+  const { w: cw, h: ch } = resize();
+  const cx = cw / 2, cy = ch / 2;
+
+  nodes.forEach((n, i) => {
+    const a = (i / nodes.length) * Math.PI * 2 - Math.PI / 2;
+    const r = 60 + Math.random() * 80;
+    n.x = cx + Math.cos(a) * r; n.y = cy + Math.sin(a) * r;
   });
 
-  let htmlNodes = nodes.map(n => {
-    const color = { provider: 'var(--purple)', tool: 'var(--cyan)', file: 'var(--green)', model: 'var(--blue)' }[n.type] || 'var(--text)';
-    const isActive = n.name === primary.name;
-    return `<div class="graph-node ${isActive ? 'active' : ''}" style="left:${n.x - 20}px;top:${n.y - 10}px;border-color:${color};color:${color}" data-name="${esc(n.name)}">${esc(n.name.split('/').pop().split('.').slice(-2).join('.'))}</div>`;
-  }).join('');
+  let cam = { x: 0, y: 0, z: 1 }, dragging = false, dragStart = { x: 0, y: 0 }, camStart = { x: 0, y: 0 };
+  function w2s(wx, wy) { return { x: (wx - cx) * cam.z + cx + cam.x, y: (wy - cy) * cam.z + cy + cam.y }; }
+  function s2w(sx, sy) { return { x: (sx - cx - cam.x) / cam.z + cx, y: (sy - cy - cam.y) / cam.z + cy }; }
 
-  content.innerHTML = `
-    <div class="dossier-section">
-      <div class="section-title">ENTITY GRAPH</div>
-      <div id="mini-graph">
-        <svg width="100%" height="100%" style="position:absolute;top:0;left:0">${svgEdges}</svg>
-        ${htmlNodes}
-      </div>
-    </div>
-    <div style="font-size:10px;color:var(--text-dim);margin-top:4px">Click a node to navigate</div>
-  `;
+  canvas.addEventListener('wheel', e => { e.preventDefault(); cam.z *= e.deltaY < 0 ? 1.12 : 0.89; cam.z = Math.max(0.3, Math.min(4, cam.z)); }, { passive: false });
+  canvas.addEventListener('mousedown', e => { if (e.button === 0) { dragging = true; dragStart = { x: e.clientX, y: e.clientY }; camStart = { ...cam }; } });
+  window.addEventListener('mousemove', e => { if (dragging) { cam.x = camStart.x + (e.clientX - dragStart.x); cam.y = camStart.y + (e.clientY - dragStart.y); } });
+  window.addEventListener('mouseup', () => { dragging = false; });
 
-  // Wire node clicks
-  content.querySelectorAll('.graph-node').forEach(el => {
-    el.addEventListener('click', () => {
-      const name = el.dataset.name;
-      const ed = S.entities[name];
-      if (ed && ed.events.length > 0) {
-        openDossier(ed.events[ed.events.length - 1]._idx);
+  let hovered = null;
+  canvas.addEventListener('mousemove', e => {
+    if (dragging) { tip.style.display = 'none'; return; }
+    const rect = canvas.getBoundingClientRect();
+    const mp = s2w(e.clientX - rect.left, e.clientY - rect.top);
+    hovered = null;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i], nr = nodeRadius(n);
+      const dx = mp.x - n.x, dy = mp.y - n.y;
+      if (dx*dx + dy*dy < (nr + 6) * (nr + 6)) { hovered = n; break; }
+    }
+    if (hovered) {
+      tip.innerHTML = '<b style="color:' + col(hovered.type) + '">' + esc(hovered.id) + '</b><br><span style="color:#888">' + hovered.type + '</span> &middot; ' + hovered.weight + ' events';
+      tip.style.display = 'block';
+      tip.style.left = (e.clientX - canvas.getBoundingClientRect().left + 14) + 'px';
+      tip.style.top = (e.clientY - canvas.getBoundingClientRect().top - 10) + 'px';
+      canvas.style.cursor = 'pointer';
+    } else {
+      tip.style.display = 'none';
+      canvas.style.cursor = dragging ? 'grabbing' : 'grab';
+    }
+  });
+  canvas.addEventListener('click', e => {
+    if (hovered) {
+      const ent = S.entities[hovered.id];
+      if (ent && ent.events.length > 0) openDossier(ent.events[ent.events.length - 1]._idx);
+    }
+  });
+  canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; hovered = null; });
+
+  function nodeRadius(n) { return 5 + Math.min(n.weight, 30) * 0.6; }
+
+  let simSteps = 0;
+  function simulate() {
+    const repK = 2800, attrK = 0.008, centerK = 0.01, damp = 0.88;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d2 = dx*dx + dy*dy;
+        if (d2 < 1) d2 = 1;
+        const f = repK / d2;
+        const d = Math.sqrt(d2);
+        const fx = (dx / d) * f, fy = (dy / d) * f;
+        a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+      }
+      a.vx += (cx - a.x) * centerK;
+      a.vy += (cy - a.y) * centerK;
+    }
+    edges.forEach(e => {
+      const a = nodes[e.s], b = nodes[e.t];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx*dx + dy*dy) || 1;
+      const ideal = 80 + (20 - Math.min(e.w, 20)) * 2;
+      const f = (d - ideal) * attrK * Math.min(e.w, 10);
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    });
+    nodes.forEach(n => { n.vx *= damp; n.vy *= damp; n.x += n.vx; n.y += n.vy; });
+    simSteps++;
+  }
+
+  let animId = null, startTime = Date.now();
+  function draw() {
+    ctx.clearRect(0, 0, cw, ch);
+
+    // grid dots
+    ctx.fillStyle = 'rgba(74,192,232,0.04)';
+    const gs = 30;
+    for (let gx = 0; gx < cw; gx += gs) for (let gy = 0; gy < ch; gy += gs) { ctx.beginPath(); ctx.arc(gx, gy, 0.6, 0, Math.PI * 2); ctx.fill(); }
+
+    const t = (Date.now() - startTime) * 0.001;
+
+    // edges
+    edges.forEach(e => {
+      const a = nodes[e.s], b = nodes[e.t];
+      const sa = w2s(a.x, a.y), sb = w2s(b.x, b.y);
+      const isHl = hovered && (hovered.id === a.id || hovered.id === b.id);
+      const alpha = isHl ? 0.5 : 0.12;
+      const width = isHl ? 1.5 + e.w * 0.3 : 0.5 + e.w * 0.15;
+      const grad = ctx.createLinearGradient(sa.x, sa.y, sb.x, sb.y);
+      grad.addColorStop(0, col(a.type));
+      grad.addColorStop(1, col(b.type));
+      ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y);
+      ctx.strokeStyle = grad; ctx.globalAlpha = alpha; ctx.lineWidth = width * cam.z; ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // animated pulse
+      if (e.w >= 3 || isHl) {
+        const pp = ((t * 0.4 + e.s * 0.3) % 1);
+        const px = sa.x + (sb.x - sa.x) * pp, py = sa.y + (sb.y - sa.y) * pp;
+        const pg = ctx.createRadialGradient(px, py, 0, px, py, 3 * cam.z);
+        pg.addColorStop(0, 'rgba(255,255,255,0.6)');
+        pg.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(px, py, 3 * cam.z, 0, Math.PI * 2); ctx.fill();
       }
     });
-  });
-}
 
+    // nodes
+    nodes.forEach(n => {
+      const sp = w2s(n.x, n.y);
+      const r = nodeRadius(n) * cam.z;
+      const c = col(n.type);
+      const isPrimary = primary && n.id === primary.name;
+      const isHov = hovered && hovered.id === n.id;
+      const isRel = hovered && edges.some(ed => (nodes[ed.s].id === hovered.id && nodes[ed.t].id === n.id) || (nodes[ed.t].id === hovered.id && nodes[ed.s].id === n.id));
+      const dimmed = hovered && !isPrimary && !isHov && !isRel;
+
+      // glow
+      if (isPrimary || isHov) {
+        const gr = r * 3;
+        const glow = ctx.createRadialGradient(sp.x, sp.y, r * 0.5, sp.x, sp.y, gr);
+        glow.addColorStop(0, c + '40'); glow.addColorStop(0.5, c + '15'); glow.addColorStop(1, c + '00');
+        ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(sp.x, sp.y, gr, 0, Math.PI * 2); ctx.fill();
+      }
+
+      ctx.globalAlpha = dimmed ? 0.2 : 1;
+      const ng = ctx.createRadialGradient(sp.x - r*0.3, sp.y - r*0.3, 0, sp.x, sp.y, r);
+      ng.addColorStop(0, c + 'ee'); ng.addColorStop(1, c + '88');
+      ctx.fillStyle = ng; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = isPrimary ? '#ffffff' : isHov ? c : c + '66';
+      ctx.lineWidth = isPrimary ? 2 : isHov ? 1.5 : 0.8;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      const showLabel = cam.z > 0.5 || isPrimary || isHov || n.weight > 5;
+      if (showLabel) {
+        ctx.font = (isPrimary ? 'bold ' : '') + Math.max(9, 10 * cam.z) + 'px "SF Mono","Fira Code",monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = dimmed ? 'rgba(200,204,216,0.2)' : isPrimary ? '#ffffff' : isHov ? '#e8ecf4' : 'rgba(200,204,216,0.75)';
+        ctx.fillText(n.label, sp.x, sp.y + r + 12 * cam.z);
+      }
+    });
+
+    // legend
+    const ly = ch - 14;
+    ctx.font = '9px "SF Mono",monospace'; ctx.textAlign = 'left';
+    const types = [...new Set(nodes.map(n => n.type))];
+    let lx = 10;
+    types.forEach(tp => {
+      ctx.fillStyle = col(tp); ctx.beginPath(); ctx.arc(lx + 4, ly, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#555a6e'; ctx.fillText(tp, lx + 10, ly + 3);
+      lx += ctx.measureText(tp).width + 22;
+    });
+    ctx.fillStyle = '#333848'; ctx.textAlign = 'right';
+    ctx.fillText(nodes.length + ' entities \u00b7 ' + edges.length + ' links', cw - 10, ly + 3);
+  }
+
+  function loop() { if (simSteps < 300) simulate(); draw(); animId = requestAnimationFrame(loop); }
+  loop();
+
+  const origCleanup = window._pgCleanup;
+  if (origCleanup) origCleanup();
+  window._pgCleanup = () => { if (animId) cancelAnimationFrame(animId); };
+}
 function renderDossierTimeline(primary) {
   const content = $('dossier-content');
   const entityData = S.entities[primary.name];
@@ -802,6 +1021,242 @@ function renderDossierTimeline(primary) {
   content.querySelectorAll('.dt-event').forEach(el => {
     el.addEventListener('click', () => {
       selectEvent(parseInt(el.dataset.idx));
+    });
+  });
+}
+
+
+function renderDossierContext(primary) {
+  const content = $('dossier-content');
+
+  // Build turns from all events - group by agent conversation bursts
+  const turns = [];
+  let currentTurn = null;
+
+  S.events.forEach(ev => {
+    if (ev.type === 'agent_start' || ev.type === 'channel_message') {
+      if (currentTurn) turns.push(currentTurn);
+      currentTurn = {
+        id: turns.length + 1,
+        startTs: ev.ts,
+        provider: ev.provider,
+        model: ev.model,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        toolCalls: [],
+        errors: [],
+        completed: false,
+        messages: [],     // parsed from llm_request.content
+        response: null,   // from llm_response.content
+        events: [ev]
+      };
+    } else if (ev.type === 'llm_request' && currentTurn) {
+      currentTurn.provider = ev.provider || currentTurn.provider;
+      currentTurn.model = ev.model || currentTurn.model;
+      currentTurn.inputTokens = ev.v1 || 0;
+      // Parse content field: JSON array of {"r":"role","c":"content_preview"}
+      if (ev.content) {
+        try {
+          currentTurn.messages = JSON.parse(ev.content);
+        } catch(e) { /* content not valid JSON yet */ }
+      }
+      currentTurn.events.push(ev);
+    } else if (ev.type === 'llm_response' && currentTurn) {
+      currentTurn.outputTokens = ev.v1 || 0;
+      currentTurn.totalTokens = currentTurn.inputTokens + currentTurn.outputTokens;
+      if (ev.ok === false) currentTurn.errors.push(ev.detail || 'LLM error');
+      // Parse response content
+      if (ev.content) {
+        try {
+          const parsed = JSON.parse(ev.content);
+          if (parsed.r === 'response' && parsed.t) {
+            currentTurn.response = parsed.t; // tool calls JSON array
+          } else if (typeof parsed === 'string') {
+            currentTurn.response = parsed;
+          } else {
+            currentTurn.response = ev.content;
+          }
+        } catch(e) {
+          currentTurn.response = ev.content;
+        }
+      }
+      currentTurn.events.push(ev);
+    } else if (ev.type === 'tool_call_start' && currentTurn) {
+      currentTurn.toolCalls.push({ name: ev.model || ev.provider || 'tool', startTs: ev.ts });
+      currentTurn.events.push(ev);
+    } else if (ev.type === 'tool_call' && currentTurn) {
+      const tc = currentTurn.toolCalls[currentTurn.toolCalls.length - 1];
+      if (tc) {
+        tc.duration = ev.v1 || 0;
+        tc.ok = ev.ok;
+        tc.detail = ev.detail || '';
+      }
+      if (ev.ok === false) currentTurn.errors.push((ev.detail || 'tool error').slice(0, 60));
+      currentTurn.events.push(ev);
+    } else if (ev.type === 'turn_complete' && currentTurn) {
+      currentTurn.completed = true;
+      currentTurn.endTs = ev.ts;
+      currentTurn.events.push(ev);
+      turns.push(currentTurn);
+      currentTurn = null;
+    } else if (ev.type === 'agent_end' && currentTurn) {
+      currentTurn.endTs = ev.ts;
+      turns.push(currentTurn);
+      currentTurn = null;
+    } else if (ev.type === 'err' && currentTurn) {
+      currentTurn.errors.push((ev.detail || ev.provider || 'error').slice(0, 80));
+      currentTurn.events.push(ev);
+    } else if (currentTurn) {
+      currentTurn.events.push(ev);
+    }
+  });
+  if (currentTurn) turns.push(currentTurn);
+
+  // Calculate totals for context window bar
+  let totalInput = 0, totalOutput = 0;
+  turns.forEach(t => { totalInput += t.inputTokens; totalOutput += t.outputTokens; });
+  const totalTokens = totalInput + totalOutput;
+  const ctxWindow = 200000;
+
+  // Highlight the turn that contains the zoomed event
+  const zoomedIdx = S.zoomedEvent ? S.zoomedEvent._idx : -1;
+  let activeTurnIdx = -1;
+  turns.forEach((t, i) => {
+    if (t.events.some(e => e._idx === zoomedIdx)) activeTurnIdx = i;
+  });
+
+  // ── Build HTML ──
+  let html = '';
+
+  // Context window bar
+  const usedPct = Math.min(100, (totalTokens / ctxWindow) * 100);
+  const inputPct = totalTokens > 0 ? (totalInput / totalTokens) * 100 : 0;
+  const outputPct = totalTokens > 0 ? (totalOutput / totalTokens) * 100 : 0;
+  const barColor = usedPct > 80 ? 'var(--red)' : usedPct > 50 ? 'var(--amber)' : 'var(--green)';
+
+  html += `<div class="dossier-section">
+    <div class="section-title">CONTEXT WINDOW</div>
+    <div class="ctx-bar-container">
+      <div class="ctx-bar">
+        <div class="ctx-bar-fill ctx-input" style="width:${inputPct}%" title="Input: ${totalInput.toLocaleString()}"></div>
+        <div class="ctx-bar-fill ctx-output" style="width:${outputPct}%" title="Output: ${totalOutput.toLocaleString()}"></div>
+      </div>
+      <div class="ctx-bar-labels">
+        <span style="color:${barColor}">${usedPct.toFixed(1)}%</span>
+        <span class="ctx-bar-tokens">${totalTokens.toLocaleString()} / ${ctxWindow.toLocaleString()}</span>
+      </div>
+      <div class="ctx-bar-legend">
+        <span class="ctx-legend-item"><span class="ctx-legend-swatch" style="background:var(--blue)"></span>Input ${totalInput.toLocaleString()}</span>
+        <span class="ctx-legend-item"><span class="ctx-legend-swatch" style="background:var(--green)"></span>Output ${totalOutput.toLocaleString()}</span>
+      </div>
+    </div>
+  </div>`;
+
+  // Summary stats
+  html += `<div class="dossier-section">
+    <div class="ctx-summary">
+      <div class="ctx-stat"><div class="ctx-stat-val">${turns.length}</div><div class="ctx-stat-lbl">TURNS</div></div>
+      <div class="ctx-stat"><div class="ctx-stat-val">${totalInput.toLocaleString()}</div><div class="ctx-stat-lbl">IN TOKENS</div></div>
+      <div class="ctx-stat"><div class="ctx-stat-val">${totalOutput.toLocaleString()}</div><div class="ctx-stat-lbl">OUT TOKENS</div></div>
+      <div class="ctx-stat"><div class="ctx-stat-val">${turns.reduce((s,t) => s + t.toolCalls.length, 0)}</div><div class="ctx-stat-lbl">TOOL CALLS</div></div>
+      <div class="ctx-stat"><div class="ctx-stat-val" style="color:${turns.some(t=>t.errors.length) ? 'var(--red)' : 'var(--green)'}">${turns.reduce((s,t) => s + t.errors.length, 0)}</div><div class="ctx-stat-lbl">ERRORS</div></div>
+    </div>
+  </div>`;
+
+  // Turn cards
+  html += `<div class="dossier-section"><div class="section-title">TURNS</div><div class="ctx-turns">`;
+  const maxTokens = Math.max(...turns.map(t => t.totalTokens), 1);
+
+  turns.forEach((turn, i) => {
+    const isActive = i === activeTurnIdx;
+    const turnColor = turn.errors.length ? 'var(--red)' : turn.completed ? 'var(--green)' : 'var(--amber)';
+    const msgCount = turn.messages.length;
+    const respPreview = turn.response ? (typeof turn.response === 'string' ? turn.response.slice(0, 120) : JSON.stringify(turn.response).slice(0, 120)) : '';
+
+    html += `<div class="ctx-turn ${isActive ? 'ctx-turn-active' : ''}" data-turn="${i}">
+      <div class="ctx-turn-header">
+        <span class="ctx-turn-num" style="color:${turnColor}">${String(turn.id).padStart(2, '0')}</span>
+        <span class="ctx-turn-model">${esc((turn.provider || '') + '/' + (turn.model || ''))}</span>
+        <span class="ctx-turn-time">${fmtTime(turn.startTs)}</span>
+        <span style="font-size:9px;color:var(--text-dim);margin-left:auto">${msgCount}msg${msgCount !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="ctx-turn-bar-track">
+        <div class="ctx-turn-bar-in" style="width:${turn.totalTokens > 0 ? (turn.inputTokens / maxTokens) * 100 : 0}%"></div>
+        <div class="ctx-turn-bar-out" style="width:${turn.totalTokens > 0 ? (turn.outputTokens / maxTokens) * 100 : 0}%"></div>
+      </div>
+      <div class="ctx-turn-tokens">${turn.inputTokens}in / ${turn.outputTokens}out = <b>${turn.totalTokens}</b></div>`;
+
+    // Message previews
+    if (msgCount > 0) {
+      html += `<div class="ctx-turn-messages">`;
+      turn.messages.forEach(msg => {
+        const role = msg.r || 'unknown';
+        const body = msg.c || '';
+        const truncated = body.length > 200;
+        const preview = truncated ? body.slice(0, 200) : body;
+        html += `<div class="ctx-msg" title="click to expand">
+          <div class="ctx-msg-role role-${role}">${esc(role.toUpperCase())}</div>
+          <div class="ctx-msg-body">${esc(preview)}</div>
+          ${truncated ? '<div class="ctx-msg-truncated">... click to expand</div>' : ''}
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    // Response preview
+    if (respPreview) {
+      const respTruncated = (typeof turn.response === 'string' ? turn.response.length : JSON.stringify(turn.response).length) > 200;
+      html += `<div class="ctx-turn-response" title="click to expand">
+        <div class="ctx-msg-role role-assistant">RESPONSE</div>
+        ${esc(respPreview)}${respTruncated ? '<div class="ctx-msg-truncated">... click to expand</div>' : ''}
+      </div>`;
+    }
+
+    if (turn.toolCalls.length > 0) {
+      html += `<div class="ctx-turn-tools">`;
+      turn.toolCalls.forEach(tc => {
+        const tcColor = tc.ok === false ? 'var(--red)' : 'var(--cyan)';
+        html += `<span class="ctx-tool-tag" style="border-color:${tcColor}" title="${esc(tc.detail || tc.name)}">${esc(tc.name)} ${tc.duration ? fmtDuration(tc.duration) : ''}${tc.ok === false ? ' ✗' : ''}</span>`;
+      });
+      html += `</div>`;
+    }
+
+    if (turn.errors.length > 0) {
+      html += `<div class="ctx-turn-errors">`;
+      turn.errors.forEach(err => {
+        html += `<div class="ctx-error">${esc(err)}</div>`;
+      });
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  });
+
+  html += '</div></div>';
+
+  if (turns.length === 0) {
+    html = '<div class="empty-state"><div class="icon">◷</div><div>No conversation turns detected</div><div class="hint">LLM request/response events build context</div></div>';
+  }
+
+  content.innerHTML = html;
+
+  // Wire click handlers
+  content.querySelectorAll('.ctx-turn').forEach(el => {
+    el.addEventListener('click', (e) => {
+      // Don't jump when clicking inside a message (allow expand)
+      if (e.target.closest('.ctx-msg') || e.target.closest('.ctx-turn-response')) return;
+      const turnIdx = parseInt(el.dataset.turn);
+      const turn = turns[turnIdx];
+      if (turn && turn.events.length > 0) selectEvent(turn.events[0]._idx);
+    });
+  });
+
+  // Wire message expand/collapse
+  content.querySelectorAll('.ctx-msg, .ctx-turn-response').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      el.classList.toggle('expanded');
     });
   });
 }
@@ -1036,8 +1491,82 @@ document.querySelectorAll('.dtab').forEach(tab => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 });
 
+
+// DEMO MODE
+function loadMockData() {
+  const now = Date.now() * 1e6;
+  const base = now - 120_000_000_000;
+  const mockEvents = [
+    { ts: base, type: 'agent_start', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud' },
+    { ts: base + 100_000_000, type: 'llm_request', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 42, content: '[{"r":"system","c":"You are NullClaw, a Zig-based AI agent..."},{"r":"user","c":"What is 2+2?"}]' },
+    { ts: base + 2_500_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2400, ok: true, content: '{"r":"response","t":"The answer is 4."}' },
+    { ts: base + 2_600_000_000, type: 'turn_complete' },
+    { ts: base + 15_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 67, content: '[{"r":"system","c":"You are NullClaw, a Zig-based AI agent with tool access..."},{"r":"user","c":"List files in /tmp"},{"r":"assistant","c":"I\'ll list the files for you."}]' },
+    { ts: base + 16_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1200, ok: true },
+    { ts: base + 16_300_000_000, type: 'tool_call_start', model: 'shell' },
+    { ts: base + 18_500_000_000, type: 'tool_call', model: 'shell', v1: 2200, ok: true, detail: 'ls -la /tmp | head -20' },
+    { ts: base + 19_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 89, content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"List files in /tmp"},{"r":"assistant","c":"I\'ll list the files..."},{"r":"tool","c":"ls -la /tmp | head -20\ntotal 48\ndrwxrwxrwt  12 root root 4096 ..."}]' },
+    { ts: base + 20_800_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1800, ok: true },
+    { ts: base + 20_900_000_000, type: 'tool_call_start', model: 'file_read' },
+    { ts: base + 21_100_000_000, type: 'tool_call', model: 'file_read', v1: 180, ok: true, detail: 'src/gateway.zig lines 2677-2690' },
+    { ts: base + 21_500_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 112 },
+    { ts: base + 23_900_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2400, ok: true },
+    { ts: base + 24_000_000_000, type: 'tool_call_start', model: 'file_write' },
+    { ts: base + 24_300_000_000, type: 'tool_call', model: 'file_write', v1: 280, ok: true, detail: 'src/observability/event_tap.zig' },
+    { ts: base + 24_700_000_000, type: 'turn_complete' },
+    { ts: base + 35_000_000_000, type: 'channel_message', provider: 'telegram', model: 'inbound' },
+    { ts: base + 36_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 55 },
+    { ts: base + 37_500_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1500, ok: true },
+    { ts: base + 37_600_000_000, type: 'tool_call_start', model: 'shell' },
+    { ts: base + 39_200_000_000, type: 'tool_call', model: 'shell', v1: 1600, ok: true, detail: 'zig build test -> 4758 pass' },
+    { ts: base + 39_500_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 98 },
+    { ts: base + 41_000_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1500, ok: true },
+    { ts: base + 41_100_000_000, type: 'tool_call_start', model: 'patch' },
+    { ts: base + 41_400_000_000, type: 'tool_call', model: 'patch', v1: 350, ok: true, detail: 'gateway.zig: replaced SSE loop' },
+    { ts: base + 41_800_000_000, type: 'turn_complete' },
+    { ts: base + 41_900_000_000, type: 'channel_message', provider: 'telegram', model: 'outbound' },
+    { ts: base + 55_000_000_000, type: 'llm_request', provider: 'openrouter', model: 'gpt-4o', v1: 38 },
+    { ts: base + 56_200_000_000, type: 'llm_response', provider: 'openrouter', model: 'gpt-4o', v1: 1200, ok: false, detail: 'rate limit exceeded: 429' },
+    { ts: base + 56_300_000_000, type: 'tool_call_start', model: 'shell' },
+    { ts: base + 57_800_000_000, type: 'tool_call', model: 'shell', v1: 1500, ok: true, detail: 'make restart -> Done' },
+    { ts: base + 58_200_000_000, type: 'turn_complete' },
+    { ts: base + 70_000_000_000, type: 'heartbeat_tick' },
+    { ts: base + 80_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 71 },
+    { ts: base + 82_100_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2100, ok: true },
+    { ts: base + 82_200_000_000, type: 'tool_call_start', model: 'web_search' },
+    { ts: base + 84_500_000_000, type: 'tool_call', model: 'web_search', v1: 2300, ok: true, detail: 'zig 0.16 migration guide' },
+    { ts: base + 85_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 95 },
+    { ts: base + 87_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2200, ok: true },
+    { ts: base + 87_300_000_000, type: 'turn_complete' },
+    { ts: base + 87_400_000_000, type: 'agent_end', v1: 51_400_000_000, v2: 4820 },
+    { ts: base + 95_000_000_000, type: 'err', provider: 'memory', detail: 'sqlite: database is locked' },
+    { ts: base + 96_100_000_000, type: 'heartbeat_tick' },
+    { ts: base + 100_000_000_000, type: 'llm_request', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 200 },
+    { ts: base + 102_000_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2000, ok: true },
+    { ts: base + 102_100_000_000, type: 'tool_call_start', model: 'shell' },
+    { ts: base + 103_600_000_000, type: 'tool_call', model: 'shell', v1: 1500, ok: true, detail: 'grep TODO src/ -> 14 matches' },
+    { ts: base + 104_000_000_000, type: 'tool_call_start', model: 'shell' },
+    { ts: base + 105_200_000_000, type: 'tool_call', model: 'shell', v1: 1200, ok: true, detail: 'grep FIXME src/ -> 3' },
+    { ts: base + 105_500_000_000, type: 'tool_call_start', model: 'shell' },
+    { ts: base + 106_800_000_000, type: 'tool_call', model: 'shell', v1: 1300, ok: true, detail: 'grep HACK src/ -> 7' },
+    { ts: base + 107_000_000_000, type: 'tool_iterations_exhausted', v1: 90 },
+    { ts: base + 107_100_000_000, type: 'turn_complete' },
+  ];
+  appendEvents(mockEvents);
+  openDossier(Math.floor(mockEvents.length * 0.6));
+}
+
 // ═══ INIT ═══
-connectPolling();
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.has('demo')) {
+  const conn = $('connecting');
+  if (conn) conn.remove();
+  S.connected = true;
+  $('sse-dot').className = 'status-dot ok';
+  loadMockData();
+} else {
+  connectPolling();
+}
 pollStatus();
 setInterval(pollStatus, 5000);
 
