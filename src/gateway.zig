@@ -2767,7 +2767,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         const target = parts.next() orelse continue;
 
         // Simple routing — control endpoints + descriptor-driven channel webhooks.
-        const ControlRoute = enum { health, ready, webhook, pair, eval, bench };
+        const ControlRoute = enum { health, ready, webhook, pair, eval, bench, spy, api_status, api_events };
         const control_route_map = std.StaticStringMap(ControlRoute).initComptime(.{
             .{ "/health", .health },
             .{ "/ready", .ready },
@@ -2775,6 +2775,9 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
             .{ "/pair", .pair },
             .{ "/eval", .eval },
             .{ "/bench", .bench },
+            .{ "/spy", .spy },
+            .{ "/api/status", .api_status },
+            .{ "/api/events", .api_events },
         });
         const base_path = if (std.mem.indexOfScalar(u8, target, '?')) |qi| target[0..qi] else target;
         const is_post = std.mem.eql(u8, method_str, "POST");
@@ -3043,6 +3046,91 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     response_body = "{\"error\":\"agent runtime not initialized\"}";
                 }
             }, // end .bench
+            .spy => {
+                // Serve the embedded spy dashboard HTML.
+                const spy_html = build_options.spy_dashboard;
+                response_body = spy_html;
+                // Override Content-Type for HTML — handled below via special status tag
+                response_status = "200 OK";
+                // We need a way to signal HTML content type. Use a marker in the response header.
+                // The response building code below checks for this.
+                _ = &response_status; // suppress unused
+                // Build HTML response directly
+                var html_resp = std.ArrayListUnmanaged(u8).empty;
+                defer html_resp.deinit(req_allocator);
+                const html_header = std.fmt.allocPrint(req_allocator, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {d}\r\n\r\n", .{spy_html.len}) catch {
+                    response_status = "500 Internal Server Error";
+                    response_body = "{\"error\":\"internal\"}";
+                    continue;
+                };
+                defer req_allocator.free(html_header);
+                html_resp.appendSlice(req_allocator, html_header) catch continue;
+                html_resp.appendSlice(req_allocator, spy_html) catch continue;
+                _ = net_socket.writeAllSocket(client_fd, html_resp.items) catch |err| {
+                    log.warn("spy response write failed: {}", .{err});
+                };
+                continue;
+            },
+            .api_status => {
+                // JSON status snapshot: health, cost, memory, uptime.
+                const status_json = buildStatusJson(req_allocator) catch "{\"error\":\"internal\"}";
+                response_body = status_json;
+            },
+            .api_events => {
+                // SSE endpoint — streams events from the global event tap.
+                // Client can pass ?since=<pos> to resume from a position.
+                const event_tap_mod = @import("observability/event_tap.zig");
+                const tap = event_tap_mod.getTap() orelse {
+                    response_status = "503 Service Unavailable";
+                    response_body = "{\"error\":\"event tap not initialized\"}";
+                    // Still send as JSON
+                    continue;
+                };
+
+                // Parse ?since= parameter
+                const since_param = extractQueryParam(target, "since");
+                const since_pos = if (since_param) |sp|
+                    std.fmt.parseInt(u64, sp, 10) catch 0
+                else
+                    tap.currentPos(); // default: only new events
+
+                // Send SSE headers
+                const sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+                _ = net_socket.writeAllSocket(client_fd, sse_header) catch |err| {
+                    log.warn("SSE header write failed: {}", .{err});
+                    continue;
+                };
+
+                // Stream events in a loop, checking for new events every 500ms
+                var last_pos = since_pos;
+                var event_buf: [131072]u8 = undefined; // 128KB buffer for event JSON
+                const max_iterations = 120; // 60 seconds max (120 * 500ms)
+                var iteration: usize = 0;
+
+                while (iteration < max_iterations) {
+                    const current = tap.currentPos();
+                    if (current > last_pos) {
+                        const json = tap.readSinceJson(last_pos, &event_buf);
+                        if (json.len > 2) { // more than "[]"
+                            // Send as SSE data
+                            const sse_data = std.fmt.allocPrint(req_allocator, "data: {s}\n\n", .{json}) catch continue;
+                            _ = net_socket.writeAllSocket(client_fd, sse_data) catch |err| {
+                                req_allocator.free(sse_data);
+                                log.warn("SSE data write failed: {}", .{err});
+                                break;
+                            };
+                            req_allocator.free(sse_data);
+                        }
+                        last_pos = current;
+                    }
+                    util.sleep(500 * std.time.ns_per_ms);
+                    iteration += 1;
+                }
+
+                // Send final event to signal end
+                _ = net_socket.writeAllSocket(client_fd, "data: {\"_end\":true}\n\n") catch {};
+                continue;
+            },
         } else {
             response_status = "404 Not Found";
             response_body = "{\"error\":\"not found\"}";
@@ -3067,6 +3155,73 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         const status_code = if (std.mem.indexOfScalar(u8, response_status, ' ')) |sp| response_status[0..sp] else response_status;
         log.info("http {s} {s} -> {s} ({d} bytes)", .{ method_str, base_path, status_code, response_body.len });
     }
+}
+
+// ── Spy Dashboard Helpers ──────────────────────────────────────────
+
+/// Extract a query parameter value from a URL target string.
+/// Returns null if the parameter is not found.
+fn extractQueryParam(target: []const u8, param_name: []const u8) ?[]const u8 {
+    const query_start = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+    const query = target[query_start + 1 ..];
+
+    var it = std.mem.splitScalar(u8, query, '&');
+    while (it.next()) |pair| {
+        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        if (std.mem.eql(u8, pair[0..eq], param_name)) {
+            return pair[eq + 1 ..];
+        }
+    }
+    return null;
+}
+
+/// Build a JSON status snapshot combining health, cost, memory diagnostics.
+fn buildStatusJson(allocator: std.mem.Allocator) ![]const u8 {
+    var buf = std.ArrayListUnmanaged(u8).empty;
+    errdefer buf.deinit(allocator);
+
+    try appendSlice(&buf, allocator, "{");
+
+    // Health snapshot
+    const snap = health.snapshot();
+    try appendSlice(&buf, allocator, "\"health\":{");
+    var first_comp = true;
+    var iter = snap.components.iterator();
+    while (iter.next()) |entry| {
+        if (!first_comp) try appendSlice(&buf, allocator, ",");
+        first_comp = false;
+        try appendPrint(&buf, allocator, "\"{s}\":{{\"status\":\"{s}\"", .{ entry.key_ptr.*, entry.value_ptr.status });
+        if (entry.value_ptr.last_error) |msg| {
+            try appendSlice(&buf, allocator, ",\"error\":\"");
+            try appendJsonEscaped(&buf, allocator, msg);
+            try appendSlice(&buf, allocator, "\"");
+        }
+        try appendSlice(&buf, allocator, "}");
+    }
+    try appendSlice(&buf, allocator, "}");
+
+    // Uptime
+    try appendSlice(&buf, allocator, ",\"uptime_ns\":");
+    try appendPrint(&buf, allocator, "{d}", .{util.nanoTimestamp()});
+
+    // Event tap status
+    try appendSlice(&buf, allocator, ",\"event_tap\":");
+    const event_tap_mod = @import("observability/event_tap.zig");
+    const tap = event_tap_mod.getTap();
+    if (tap) |t| {
+        try appendPrint(&buf, allocator, "{{\"pos\":{d},\"ring_size\":{d}}}", .{ t.currentPos(), event_tap_mod.RING_SIZE });
+    } else {
+        try appendSlice(&buf, allocator, "null");
+    }
+
+    // Version
+    try appendSlice(&buf, allocator, ",\"version\":\"");
+    try appendSlice(&buf, allocator, build_options.version);
+    try appendSlice(&buf, allocator, "\"");
+
+    try appendSlice(&buf, allocator, "}");
+
+    return buf.items;
 }
 
 // ── Tests ────────────────────────────────────────────────────────

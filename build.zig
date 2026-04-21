@@ -486,6 +486,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "git_commit", git_commit);
     build_options.addOption([]const u8, "git_branch", git_branch);
     build_options.addOption([]const u8, "build_timestamp", build_timestamp);
+    build_options.addOption([]const u8, "spy_dashboard", @embedFile("spy/spy.html"));
     build_options.addOption(bool, "enable_memory_none", enable_memory_none);
     build_options.addOption(bool, "enable_memory_markdown", enable_memory_markdown);
     build_options.addOption(bool, "enable_memory_memory", enable_memory_memory);

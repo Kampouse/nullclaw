@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NULLCLAW — Spy</title>
+<style>
+/* ═══ RESET & BASE ═══ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #08090d;
+  --bg-panel: #0c0e14;
+  --bg-card: #111420;
+  --border: #1a1e2e;
+  --border-active: #2a3050;
+  --text: #c8ccd8;
+  --text-dim: #555a6e;
+  --text-bright: #e8ecf4;
+  --green: #3dd68c;
+  --green-dim: #1a3a2a;
+  --amber: #f0a030;
+  --amber-dim: #3a2a10;
+  --red: #f05050;
+  --red-dim: #3a1515;
+  --cyan: #4ac0e8;
+  --cyan-dim: #102a35;
+  --blue: #4a9eff;
+  --blue-dim: #152040;
+  --purple: #a070f0;
+  --purple-dim: #251540;
+  --magenta: #f060c0;
+  --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --feed-width: 60%;
+  --dossier-width: 40%;
+  --status-height: 24px;
+  --header-height: 28px;
+  --context-height: 120px;
+}
+html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; line-height: 1.4; }
+::selection { background: var(--blue); color: var(--bg); }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-active); border-radius: 2px; }
+
+/* ═══ HEADER ═══ */
+#header {
+  height: var(--header-height);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  user-select: none;
+}
+#header .brand { color: var(--text-dim); letter-spacing: 2px; font-size: 11px; }
+#header .brand span { color: var(--cyan); }
+#header .meta { color: var(--text-dim); font-size: 11px; display: flex; gap: 16px; }
+#header .meta .val { color: var(--text); }
+#header .controls { display: flex; gap: 6px; }
+#header .controls button {
+  background: none; border: 1px solid var(--border); color: var(--text-dim);
+  padding: 1px 8px; font-family: var(--mono); font-size: 10px; cursor: pointer;
+  border-radius: 2px;
+}
+#header .controls button:hover { border-color: var(--text-dim); color: var(--text); }
+#header .controls button.active { border-color: var(--cyan); color: var(--cyan); }
+#header .filter-input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 1px 6px; font-family: var(--mono); font-size: 10px; width: 160px;
+  border-radius: 2px; outline: none;
+}
+#header .filter-input:focus { border-color: var(--cyan); }
+
+/* ═══ MAIN LAYOUT ═══ */
+#main { display: flex; height: calc(100% - var(--header-height) - var(--status-height)); transition: all 0.15s ease; }
+#main.dossier-open { --feed-width: 58%; --dossier-width: 42%; }
+#main:not(.dossier-open) #dossier { display: none; }
+
+/* ═══ FEED PANEL ═══ */
+#feed-panel {
+  width: var(--feed-width); display: flex; flex-direction: column;
+  border-right: 1px solid var(--border);
+  transition: width 0.15s ease;
+}
+#feed {
+  flex: 1; overflow-y: auto; padding: 4px 0;
+  scroll-behavior: smooth;
+}
+#feed.paused::after {
+  content: '⏸ PAUSED'; position: fixed; top: 32px; left: 12px;
+  background: var(--amber-dim); color: var(--amber); padding: 2px 8px;
+  border-radius: 2px; font-size: 10px; letter-spacing: 1px; z-index: 100;
+}
+
+/* ═══ EVENT ROWS ═══ */
+.event {
+  display: flex; align-items: flex-start; padding: 2px 10px; cursor: pointer;
+  border-left: 2px solid transparent; transition: background 0.08s;
+}
+.event:hover { background: rgba(74, 192, 232, 0.03); }
+.event.selected { background: rgba(74, 192, 232, 0.06); border-left-color: var(--cyan); }
+.event.zoomed { background: rgba(74, 158, 255, 0.06); border-left-color: var(--blue); }
+.ev-time { color: var(--text-dim); min-width: 62px; flex-shrink: 0; font-size: 11px; padding-top: 1px; }
+.ev-type { min-width: 16px; flex-shrink: 0; text-align: center; font-size: 10px; padding-top: 1px; }
+.ev-body { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: baseline; }
+.ev-name { color: var(--text-bright); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-detail { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-metric { color: var(--text-dim); margin-left: auto; flex-shrink: 0; font-size: 10px; padding-top: 1px; }
+.ev-metric.ok { color: var(--green); }
+.ev-metric.fail { color: var(--red); }
+.ev-metric.warn { color: var(--amber); }
+
+/* event type colors */
+.event[data-type="llm_request"] .ev-type { color: var(--purple); }
+.event[data-type="llm_response"] .ev-type { color: var(--purple); }
+.event[data-type="llm_response"].ev-ok .ev-type { color: var(--green); }
+.event[data-type="llm_response"].ev-fail .ev-type { color: var(--red); }
+.event[data-type="tool_call_start"] .ev-type { color: var(--cyan); }
+.event[data-type="tool_call"] .ev-type { color: var(--cyan); }
+.event[data-type="tool_call"].ev-ok .ev-type { color: var(--green); }
+.event[data-type="tool_call"].ev-fail .ev-type { color: var(--red); }
+.event[data-type="agent_start"] .ev-type { color: var(--blue); }
+.event[data-type="agent_end"] .ev-type { color: var(--blue); }
+.event[data-type="channel_message"] .ev-type { color: var(--magenta); }
+.event[data-type="heartbeat_tick"] .ev-type { color: var(--text-dim); }
+.event[data-type="err"] .ev-type { color: var(--red); }
+.event[data-type="turn_complete"] .ev-type { color: var(--text-dim); }
+.event[data-type="tool_iterations_exhausted"] .ev-type { color: var(--amber); }
+
+/* ═══ CONTEXT STRIP ═══ */
+#context-strip {
+  height: var(--context-height); border-top: 1px solid var(--border);
+  background: var(--bg-panel); overflow: hidden;
+  display: flex; flex-direction: column; transition: height 0.15s;
+}
+#context-strip.collapsed { height: 0; border-top: none; }
+#context-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 10px; border-bottom: 1px solid var(--border); min-height: 20px;
+}
+#context-header .title { color: var(--text-dim); font-size: 10px; letter-spacing: 1px; }
+#context-header .close-btn { color: var(--text-dim); cursor: pointer; font-size: 10px; }
+#context-header .close-btn:hover { color: var(--text); }
+#context-body {
+  flex: 1; overflow: auto; padding: 4px 10px;
+  font-size: 11px; color: var(--text-dim); white-space: pre-wrap; word-break: break-all;
+}
+
+/* ═══ DOSSIER PANEL ═══ */
+#dossier {
+  width: var(--dossier-width); display: flex; flex-direction: column;
+  background: var(--bg-panel); transition: width 0.15s ease; overflow: hidden;
+}
+#dossier-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; border-bottom: 1px solid var(--border); min-height: 28px;
+}
+#dossier-header .entity-name { color: var(--blue); font-size: 13px; font-weight: 600; font-family: var(--sans); }
+#dossier-header .entity-type { color: var(--text-dim); font-size: 10px; margin-left: 8px; }
+#dossier-close { color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 4px; }
+#dossier-close:hover { color: var(--text); }
+
+/* Dossier tabs */
+#dossier-tabs {
+  display: flex; border-bottom: 1px solid var(--border); padding: 0 8px;
+}
+.dtab {
+  padding: 4px 10px; color: var(--text-dim); cursor: pointer; font-size: 10px;
+  border-bottom: 1px solid transparent; margin-bottom: -1px; user-select: none;
+  letter-spacing: 0.5px;
+}
+.dtab:hover { color: var(--text); }
+.dtab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+/* Dossier content */
+#dossier-content { flex: 1; overflow-y: auto; padding: 8px 12px; }
+.dossier-section { margin-bottom: 12px; }
+.dossier-section .section-title {
+  color: var(--text-dim); font-size: 9px; letter-spacing: 1.5px;
+  text-transform: uppercase; margin-bottom: 6px; padding-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Entity card */
+.entity-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.stat-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 3px;
+  padding: 6px 8px;
+}
+.stat-card .stat-label { color: var(--text-dim); font-size: 9px; letter-spacing: 0.5px; }
+.stat-card .stat-value { color: var(--text-bright); font-size: 14px; font-weight: 600; font-family: var(--sans); }
+.stat-card .stat-value.green { color: var(--green); }
+.stat-card .stat-value.amber { color: var(--amber); }
+.stat-card .stat-value.red { color: var(--red); }
+
+/* Mini graph */
+#mini-graph {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 3px;
+  height: 140px; position: relative; overflow: hidden; cursor: grab;
+}
+#mini-graph:active { cursor: grabbing; }
+.graph-node {
+  position: absolute; padding: 3px 7px; border-radius: 3px; font-size: 10px;
+  cursor: pointer; user-select: none; white-space: nowrap;
+  border: 1px solid var(--border); background: var(--bg-panel); color: var(--text);
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.graph-node:hover { border-color: var(--blue); box-shadow: 0 0 8px rgba(74,158,255,0.15); }
+.graph-node.active { border-color: var(--cyan); box-shadow: 0 0 10px rgba(74,192,232,0.2); color: var(--cyan); }
+.graph-edge { position: absolute; pointer-events: none; }
+.graph-edge line { stroke: var(--border-active); stroke-width: 1; }
+
+/* Entity timeline in dossier */
+.dossier-timeline .dt-event {
+  display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(26,30,46,0.5);
+  font-size: 11px;
+}
+.dt-event .dt-time { color: var(--text-dim); min-width: 52px; flex-shrink: 0; }
+.dt-event .dt-icon { min-width: 14px; text-align: center; }
+.dt-event .dt-body { flex: 1; min-width: 0; }
+
+/* ═══ STATUS BAR ═══ */
+#status {
+  height: var(--status-height); display: flex; align-items: center;
+  padding: 0 12px; border-top: 1px solid var(--border); background: var(--bg-panel);
+  gap: 16px; font-size: 10px; user-select: none;
+}
+.status-channel {
+  display: flex; align-items: center; gap: 4px;
+}
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-dim);
+}
+.status-dot.ok { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.status-dot.warn { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+.status-dot.err { background: var(--red); box-shadow: 0 0 4px var(--red); }
+.status-label { color: var(--text-dim); }
+.status-val { color: var(--text); }
+.status-sep { color: var(--border-active); }
+
+/* ═══ EMPTY STATES ═══ */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-dim); font-size: 11px; gap: 8px;
+}
+.empty-state .icon { font-size: 24px; opacity: 0.3; }
+.empty-state .hint { font-size: 10px; color: var(--text-dim); opacity: 0.6; }
+
+/* ═══ CONNECTING STATE ═══ */
+.connecting {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-dim); font-size: 11px;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+/* ═══ SEARCH OVERLAY ═══ */
+#search-overlay {
+  position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-card); border: 1px solid var(--border-active);
+  border-radius: 4px; padding: 8px; z-index: 200; display: none;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#search-overlay.visible { display: block; }
+#search-overlay input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 8px; font-family: var(--mono); font-size: 12px; width: 280px;
+  border-radius: 2px; outline: none;
+}
+#search-overlay input:focus { border-color: var(--cyan); }
+#search-results {
+  margin-top: 6px; max-height: 300px; overflow-y: auto;
+}
+.search-result {
+  padding: 3px 8px; cursor: pointer; border-radius: 2px;
+}
+.search-result:hover { background: rgba(74,192,232,0.06); }
+.search-result .sr-time { color: var(--text-dim); }
+.search-result .sr-body { color: var(--text); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div id="header">
+  <div class="brand"><span>◉</span> NULLCLAW <span style="color:var(--text-dim)">SPY</span></div>
+  <div class="meta">
+    <span>UPTIME <span class="val" id="uptime">--</span></span>
+    <span>EVENTS <span class="val" id="event-count">0</span></span>
+    <span>TAP <span class="val" id="tap-pos">0</span></span>
+  </div>
+  <div class="controls">
+    <input type="text" class="filter-input" id="filter" placeholder="/ filter..." title="Filter events (type /)">
+    <button id="btn-pause" title="Pause feed (.)">⏸</button>
+    <button id="btn-follow" class="active" title="Auto-scroll (F)">↓</button>
+    <button id="btn-clear" title="Clear feed (C)">✕</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+  <!-- FEED PANEL -->
+  <div id="feed-panel">
+    <div id="feed"><div class="connecting" id="connecting">connecting to event stream...</div></div>
+    <div id="context-strip" class="collapsed">
+      <div id="context-header">
+        <span class="title" id="context-title">CONTEXT</span>
+        <span class="close-btn" id="context-close">✕</span>
+      </div>
+      <div id="context-body"></div>
+    </div>
+  </div>
+
+  <!-- DOSSIER PANEL -->
+  <div id="dossier">
+    <div id="dossier-header">
+      <div>
+        <span class="entity-name" id="entity-name">—</span>
+        <span class="entity-type" id="entity-type"></span>
+      </div>
+      <span id="dossier-close">✕</span>
+    </div>
+    <div id="dossier-tabs">
+      <div class="dtab active" data-tab="overview">OVERVIEW</div>
+      <div class="dtab" data-tab="graph">GRAPH</div>
+      <div class="dtab" data-tab="timeline">TIMELINE</div>
+    </div>
+    <div id="dossier-content">
+      <div class="empty-state" id="dossier-empty">
+        <div class="icon">◉</div>
+        <div>Click any event to inspect</div>
+        <div class="hint">ESC to close · Tab to switch view</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div id="status">
+  <div class="status-channel"><div class="status-dot" id="sse-dot"></div><span class="status-label">SSE</span></div>
+  <span class="status-sep">│</span>
+  <span class="status-label">HEALTH</span>
+  <span class="status-val" id="health-status">--</span>
+  <span class="status-sep">│</span>
+  <span class="status-label" id="cost-label">$0.00</span>
+  <span class="status-sep">│</span>
+  <span class="status-label">TAP</span>
+  <span class="status-val" id="tap-ring">0/512</span>
+  <span style="flex:1"></span>
+  <span class="status-label" style="opacity:0.4">j/k navigate · Enter inspect · Esc close · / filter · . pause · F follow</span>
+</div>
+
+<!-- SEARCH OVERLAY -->
+<div id="search-overlay">
+  <input type="text" id="search-input" placeholder="search events..." autofocus>
+  <div id="search-results"></div>
+</div>
+
+<script>
+// ═══ STATE ═══
+const S = {
+  events: [],           // all events in memory
+  sincePos: null,       // SSE resume position
+  selectedIdx: -1,      // currently selected event index
+  zoomedEvent: null,    // event opened in dossier
+  paused: false,
+  following: true,
+  connected: false,
+  filter: '',
+  activeTab: 'overview',
+  entities: {},         // entity -> { type, events[], related:{} }
+  status: null,         // /api/status response
+  sseRetries: 0,
+  startTime: Date.now(),
+};
+
+// ═══ DOM REFS ═══
+const $ = id => document.getElementById(id);
+const feed = $('feed');
+const main = $('main');
+const dossier = $('dossier');
+const contextStrip = $('context-strip');
+
+// ═══ EVENT TYPE ICONS ═══
+const TYPE_ICONS = {
+  agent_start: '▶', agent_end: '■',
+  llm_request: '◈', llm_response: '◇',
+  tool_call_start: '▸', tool_call: '●',
+  channel_message: '◉',
+  heartbeat_tick: '·',
+  err: '✖',
+  turn_complete: '↵',
+  tool_iterations_exhausted: '⚠',
+};
+
+// ═══ FORMAT HELPERS ═══
+function fmtTime(ts) {
+  const d = new Date(ts / 1e6); // ns -> ms
+  return d.toTimeString().slice(0, 8);
+}
+
+function fmtDuration(ms) {
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  return Math.floor(ms / 60000) + 'm' + Math.floor((ms % 60000) / 1000) + 's';
+}
+
+function fmtUptime(ns) {
+  const s = ns / 1e9;
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm ' + Math.floor(s % 60) + 's';
+}
+
+// ═══ ENTITY TRACKING ═══
+function extractEntities(ev) {
+  const ents = [];
+  if (ev.provider) ents.push({ name: ev.provider, type: 'provider' });
+  if (ev.model && ev.type !== 'llm_request' && ev.type !== 'llm_response') {
+    // model field used as tool name for tool events
+    ents.push({ name: ev.model, type: 'tool' });
+  } else if (ev.model) {
+    ents.push({ name: ev.model, type: 'model' });
+  }
+  // Extract file-like things from detail
+  if (ev.detail) {
+    const fileMatch = ev.detail.match(/[\w./\-]+\.\w{1,5}/g);
+    if (fileMatch) {
+      fileMatch.forEach(f => {
+        if (f.includes('.') && f.length > 3 && !f.startsWith('http')) {
+          ents.push({ name: f, type: 'file' });
+        }
+      });
+    }
+  }
+  return ents;
+}
+
+function trackEntity(ev) {
+  const ents = extractEntities(ev);
+  ents.forEach(e => {
+    if (!S.entities[e.name]) {
+      S.entities[e.name] = { type: e.type, events: [], related: {} };
+    }
+    S.entities[e.name].events.push(ev);
+    // Link related entities to each other
+    ents.forEach(other => {
+      if (other.name !== e.name) {
+        S.entities[e.name].related[other.name] = (S.entities[e.name].related[other.name] || 0) + 1;
+      }
+    });
+  });
+}
+
+// ═══ RENDER FEED ═══
+function renderEvent(ev, idx) {
+  const div = document.createElement('div');
+  div.className = 'event';
+  div.dataset.type = ev.type;
+  div.dataset.idx = idx;
+
+  if (ev.type === 'tool_call' || ev.type === 'llm_response') {
+    div.classList.add(ev.ok ? 'ev-ok' : 'ev-fail');
+  }
+  if (idx === S.selectedIdx) div.classList.add('selected');
+  if (S.zoomedEvent && S.zoomedEvent._idx === idx) div.classList.add('zoomed');
+
+  // Apply filter
+  if (S.filter) {
+    const searchable = [ev.type, ev.provider || '', ev.model || '', ev.detail || ''].join(' ').toLowerCase();
+    if (!searchable.includes(S.filter.toLowerCase())) {
+      div.style.display = 'none';
+    }
+  }
+
+  const icon = TYPE_ICONS[ev.type] || '·';
+  const time = fmtTime(ev.ts);
+
+  let name = '', detail = '', metric = '';
+  switch (ev.type) {
+    case 'llm_request':
+      name = (ev.provider || '') + '/' + (ev.model || '');
+      detail = ev.v1 ? ev.v1 + ' msgs' : '';
+      break;
+    case 'llm_response':
+      name = (ev.provider || '') + '/' + (ev.model || '');
+      metric = fmtDuration(ev.v1 || 0);
+      if (ev.detail) metric += ' ' + ev.detail.slice(0, 30);
+      break;
+    case 'tool_call_start':
+      name = ev.model || ev.provider || 'tool';
+      break;
+    case 'tool_call':
+      name = ev.model || ev.provider || 'tool';
+      metric = fmtDuration(ev.v1 || 0);
+      if (ev.ok) metric += ' ✓';
+      else metric += ' ✗';
+      break;
+    case 'agent_start':
+      name = (ev.provider || '') + ' ' + (ev.model || '');
+      break;
+    case 'agent_end':
+      name = 'agent';
+      metric = fmtDuration(ev.v1 || 0);
+      break;
+    case 'channel_message':
+      name = (ev.provider || '') + ':' + (ev.model || '');
+      detail = ev.detail ? ev.detail.slice(0, 60) : '';
+      break;
+    case 'err':
+      name = ev.provider || 'error';
+      detail = ev.detail || '';
+      break;
+    case 'heartbeat_tick':
+      name = 'heartbeat';
+      break;
+    case 'turn_complete':
+      name = 'turn complete';
+      break;
+    case 'tool_iterations_exhausted':
+      name = 'iterations exhausted';
+      metric = ev.v1 + ' iters';
+      break;
+  }
+
+  div.innerHTML = `
+    <span class="ev-time">${time}</span>
+    <span class="ev-type">${icon}</span>
+    <span class="ev-body">
+      <span class="ev-name">${esc(name)}</span>
+      ${detail ? `<span class="ev-detail">${esc(detail)}</span>` : ''}
+    </span>
+    ${metric ? `<span class="ev-metric ${ev.type === 'tool_call' ? (ev.ok ? 'ok' : 'fail') : ''}">${esc(metric)}</span>` : ''}
+  `;
+
+  div.addEventListener('click', () => selectEvent(idx));
+  div.addEventListener('dblclick', () => openDossier(idx));
+  return div;
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function appendEvents(newEvents) {
+  const hadConnecting = $('connecting');
+  if (hadConnecting) hadConnecting.remove();
+
+  const frag = document.createDocumentFragment();
+  newEvents.forEach((ev, i) => {
+    const idx = S.events.length;
+    ev._idx = idx;
+    S.events.push(ev);
+    trackEntity(ev);
+    frag.appendChild(renderEvent(ev, idx));
+  });
+
+  feed.appendChild(frag);
+  $('event-count').textContent = S.events.length;
+
+  if (S.following && !S.paused) {
+    feed.scrollTop = feed.scrollHeight;
+  }
+}
+
+function rerenderFeed() {
+  const scrollTop = feed.scrollTop;
+  const frag = document.createDocumentFragment();
+  S.events.forEach((ev, idx) => {
+    frag.appendChild(renderEvent(ev, idx));
+  });
+  feed.innerHTML = '';
+  feed.appendChild(frag);
+  feed.scrollTop = scrollTop;
+}
+
+// ═══ SELECTION & DOSSIER ═══
+function selectEvent(idx) {
+  const prev = feed.querySelector('.event.selected');
+  if (prev) prev.classList.remove('selected');
+  S.selectedIdx = idx;
+  const el = feed.querySelector(`.event[data-idx="${idx}"]`);
+  if (el) {
+    el.classList.add('selected');
+    el.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function openDossier(idx) {
+  const ev = S.events[idx];
+  if (!ev) return;
+
+  S.zoomedEvent = ev;
+  main.classList.add('dossier-open');
+
+  // Update feed highlighting
+  feed.querySelectorAll('.event.zoomed').forEach(e => e.classList.remove('zoomed'));
+  const el = feed.querySelector(`.event[data-idx="${idx}"]`);
+  if (el) el.classList.add('zoomed');
+
+  // Find primary entity
+  const ents = extractEntities(ev);
+  const primary = ents[0] || { name: ev.type, type: 'event' };
+
+  $('entity-name').textContent = primary.name;
+  $('entity-type').textContent = primary.type.toUpperCase();
+  $('dossier-empty').style.display = 'none';
+
+  // Activate first tab
+  switchTab('overview');
+  renderDossierOverview(primary, ev);
+}
+
+function closeDossier() {
+  S.zoomedEvent = null;
+  main.classList.remove('dossier-open');
+  feed.querySelectorAll('.event.zoomed').forEach(e => e.classList.remove('zoomed'));
+  contextStrip.classList.add('collapsed');
+}
+
+function switchTab(tab) {
+  S.activeTab = tab;
+  document.querySelectorAll('.dtab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+
+  if (!S.zoomedEvent) return;
+  const ev = S.zoomedEvent;
+  const ents = extractEntities(ev);
+  const primary = ents[0] || { name: ev.type, type: 'event' };
+
+  switch (tab) {
+    case 'overview': renderDossierOverview(primary, ev); break;
+    case 'graph': renderDossierGraph(primary); break;
+    case 'timeline': renderDossierTimeline(primary); break;
+  }
+}
+
+function renderDossierOverview(primary, ev) {
+  const content = $('dossier-content');
+  const entityData = S.entities[primary.name];
+
+  let statsHtml = `<div class="entity-stats">
+    <div class="stat-card"><div class="stat-label">EVENTS</div><div class="stat-value">${entityData ? entityData.events.length : 1}</div></div>
+    <div class="stat-card"><div class="stat-label">TYPE</div><div class="stat-value" style="font-size:12px">${primary.type}</div></div>`;
+
+  if (entityData) {
+    const relCount = Object.keys(entityData.related).length;
+    statsHtml += `<div class="stat-card"><div class="stat-label">RELATED</div><div class="stat-value">${relCount}</div></div>`;
+
+    // First/last seen
+    const first = entityData.events[0];
+    const last = entityData.events[entityData.events.length - 1];
+    if (first && last) {
+      const span = (last.ts - first.ts) / 1e6;
+      statsHtml += `<div class="stat-card"><div class="stat-label">SPAN</div><div class="stat-value" style="font-size:11px">${fmtDuration(span)}</div></div>`;
+    }
+  }
+  statsHtml += '</div>';
+
+  // Event detail
+  let detailHtml = '';
+  if (ev.detail) {
+    detailHtml = `<div class="dossier-section">
+      <div class="section-title">DETAIL</div>
+      <div style="color:var(--text);font-size:11px;white-space:pre-wrap;word-break:break-all;padding:4px 0">${esc(ev.detail)}</div>
+    </div>`;
+  }
+
+  // Related entities
+  let relatedHtml = '';
+  if (entityData && Object.keys(entityData.related).length > 0) {
+    const sorted = Object.entries(entityData.related).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    relatedHtml = `<div class="dossier-section">
+      <div class="section-title">RELATED ENTITIES</div>
+      ${sorted.map(([name, count]) => {
+        const relType = S.entities[name] ? S.entities[name].type : '?';
+        const color = { provider: 'var(--purple)', tool: 'var(--cyan)', file: 'var(--green)', model: 'var(--blue)' }[relType] || 'var(--text-dim)';
+        return `<div style="display:flex;justify-content:space-between;padding:2px 0;cursor:pointer;border-bottom:1px solid var(--border)" class="rel-entity" data-name="${esc(name)}">
+          <span style="color:${color}">${esc(name)}</span>
+          <span style="color:var(--text-dim)">${count}×</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+    // Wire click handlers after render
+    setTimeout(() => {
+      content.querySelectorAll('.rel-entity').forEach(el => {
+        el.addEventListener('click', () => {
+          const name = el.dataset.name;
+          const entityData2 = S.entities[name];
+          if (entityData2 && entityData2.events.length > 0) {
+            const lastEv = entityData2.events[entityData2.events.length - 1];
+            openDossier(lastEv._idx);
+          }
+        });
+      });
+    }, 0);
+  }
+
+  // Raw JSON
+  let rawHtml = `<div class="dossier-section">
+    <div class="section-title">RAW</div>
+    <pre style="color:var(--text-dim);font-size:10px;overflow-x:auto;white-space:pre-wrap">${esc(JSON.stringify(ev, null, 2))}</pre>
+  </div>`;
+
+  content.innerHTML = statsHtml + detailHtml + relatedHtml + rawHtml;
+}
+
+function renderDossierGraph(primary) {
+  const content = $('dossier-content');
+  const entityData = S.entities[primary.name];
+  if (!entityData || Object.keys(entityData.related).length === 0) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">◎</div><div>No relationships found</div></div>';
+    return;
+  }
+
+  const sorted = Object.entries(entityData.related).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+  // Simple force-directed-ish layout
+  const nodes = [{ name: primary.name, type: primary.type, x: 0, y: 0 }];
+  const cx = 180, cy = 65;
+
+  sorted.forEach(([name, count], i) => {
+    const angle = (i / sorted.length) * Math.PI * 2 - Math.PI / 2;
+    const radius = 50 + Math.min(count * 8, 30);
+    nodes.push({
+      name, type: S.entities[name] ? S.entities[name].type : '?',
+      x: cx + Math.cos(angle) * radius,
+      y: cy + Math.sin(angle) * radius,
+      count
+    });
+  });
+
+  let svgEdges = '';
+  sorted.forEach(([name], i) => {
+    const target = nodes[i + 1];
+    svgEdges += `<line x1="${cx}" y1="${cy}" x2="${target.x}" y2="${target.y}" />`;
+  });
+
+  let htmlNodes = nodes.map(n => {
+    const color = { provider: 'var(--purple)', tool: 'var(--cyan)', file: 'var(--green)', model: 'var(--blue)' }[n.type] || 'var(--text)';
+    const isActive = n.name === primary.name;
+    return `<div class="graph-node ${isActive ? 'active' : ''}" style="left:${n.x - 20}px;top:${n.y - 10}px;border-color:${color};color:${color}" data-name="${esc(n.name)}">${esc(n.name.split('/').pop().split('.').slice(-2).join('.'))}</div>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div class="dossier-section">
+      <div class="section-title">ENTITY GRAPH</div>
+      <div id="mini-graph">
+        <svg width="100%" height="100%" style="position:absolute;top:0;left:0">${svgEdges}</svg>
+        ${htmlNodes}
+      </div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:4px">Click a node to navigate</div>
+  `;
+
+  // Wire node clicks
+  content.querySelectorAll('.graph-node').forEach(el => {
+    el.addEventListener('click', () => {
+      const name = el.dataset.name;
+      const ed = S.entities[name];
+      if (ed && ed.events.length > 0) {
+        openDossier(ed.events[ed.events.length - 1]._idx);
+      }
+    });
+  });
+}
+
+function renderDossierTimeline(primary) {
+  const content = $('dossier-content');
+  const entityData = S.entities[primary.name];
+  if (!entityData) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">◷</div><div>No timeline data</div></div>';
+    return;
+  }
+
+  // Show last 50 events for this entity, newest first
+  const events = entityData.events.slice(-50).reverse();
+  let html = `<div class="dossier-section"><div class="section-title">TIMELINE (${entityData.events.length} total)</div><div class="dossier-timeline">`;
+
+  events.forEach(ev => {
+    const icon = TYPE_ICONS[ev.type] || '·';
+    let body = ev.type;
+    if (ev.detail) body += ': ' + ev.detail.slice(0, 80);
+    if (ev.v1 && (ev.type === 'tool_call' || ev.type === 'llm_response')) body += ' ' + fmtDuration(ev.v1);
+
+    html += `<div class="dt-event" data-idx="${ev._idx}">
+      <span class="dt-time">${fmtTime(ev.ts)}</span>
+      <span class="dt-icon" style="color:var(--cyan)">${icon}</span>
+      <span class="dt-body">${esc(body)}</span>
+    </div>`;
+  });
+
+  html += '</div></div>';
+  content.innerHTML = html;
+
+  // Wire clicks to jump to event in feed
+  content.querySelectorAll('.dt-event').forEach(el => {
+    el.addEventListener('click', () => {
+      selectEvent(parseInt(el.dataset.idx));
+    });
+  });
+}
+
+// ═══ CONTEXT STRIP ═══
+function showContext(ev) {
+  if (!ev || !ev.detail) return;
+  contextStrip.classList.remove('collapsed');
+  $('context-title').textContent = (ev.model || ev.provider || ev.type).toUpperCase();
+  $('context-body').textContent = ev.detail;
+}
+
+// ═══ SSE CONNECTION ═══
+function connectSSE() {
+  const proto = location.protocol === 'https:' ? 'https' : 'http';
+  const url = `${proto}://${location.host}/api/events?since=${S.sincePos !== null ? S.sincePos : ''}`;
+
+  const es = new EventSource(url);
+
+  es.onopen = () => {
+    S.connected = true;
+    S.sseRetries = 0;
+    $('sse-dot').className = 'status-dot ok';
+    const conn = $('connecting');
+    if (conn) conn.remove();
+  };
+
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data._end) return; // stream end signal
+
+      if (Array.isArray(data)) {
+        if (data.length > 0) {
+          S.sincePos = data[data.length - 1]._pos || (parseInt(data[data.length - 1].ts) + 1);
+          // Remove _pos before storing
+          data.forEach(ev => delete ev._pos);
+          appendEvents(data);
+        }
+      } else if (data.ts) {
+        S.sincePos = parseInt(data.ts) + 1;
+        delete data._pos;
+        appendEvents([data]);
+      }
+    } catch (err) {
+      console.error('SSE parse error:', err, e.data);
+    }
+  };
+
+  es.onerror = () => {
+    S.connected = false;
+    $('sse-dot').className = 'status-dot warn';
+    es.close();
+    // Reconnect with backoff
+    const delay = Math.min(1000 * Math.pow(2, S.sseRetries), 16000);
+    S.sseRetries++;
+    setTimeout(connectSSE, delay);
+  };
+}
+
+// ═══ STATUS POLLING ═══
+async function pollStatus() {
+  try {
+    const proto = location.protocol === 'https:' ? 'https' : 'http';
+    const res = await fetch(`${proto}://${location.host}/api/status`);
+    S.status = await res.json();
+    renderStatus();
+  } catch (e) {
+    // silent — will retry
+  }
+}
+
+function renderStatus() {
+  if (!S.status) return;
+
+  // Uptime
+  const uptimeNs = S.status.uptime_ns || 0;
+  const uptimeSec = uptimeNs / 1e9;
+  const d = Math.floor(uptimeSec / 86400);
+  const h = Math.floor((uptimeSec % 86400) / 3600);
+  const m = Math.floor((uptimeSec % 3600) / 60);
+  $('uptime').textContent = d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+
+  // Tap position
+  if (S.status.event_tap) {
+    $('tap-pos').textContent = S.status.event_tap.pos;
+    $('tap-ring').textContent = `${S.status.event_tap.pos % 512}/${S.status.event_tap.ring_size}`;
+  }
+
+  // Health
+  if (S.status.health) {
+    const comps = Object.entries(S.status.health);
+    const healthy = comps.filter(([, v]) => v.status === 'ok' || v.status === 'healthy').length;
+    const total = comps.length;
+    const dot = $('health-status');
+    dot.textContent = `${healthy}/${total}`;
+    dot.style.color = healthy === total ? 'var(--green)' : healthy > 0 ? 'var(--amber)' : 'var(--red)';
+  }
+}
+
+// ═══ KEYBOARD NAVIGATION ═══
+document.addEventListener('keydown', (e) => {
+  // Don't capture when typing in inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  const visibleEvents = Array.from(feed.querySelectorAll('.event:not([style*="display: none"])'));
+
+  switch (e.key) {
+    case 'j':
+    case 'ArrowDown': {
+      e.preventDefault();
+      if (visibleEvents.length === 0) break;
+      const next = S.selectedIdx < 0 ? 0 : (() => {
+        const cur = visibleEvents.findIndex(el => parseInt(el.dataset.idx) === S.selectedIdx);
+        return cur < visibleEvents.length - 1 ? parseInt(visibleEvents[cur + 1].dataset.idx) : S.selectedIdx;
+      })();
+      selectEvent(next);
+      break;
+    }
+    case 'k':
+    case 'ArrowUp': {
+      e.preventDefault();
+      if (visibleEvents.length === 0) break;
+      const prev = S.selectedIdx < 0 ? 0 : (() => {
+        const cur = visibleEvents.findIndex(el => parseInt(el.dataset.idx) === S.selectedIdx);
+        return cur > 0 ? parseInt(visibleEvents[cur - 1].dataset.idx) : S.selectedIdx;
+      })();
+      selectEvent(prev);
+      break;
+    }
+    case 'Enter':
+      if (S.selectedIdx >= 0) openDossier(S.selectedIdx);
+      break;
+    case 'Escape':
+      if ($('search-overlay').classList.contains('visible')) {
+        $('search-overlay').classList.remove('visible');
+      } else if (!contextStrip.classList.contains('collapsed')) {
+        contextStrip.classList.add('collapsed');
+      } else if (S.zoomedEvent) {
+        closeDossier();
+      }
+      break;
+    case '/':
+      e.preventDefault();
+      $('search-overlay').classList.add('visible');
+      $('search-input').value = S.filter;
+      $('search-input').focus();
+      break;
+    case '.':
+      e.preventDefault();
+      S.paused = !S.paused;
+      feed.classList.toggle('paused', S.paused);
+      $('btn-pause').classList.toggle('active', S.paused);
+      $('btn-pause').textContent = S.paused ? '▶' : '⏸';
+      break;
+    case 'f':
+    case 'F':
+      e.preventDefault();
+      S.following = !S.following;
+      $('btn-follow').classList.toggle('active', S.following);
+      if (S.following) feed.scrollTop = feed.scrollHeight;
+      break;
+    case 'c':
+    case 'C':
+      e.preventDefault();
+      clearFeed();
+      break;
+    case 'Tab':
+      e.preventDefault();
+      if (S.zoomedEvent) {
+        const tabs = ['overview', 'graph', 'timeline'];
+        const ci = tabs.indexOf(S.activeTab);
+        switchTab(tabs[(ci + 1) % tabs.length]);
+      }
+      break;
+  }
+});
+
+// ═══ FILTER ═══
+$('filter').addEventListener('input', (e) => {
+  S.filter = e.target.value;
+  rerenderFeed();
+});
+
+// ═══ SEARCH ═══
+$('search-input').addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase();
+  const results = $('search-results');
+  if (q.length < 2) { results.innerHTML = ''; return; }
+
+  const matches = S.events.filter(ev => {
+    const searchable = [ev.type, ev.provider || '', ev.model || '', ev.detail || ''].join(' ').toLowerCase();
+    return searchable.includes(q);
+  }).slice(-20).reverse();
+
+  results.innerHTML = matches.map(ev =>
+    `<div class="search-result" data-idx="${ev._idx}">
+      <span class="sr-time">${fmtTime(ev.ts)}</span>
+      <span class="sr-body">${esc(ev.type)} ${(ev.model || ev.provider || '').slice(0, 40)} ${ev.detail ? esc(ev.detail.slice(0, 50)) : ''}</span>
+    </div>`
+  ).join('');
+
+  results.querySelectorAll('.search-result').forEach(el => {
+    el.addEventListener('click', () => {
+      selectEvent(parseInt(el.dataset.idx));
+      $('search-overlay').classList.remove('visible');
+    });
+  });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('search-overlay').classList.contains('visible')) {
+    $('search-overlay').classList.remove('visible');
+  }
+});
+
+// ═══ BUTTONS ═══
+$('btn-pause').addEventListener('click', () => {
+  S.paused = !S.paused;
+  feed.classList.toggle('paused', S.paused);
+  $('btn-pause').classList.toggle('active', S.paused);
+  $('btn-pause').textContent = S.paused ? '▶' : '⏸';
+});
+
+$('btn-follow').addEventListener('click', () => {
+  S.following = !S.following;
+  $('btn-follow').classList.toggle('active', S.following);
+  if (S.following) feed.scrollTop = feed.scrollHeight;
+});
+
+$('btn-clear').addEventListener('click', clearFeed);
+
+function clearFeed() {
+  S.events = [];
+  S.sincePos = null;
+  S.selectedIdx = -1;
+  S.entities = {};
+  feed.innerHTML = '';
+  $('event-count').textContent = '0';
+}
+
+$('context-close').addEventListener('click', () => contextStrip.classList.add('collapsed'));
+$('dossier-close').addEventListener('click', closeDossier);
+
+document.querySelectorAll('.dtab').forEach(tab => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+});
+
+// ═══ INIT ═══
+connectSSE();
+pollStatus();
+setInterval(pollStatus, 5000);
+
+// Update uptime counter
+setInterval(() => {
+  if (S.status && S.status.uptime_ns) {
+    $('uptime').textContent = fmtUptime(S.status.uptime_ns + (Date.now() - S.startTime) * 1e6);
+  }
+}, 1000);
+</script>
+</body>
+</html>

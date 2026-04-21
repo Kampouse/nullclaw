@@ -651,6 +651,7 @@ pub const ChannelRuntime = struct {
     tools: []const tools_mod.Tool,
     mem_rt: ?memory_mod.MemoryRuntime,
     noop_obs: *observability.NoopObserver,
+    multi_obs: ?*observability.MultiObserver = null,
     subagent_manager: ?*subagent_mod.SubagentManager,
     policy_tracker: *security.RateTracker,
     security_policy: *security.SecurityPolicy,
@@ -731,7 +732,18 @@ pub const ChannelRuntime = struct {
         const noop_obs = try allocator.create(observability.NoopObserver);
         errdefer allocator.destroy(noop_obs);
         noop_obs.* = .{};
-        const obs = noop_obs.observer();
+
+        // Use MultiObserver to fan out events to both noop and the global event tap.
+        // The event tap powers the /spy dashboard live feed.
+        const event_tap = @import("observability/event_tap.zig");
+        event_tap.initGlobal() catch {};
+        const tap_obs = event_tap.globalObserver();
+
+        var observers_buf: [2]observability.Observer = .{ noop_obs.observer(), tap_obs };
+        const multi_obs = try allocator.create(observability.MultiObserver);
+        errdefer allocator.destroy(multi_obs);
+        multi_obs.* = .{ .observers = &observers_buf };
+        const obs = multi_obs.observer();
 
         // Session manager
         var session_mgr = session_mod.SessionManager.init(allocator, io, config, provider_i, tools, mem_opt, obs, if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
@@ -747,6 +759,7 @@ pub const ChannelRuntime = struct {
             .tools = tools,
             .mem_rt = mem_rt,
             .noop_obs = noop_obs,
+            .multi_obs = multi_obs,
             .subagent_manager = subagent_manager,
             .policy_tracker = policy_tracker,
             .security_policy = security_policy,
@@ -774,6 +787,7 @@ pub const ChannelRuntime = struct {
         self.policy_tracker.deinit();
         alloc.destroy(self.security_policy);
         alloc.destroy(self.policy_tracker);
+        if (self.multi_obs) |m| alloc.destroy(m);
         alloc.destroy(self.noop_obs);
         alloc.destroy(self);
     }
