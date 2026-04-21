@@ -249,8 +249,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 /* ═══ CONNECTING STATE ═══ */
 .connecting {
-  display: flex; align-items: center; justify-content: center;
-  height: 100%; color: var(--text-dim); font-size: 11px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-dim); font-size: 12px; gap: 8px;
   animation: pulse 2s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
@@ -302,7 +302,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 <div id="main">
   <!-- FEED PANEL -->
   <div id="feed-panel">
-    <div id="feed"><div class="connecting" id="connecting">connecting to event stream...</div></div>
+    <div id="feed"><div class="connecting" id="connecting">waiting for events...<div style="font-size:10px;opacity:0.5">send a message to nullclaw to see activity</div></div></div>
     <div id="context-strip" class="collapsed">
       <div id="context-header">
         <span class="title" id="context-title">CONTEXT</span>
@@ -338,7 +338,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 <!-- STATUS BAR -->
 <div id="status">
-  <div class="status-channel"><div class="status-dot" id="sse-dot"></div><span class="status-label">SSE</span></div>
+  <div class="status-channel"><div class="status-dot" id="sse-dot"></div><span class="status-label">POLL</span></div>
   <span class="status-sep">│</span>
   <span class="status-label">HEALTH</span>
   <span class="status-val" id="health-status">--</span>
@@ -537,8 +537,7 @@ function renderEvent(ev, idx) {
     ${metric ? `<span class="ev-metric ${ev.type === 'tool_call' ? (ev.ok ? 'ok' : 'fail') : ''}">${esc(metric)}</span>` : ''}
   `;
 
-  div.addEventListener('click', () => selectEvent(idx));
-  div.addEventListener('dblclick', () => openDossier(idx));
+  div.addEventListener('click', () => openDossier(idx));
   return div;
 }
 
@@ -815,52 +814,38 @@ function showContext(ev) {
   $('context-body').textContent = ev.detail;
 }
 
-// ═══ SSE CONNECTION ═══
-function connectSSE() {
+// ═══ POLLING (not SSE — gateway is single-threaded) ═══
+function pollEvents() {
   const proto = location.protocol === 'https:' ? 'https' : 'http';
-  const url = `${proto}://${location.host}/api/events?since=${S.sincePos !== null ? S.sincePos : ''}`;
+  const url = `${proto}://${location.host}/api/events?since=${S.sincePos !== null ? S.sincePos : 0}`;
 
-  const es = new EventSource(url);
-
-  es.onopen = () => {
+  fetch(url).then(res => res.json()).then(data => {
+    if (data.error) return;
     S.connected = true;
-    S.sseRetries = 0;
     $('sse-dot').className = 'status-dot ok';
     const conn = $('connecting');
     if (conn) conn.remove();
-  };
 
-  es.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      if (data._end) return; // stream end signal
-
-      if (Array.isArray(data)) {
-        if (data.length > 0) {
-          S.sincePos = data[data.length - 1]._pos || (parseInt(data[data.length - 1].ts) + 1);
-          // Remove _pos before storing
-          data.forEach(ev => delete ev._pos);
-          appendEvents(data);
-        }
-      } else if (data.ts) {
-        S.sincePos = parseInt(data.ts) + 1;
-        delete data._pos;
-        appendEvents([data]);
-      }
-    } catch (err) {
-      console.error('SSE parse error:', err, e.data);
+    if (data.pos) {
+      S.sincePos = data.pos;
     }
-  };
-
-  es.onerror = () => {
+    if (data.events && Array.isArray(data.events) && data.events.length > 0) {
+      appendEvents(data.events);
+      // Auto-open dossier on latest event if none is open
+      if (!S.zoomedEvent) {
+        openDossier(S.events.length - 1);
+      }
+    }
+  }).catch(err => {
     S.connected = false;
     $('sse-dot').className = 'status-dot warn';
-    es.close();
-    // Reconnect with backoff
-    const delay = Math.min(1000 * Math.pow(2, S.sseRetries), 16000);
-    S.sseRetries++;
-    setTimeout(connectSSE, delay);
-  };
+    console.error('poll error:', err);
+  });
+}
+
+function connectPolling() {
+  pollEvents();
+  setInterval(pollEvents, 1000); // poll every 1s
 }
 
 // ═══ STATUS POLLING ═══
@@ -1052,7 +1037,7 @@ document.querySelectorAll('.dtab').forEach(tab => {
 });
 
 // ═══ INIT ═══
-connectSSE();
+connectPolling();
 pollStatus();
 setInterval(pollStatus, 5000);
 

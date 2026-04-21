@@ -2674,7 +2674,13 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 }) catch &.{};
 
                 const mem_opt: ?memory_mod.Memory = if (mem_rt) |rt| rt.memory else null;
-                var sm = session_mod.SessionManager.init(allocator, io, cfg, provider_i, tools_slice, mem_opt, gateway_thread_observer.observer(), if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
+                // Fan out observer events to both gateway_thread_observer (for eval tool tracking)
+                // and the global event tap (for /spy dashboard).
+                const event_tap_mod = @import("observability/event_tap.zig");
+                event_tap_mod.initGlobal() catch {};
+                var gateway_observers_buf: [2]observability.Observer = .{ gateway_thread_observer.observer(), event_tap_mod.globalObserver() };
+                var gateway_multi_obs = observability.MultiObserver{ .observers = &gateway_observers_buf };
+                var sm = session_mod.SessionManager.init(allocator, io, cfg, provider_i, tools_slice, mem_opt, gateway_multi_obs.observer(), if (mem_rt) |rt| rt.session_store else null, if (mem_rt) |*rt| rt.response_cache else null);
                 if (sec_policy_opt) |*policy| {
                     sm.policy = policy;
                 }
@@ -3077,13 +3083,13 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 response_body = status_json;
             },
             .api_events => {
-                // SSE endpoint — streams events from the global event tap.
-                // Client can pass ?since=<pos> to resume from a position.
+                // Events endpoint — returns JSON array of events since ?since= position.
+                // Uses polling from the frontend instead of SSE to avoid blocking
+                // the single-threaded gateway accept loop.
                 const event_tap_mod = @import("observability/event_tap.zig");
                 const tap = event_tap_mod.getTap() orelse {
                     response_status = "503 Service Unavailable";
                     response_body = "{\"error\":\"event tap not initialized\"}";
-                    // Still send as JSON
                     continue;
                 };
 
@@ -3092,44 +3098,15 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 const since_pos = if (since_param) |sp|
                     std.fmt.parseInt(u64, sp, 10) catch 0
                 else
-                    tap.currentPos(); // default: only new events
+                    0;
 
-                // Send SSE headers
-                const sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
-                _ = net_socket.writeAllSocket(client_fd, sse_header) catch |err| {
-                    log.warn("SSE header write failed: {}", .{err});
-                    continue;
-                };
-
-                // Stream events in a loop, checking for new events every 500ms
-                var last_pos = since_pos;
                 var event_buf: [131072]u8 = undefined; // 128KB buffer for event JSON
-                const max_iterations = 120; // 60 seconds max (120 * 500ms)
-                var iteration: usize = 0;
+                const current_pos = tap.currentPos();
+                const json = tap.readSinceJson(since_pos, &event_buf);
 
-                while (iteration < max_iterations) {
-                    const current = tap.currentPos();
-                    if (current > last_pos) {
-                        const json = tap.readSinceJson(last_pos, &event_buf);
-                        if (json.len > 2) { // more than "[]"
-                            // Send as SSE data
-                            const sse_data = std.fmt.allocPrint(req_allocator, "data: {s}\n\n", .{json}) catch continue;
-                            _ = net_socket.writeAllSocket(client_fd, sse_data) catch |err| {
-                                req_allocator.free(sse_data);
-                                log.warn("SSE data write failed: {}", .{err});
-                                break;
-                            };
-                            req_allocator.free(sse_data);
-                        }
-                        last_pos = current;
-                    }
-                    util.sleep(500 * std.time.ns_per_ms);
-                    iteration += 1;
-                }
-
-                // Send final event to signal end
-                _ = net_socket.writeAllSocket(client_fd, "data: {\"_end\":true}\n\n") catch {};
-                continue;
+                // Wrap with position metadata so the client can resume
+                const resp = std.fmt.allocPrint(req_allocator, "{{\"pos\":{d},\"events\":{s}}}", .{ current_pos, json }) catch "{\"error\":\"buffer overflow\"}";
+                response_body = resp;
             },
         } else {
             response_status = "404 Not Found";
