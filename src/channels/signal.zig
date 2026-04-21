@@ -872,7 +872,10 @@ pub const SignalChannel = struct {
             if (task.thread) |t| t.join();
         }
 
-        self.typing_mu.lock(std.Options.debug_io) catch {};
+        self.typing_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire typing_mu lock", .{});
+            return error.LockFailed;
+        };
         defer self.typing_mu.unlock(std.Options.debug_io);
         try self.typing_handles.put(self.allocator, key_copy, task);
     }
@@ -881,12 +884,15 @@ pub const SignalChannel = struct {
         var removed_key: ?[]u8 = null;
         var removed_task: ?*TypingTask = null;
 
-        self.typing_mu.lock(std.Options.debug_io) catch {};
+        self.typing_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire typing_mu lock", .{});
+            return error.LockFailed;
+        };
+        defer self.typing_mu.unlock(std.Options.debug_io);
         if (self.typing_handles.fetchRemove(target)) |entry| {
             removed_key = @constCast(entry.key);
             removed_task = entry.value;
         }
-        self.typing_mu.unlock(std.Options.debug_io);
 
         if (removed_task) |task| {
             task.stop_requested.store(true, .release);
@@ -899,10 +905,13 @@ pub const SignalChannel = struct {
     }
 
     fn stopAllTyping(self: *SignalChannel) void {
-        self.typing_mu.lock(std.Options.debug_io) catch {};
+        self.typing_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire typing_mu lock", .{});
+            return;
+        };
+        defer self.typing_mu.unlock(std.Options.debug_io);
         var handles = self.typing_handles;
         self.typing_handles = .empty;
-        self.typing_mu.unlock(std.Options.debug_io);
 
         var it = handles.iterator();
         while (it.next()) |entry| {

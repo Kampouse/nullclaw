@@ -759,7 +759,9 @@ pub const CronScheduler = struct {
                         job.last_output = self.allocator.dupe(u8, job.command) catch null;
 
                         if (out_bus) |b| {
-                            _ = deliverResult(self.allocator, job.delivery, job.command, true, b) catch {};
+                            _ = deliverResult(self.allocator, job.delivery, job.command, true, b) catch |err| {
+                                log.warn("cron: failed to deliver job result: {}", .{err});
+                            };
                         }
                     } else {
                         const process_io = util.createProcessIo();
@@ -774,7 +776,9 @@ pub const CronScheduler = struct {
                             job.last_output = null;
                             // Deliver error notification
                             if (out_bus) |b| {
-                                _ = deliverResult(self.allocator, job.delivery, "cron job failed to start", false, b) catch {};
+                                _ = deliverResult(self.allocator, job.delivery, "cron job failed to start", false, b) catch |delivery_err| {
+                                log.warn("cron: failed to deliver job result: {}", .{delivery_err});
+                            };
                             }
                             continue;
                         };
@@ -797,7 +801,9 @@ pub const CronScheduler = struct {
 
                         if (out_bus) |b| {
                             const output = job.last_output orelse "";
-                            _ = deliverResult(self.allocator, job.delivery, output, success, b) catch {};
+                            _ = deliverResult(self.allocator, job.delivery, output, success, b) catch |err| {
+                                log.warn("cron: failed to deliver job result: {}", .{err});
+                            };
                         }
                     }
                 },
@@ -813,7 +819,9 @@ pub const CronScheduler = struct {
                         job.last_output = self.allocator.dupe(u8, agent_output) catch null;
 
                         if (out_bus) |b| {
-                            _ = deliverResult(self.allocator, job.delivery, agent_output, true, b) catch {};
+                            _ = deliverResult(self.allocator, job.delivery, agent_output, true, b) catch |err| {
+                                log.warn("cron: failed to deliver job result: {}", .{err});
+                            };
                         }
                     } else {
                         const exec_result = runAgentJob(self.allocator, self.shell_cwd, agent_output, job.model, self.agent_timeout_secs, self.io) catch |err| {
@@ -824,7 +832,9 @@ pub const CronScheduler = struct {
                             if (job.last_output) |old| self.allocator.free(old);
                             job.last_output = std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch "error: allocation failed";
                             if (out_bus) |b| {
-                                _ = deliverResult(self.allocator, job.delivery, "agent job execution failed", false, b) catch {};
+                                _ = deliverResult(self.allocator, job.delivery, "agent job execution failed", false, b) catch |delivery_err| {
+                                log.warn("cron: failed to deliver job result: {}", .{delivery_err});
+                            };
                             }
                             continue;
                         };
@@ -834,7 +844,9 @@ pub const CronScheduler = struct {
                         job.owns_last_status = false;
                         if (job.last_output) |old| self.allocator.free(old);
                         if (out_bus) |b| {
-                            _ = deliverResult(self.allocator, job.delivery, exec_result.output, exec_result.success, b) catch {};
+                            _ = deliverResult(self.allocator, job.delivery, exec_result.output, exec_result.success, b) catch |err| {
+                                log.warn("cron: failed to deliver job result: {}", .{err});
+                            };
                         }
 
                         job.last_output = if (exec_result.output.len > 0) exec_result.output else blk: {

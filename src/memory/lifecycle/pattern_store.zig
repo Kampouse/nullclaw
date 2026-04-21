@@ -85,6 +85,18 @@ pub const PatternStore = struct {
         defer _ = c.sqlite3_finalize(stmt);
 
         _ = c.sqlite3_step(stmt);
+
+        // Create indexes for common query patterns
+        const indexes =
+            \\CREATE INDEX IF NOT EXISTS idx_patterns_status ON consolidation_patterns(status);
+            \\CREATE INDEX IF NOT EXISTS idx_patterns_type ON consolidation_patterns(pattern_type);
+        ;
+        var stmt2: ?*c.sqlite3_stmt = null;
+        const rc2 = c.sqlite3_prepare_v2(self.db, indexes, -1, &stmt2, null);
+        if (rc2 == c.SQLITE_OK) {
+            _ = c.sqlite3_step(stmt2);
+            _ = c.sqlite3_finalize(stmt2);
+        }
     }
 
     /// Store a single pattern.

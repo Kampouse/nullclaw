@@ -679,7 +679,9 @@ pub const NostrPublicChannel = struct {
         };
         defer file.close(io);
         if (@import("builtin").os.tag != .windows) {
-            file.setPermissions(io, @enumFromInt(0o600)) catch {};
+            file.setPermissions(io, @enumFromInt(0o600)) catch |err| {
+                log.warn("nostr_public: failed to set 0600 permissions on key file: {}", .{err});
+            };
         }
         file.writeStreamingAll(io, encrypted) catch |err| {
             log.warn("nostr_public: failed to write .nostr_key content: {} — key will not persist across restarts", .{err});
@@ -738,7 +740,9 @@ pub const NostrPublicChannel = struct {
         };
         defer file.close(io);
         if (@import("builtin").os.tag != .windows) {
-            file.setPermissions(io, @enumFromInt(0o600)) catch {};
+            file.setPermissions(io, @enumFromInt(0o600)) catch |err| {
+                log.warn("nostr_public: failed to set 0600 permissions on key file: {}", .{err});
+            };
         }
         file.writeStreamingAll(io, encrypted) catch |err| {
             log.warn("nostr_public: migration write content failed: {}", .{err});

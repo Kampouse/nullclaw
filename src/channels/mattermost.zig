@@ -370,7 +370,10 @@ pub const MattermostChannel = struct {
             self.gateway_thread = null;
         }
 
-        self.bot_state_mu.lock(std.Options.debug_io) catch {};
+        self.bot_state_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire bot_state_mu lock", .{});
+            return;
+        };
         defer self.bot_state_mu.unlock(std.Options.debug_io);
         if (self.bot_user_id) |uid| {
             self.allocator.free(uid);
@@ -581,9 +584,12 @@ pub const MattermostChannel = struct {
         }
 
         const sender_id = jsonString(post_obj, "user_id") orelse return;
-        self.bot_state_mu.lock(std.Options.debug_io) catch {};
+        self.bot_state_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire bot_state_mu lock", .{});
+            return;
+        };
+        defer self.bot_state_mu.unlock(std.Options.debug_io);
         const bot_id = self.bot_user_id;
-        self.bot_state_mu.unlock(std.Options.debug_io);
         if (bot_id) |bid| {
             if (std.mem.eql(u8, bid, sender_id)) return;
         }

@@ -1070,59 +1070,59 @@ pub const QQChannel = struct {
         }
 
         const final_content = if (image_markers.len == 0)
-            self.allocator.dupe(u8, trimmed) catch return
+            self.allocator.dupe(u8, trimmed) catch |err| { log.warn("qq: dupe trimmed content failed: {}", .{err}); return; }
         else if (trimmed.len == 0)
-            self.allocator.dupe(u8, image_markers) catch return
+            self.allocator.dupe(u8, image_markers) catch |err| { log.warn("qq: dupe image_markers failed: {}", .{err}); return; }
         else
-            std.fmt.allocPrint(self.allocator, "{s}\n\n{s}", .{ trimmed, image_markers }) catch return;
+            std.fmt.allocPrint(self.allocator, "{s}\n\n{s}", .{ trimmed, image_markers }) catch |err| { log.warn("qq: allocPrint final_content failed: {}", .{err}); return; };
         defer self.allocator.free(final_content);
 
         // Determine the reply target and session key based on event type
         var session_buf: [128]u8 = undefined;
         var reply_buf: [256]u8 = undefined;
         const session_key: []const u8 = if (is_c2c)
-            std.fmt.bufPrint(&session_buf, "qq:c2c:{s}", .{user_openid}) catch return
+            std.fmt.bufPrint(&session_buf, "qq:c2c:{s}", .{user_openid}) catch |err| { log.warn("qq: bufPrint session_key (c2c) failed: {}", .{err}); return; }
         else if (is_group)
-            std.fmt.bufPrint(&session_buf, "qq:group:{s}", .{group_openid}) catch return
+            std.fmt.bufPrint(&session_buf, "qq:group:{s}", .{group_openid}) catch |err| { log.warn("qq: bufPrint session_key (group) failed: {}", .{err}); return; }
         else if (channel_id.len > 0)
-            std.fmt.bufPrint(&session_buf, "qq:{s}", .{channel_id}) catch return
+            std.fmt.bufPrint(&session_buf, "qq:{s}", .{channel_id}) catch |err| { log.warn("qq: bufPrint session_key (channel) failed: {}", .{err}); return; }
         else
-            std.fmt.bufPrint(&session_buf, "qq:{s}", .{sender_id}) catch return;
+            std.fmt.bufPrint(&session_buf, "qq:{s}", .{sender_id}) catch |err| { log.warn("qq: bufPrint session_key (sender) failed: {}", .{err}); return; };
 
         const reply_target: []const u8 = if (is_c2c)
-            std.fmt.bufPrint(&reply_buf, "c2c:{s}:{s}", .{ user_openid, msg_id_str }) catch return
+            std.fmt.bufPrint(&reply_buf, "c2c:{s}:{s}", .{ user_openid, msg_id_str }) catch |err| { log.warn("qq: bufPrint reply_target (c2c) failed: {}", .{err}); return; }
         else if (is_group)
-            std.fmt.bufPrint(&reply_buf, "group:{s}:{s}", .{ group_openid, msg_id_str }) catch return
+            std.fmt.bufPrint(&reply_buf, "group:{s}:{s}", .{ group_openid, msg_id_str }) catch |err| { log.warn("qq: bufPrint reply_target (group) failed: {}", .{err}); return; }
         else if (is_dm)
-            std.fmt.bufPrint(&reply_buf, "dm:{s}", .{getJsonStringFromObj(d, "guild_id") orelse channel_id}) catch return
+            std.fmt.bufPrint(&reply_buf, "dm:{s}", .{getJsonStringFromObj(d, "guild_id") orelse channel_id}) catch |err| { log.warn("qq: bufPrint reply_target (dm) failed: {}", .{err}); return; }
         else
-            std.fmt.bufPrint(&reply_buf, "channel:{s}", .{channel_id}) catch return;
+            std.fmt.bufPrint(&reply_buf, "channel:{s}", .{channel_id}) catch |err| { log.warn("qq: bufPrint reply_target (channel) failed: {}", .{err}); return; };
 
         // Build metadata JSON
         var meta_buf: [512]u8 = undefined;
         var meta_fbs = util.fixedBufferStream(&meta_buf);
         const mw = meta_fbs.writer();
-        mw.writeStreamingAll(std.Options.debug_io, "{\"msg_id\":") catch return;
-        root.appendJsonStringW(mw, msg_id_str) catch return;
+        mw.writeStreamingAll(std.Options.debug_io, "{\"msg_id\":") catch |err| { log.warn("qq: write msg_id key failed: {}", .{err}); return; };
+        root.appendJsonStringW(mw, msg_id_str) catch |err| { log.warn("qq: appendJsonStringW msg_id failed: {}", .{err}); return; };
         mw.print(",\"is_dm\":{s},\"is_group\":{s}", .{
             if (is_dm) "true" else "false",
             if (is_group) "true" else "false",
-        }) catch return;
+        }) catch |err| { log.warn("qq: print is_dm/is_group failed: {}", .{err}); return; };
         if (channel_id.len > 0) {
-            mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":") catch return;
-            root.appendJsonStringW(mw, channel_id) catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"channel_id\":") catch |err| { log.warn("qq: write channel_id key failed: {}", .{err}); return; };
+            root.appendJsonStringW(mw, channel_id) catch |err| { log.warn("qq: appendJsonStringW channel_id failed: {}", .{err}); return; };
         }
         if (group_openid.len > 0) {
-            mw.writeStreamingAll(std.Options.debug_io, ",\"group_openid\":") catch return;
-            root.appendJsonStringW(mw, group_openid) catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"group_openid\":") catch |err| { log.warn("qq: write group_openid key failed: {}", .{err}); return; };
+            root.appendJsonStringW(mw, group_openid) catch |err| { log.warn("qq: appendJsonStringW group_openid failed: {}", .{err}); return; };
         }
         if (user_openid.len > 0) {
-            mw.writeStreamingAll(std.Options.debug_io, ",\"user_openid\":") catch return;
-            root.appendJsonStringW(mw, user_openid) catch return;
+            mw.writeStreamingAll(std.Options.debug_io, ",\"user_openid\":") catch |err| { log.warn("qq: write user_openid key failed: {}", .{err}); return; };
+            root.appendJsonStringW(mw, user_openid) catch |err| { log.warn("qq: appendJsonStringW user_openid failed: {}", .{err}); return; };
         }
-        mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":") catch return;
-        root.appendJsonStringW(mw, self.config.account_id) catch return;
-        mw.writeByte('}') catch return;
+        mw.writeStreamingAll(std.Options.debug_io, ",\"account_id\":") catch |err| { log.warn("qq: write account_id key failed: {}", .{err}); return; };
+        root.appendJsonStringW(mw, self.config.account_id) catch |err| { log.warn("qq: appendJsonStringW account_id failed: {}", .{err}); return; };
+        mw.writeByte('}') catch |err| { log.warn("qq: write closing brace failed: {}", .{err}); return; };
         const metadata = meta_fbs.getWritten();
 
         log.info("QQ inbound: type={s} sender={s} target={s}", .{ event_type, sender_id, reply_target });
@@ -1234,9 +1234,9 @@ pub const QQChannel = struct {
         // Build URL based on target type
         var url_buf: [512]u8 = undefined;
         const url = if (is_group)
-            buildGroupSendUrl(&url_buf, base, target_id) catch return
+            buildGroupSendUrl(&url_buf, base, target_id) catch |err| { log.warn("qq: buildGroupSendUrl failed: {}", .{err}); return; }
         else if (is_c2c)
-            buildC2cSendUrl(&url_buf, base, target_id) catch return
+            buildC2cSendUrl(&url_buf, base, target_id) catch |err| { log.warn("qq: buildC2cSendUrl failed: {}", .{err}); return; }
         else if (is_dm)
             try buildDmUrl(&url_buf, base, target_id)
         else
@@ -1595,7 +1595,7 @@ pub const QQChannel = struct {
     fn sendHeartbeatNow(self: *QQChannel, ws: *websocket.WsClient) void {
         var hb_buf: [64]u8 = undefined;
         const seq: ?i64 = if (self.has_sequence.load(.acquire)) self.sequence.load(.acquire) else null;
-        const hb_payload = buildHeartbeatPayload(&hb_buf, seq) catch return;
+        const hb_payload = buildHeartbeatPayload(&hb_buf, seq) catch |err| { log.warn("qq: buildHeartbeatPayload failed: {}", .{err}); return; };
         ws.writeText(hb_payload) catch |err| {
             log.warn("Heartbeat failed: {}", .{err});
         };

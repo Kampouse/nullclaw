@@ -2698,13 +2698,17 @@ pub const TelegramChannel = struct {
         }
 
         if (body.len == 0) {
-            self.sendWebhookResponse(client_fd, 400, "Empty body") catch {};
+            self.sendWebhookResponse(client_fd, 400, "Empty body") catch |err| {
+                log.warn("[WEBHOOK] failed to send 400 response: {}", .{err});
+            };
             return;
         }
 
         // Parse JSON
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
-            self.sendWebhookResponse(client_fd, 400, "Invalid JSON") catch {};
+            self.sendWebhookResponse(client_fd, 400, "Invalid JSON") catch |err| {
+                log.warn("[WEBHOOK] failed to send 400 response: {}", .{err});
+            };
             return;
         };
         defer parsed.deinit();
@@ -2733,7 +2737,9 @@ pub const TelegramChannel = struct {
         log.debug("[WEBHOOK] processUpdate returned {} messages", .{messages.items.len});
 
         // Send 200 OK
-        self.sendWebhookResponse(client_fd, 200, "{}") catch {};
+        self.sendWebhookResponse(client_fd, 200, "{}") catch |err| {
+            log.warn("[WEBHOOK] failed to send 200 OK: {}", .{err});
+        };
         log.debug("[WEBHOOK] Sent 200 OK", .{});
 
         // Step 5: Process messages through webhook handler if set

@@ -62,7 +62,10 @@ pub const MaixCamChannel = struct {
 
     /// Return the number of currently connected clients.
     pub fn clientCount(self: *MaixCamChannel) usize {
-        self.clients_mu.lock(std.Options.debug_io) catch {};
+        self.clients_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire clients_mu lock", .{});
+            return 0;
+        };
         defer self.clients_mu.unlock(std.Options.debug_io);
         return self.clients.items.len;
     }
@@ -214,7 +217,10 @@ pub const MaixCamChannel = struct {
 
     /// Send a message to all connected clients.
     pub fn broadcast(self: *MaixCamChannel, data: []const u8) void {
-        self.clients_mu.lock(std.Options.debug_io) catch {};
+        self.clients_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire clients_mu lock", .{});
+            return;
+        };
         defer self.clients_mu.unlock(std.Options.debug_io);
 
         var i: usize = 0;
@@ -246,7 +252,10 @@ pub const MaixCamChannel = struct {
     }
 
     fn sendToDevice(self: *MaixCamChannel, device_id: []const u8, data: []const u8) void {
-        self.clients_mu.lock(std.Options.debug_io) catch {};
+        self.clients_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire clients_mu lock", .{});
+            return;
+        };
         defer self.clients_mu.unlock(std.Options.debug_io);
 
         for (self.clients.items) |*client| {
@@ -265,7 +274,10 @@ pub const MaixCamChannel = struct {
     }
 
     fn closeAllClients(self: *MaixCamChannel) void {
-        self.clients_mu.lock(std.Options.debug_io) catch {};
+        self.clients_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire clients_mu lock", .{});
+            return;
+        };
         defer self.clients_mu.unlock(std.Options.debug_io);
         for (self.clients.items) |*client| {
             if (client.device_id) |did| self.allocator.free(did);
@@ -376,7 +388,10 @@ pub const MaixCamChannel = struct {
     }
 
     fn updateClientDeviceId(self: *MaixCamChannel, stream: std.net.Stream, device_id: []const u8) void {
-        self.clients_mu.lock(std.Options.debug_io) catch {};
+        self.clients_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire clients_mu lock", .{});
+            return;
+        };
         defer self.clients_mu.unlock(std.Options.debug_io);
         for (self.clients.items) |*client| {
             if (client.stream.handle == stream.handle) {
@@ -389,7 +404,10 @@ pub const MaixCamChannel = struct {
     }
 
     fn removeClient(self: *MaixCamChannel, stream: std.net.Stream) void {
-        self.clients_mu.lock(std.Options.debug_io) catch {};
+        self.clients_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire clients_mu lock", .{});
+            return;
+        };
         defer self.clients_mu.unlock(std.Options.debug_io);
         for (self.clients.items, 0..) |*client, i| {
             if (client.stream.handle == stream.handle) {
@@ -401,7 +419,10 @@ pub const MaixCamChannel = struct {
     }
 
     fn addClient(self: *MaixCamChannel, stream: std.net.Stream) !void {
-        self.clients_mu.lock(std.Options.debug_io) catch {};
+        self.clients_mu.lock(std.Options.debug_io) catch {
+            log.warn("failed to acquire clients_mu lock", .{});
+            return error.LockFailed;
+        };
         defer self.clients_mu.unlock(std.Options.debug_io);
         try self.clients.append(self.allocator, .{ .stream = stream });
     }

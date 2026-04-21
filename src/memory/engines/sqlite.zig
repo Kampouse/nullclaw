@@ -124,7 +124,6 @@ pub const SqliteMemory = struct {
             \\);
             \\CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
             \\CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
-            \\CREATE INDEX IF NOT EXISTS idx_memories_key_session ON memories(key, COALESCE(session_id, '__global__'));
             \\CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
             \\CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
             \\
@@ -213,20 +212,9 @@ pub const SqliteMemory = struct {
                 self.logExecFailure("session_id migration", "ALTER TABLE memories ADD COLUMN session_id TEXT", rc, err_msg);
             }
             if (err_msg) |msg| c.sqlite3_free(msg);
+            if (!ignore_error) return error.MigrationFailed;
         }
-        // Ensure index exists regardless
-        var err_msg2: [*c]u8 = null;
-        const rc2 = c.sqlite3_exec(
-            self.db,
-            "CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);",
-            null,
-            null,
-            &err_msg2,
-        );
-        if (rc2 != c.SQLITE_OK) {
-            self.logExecFailure("session_id migration", "CREATE INDEX IF NOT EXISTS idx_memories_session", rc2, err_msg2);
-            if (err_msg2) |msg| c.sqlite3_free(msg);
-        }
+        // Note: idx_memories_session is already created in migrate() — no need to create it here.
     }
 
     /// Migration: create consolidation_patterns table for pattern review workflow.
@@ -265,6 +253,7 @@ pub const SqliteMemory = struct {
         if (rc2 != c.SQLITE_OK) {
             self.logExecFailure("consolidation_patterns migration", "CREATE INDEX", rc2, err_msg2);
             if (err_msg2) |msg| c.sqlite3_free(msg);
+            return error.MigrationFailed;
         }
     }
 

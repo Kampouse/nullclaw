@@ -843,7 +843,9 @@ pub const DiscordChannel = struct {
         defer content_buf.deinit(self.allocator);
 
         if (content.len > 0) {
-            content_buf.appendSlice(self.allocator, content) catch {};
+            content_buf.appendSlice(self.allocator, content) catch |err| {
+                log.warn("discord: failed to append message content: {}", .{err});
+            };
         }
 
         if (d_obj.get("attachments")) |att_val| {
@@ -873,10 +875,18 @@ pub const DiscordChannel = struct {
                                         };
                                         file.close(io);
 
-                                        if (content_buf.items.len > 0) content_buf.appendSlice(self.allocator, "\n") catch {};
-                                        content_buf.appendSlice(self.allocator, "[IMAGE:") catch {};
-                                        content_buf.appendSlice(self.allocator, local_path) catch {};
-                                        content_buf.appendSlice(self.allocator, "]") catch {};
+                                        if (content_buf.items.len > 0) content_buf.appendSlice(self.allocator, "\n") catch |err| {
+                                            log.warn("discord: failed to append newline before attachment: {}", .{err});
+                                        };
+                                        content_buf.appendSlice(self.allocator, "[IMAGE:") catch |err| {
+                                            log.warn("discord: failed to append image tag start: {}", .{err});
+                                        };
+                                        content_buf.appendSlice(self.allocator, local_path) catch |err| {
+                                            log.warn("discord: failed to append image path: {}", .{err});
+                                        };
+                                        content_buf.appendSlice(self.allocator, "]") catch |err| {
+                                            log.warn("discord: failed to append image tag end: {}", .{err});
+                                        };
                                     } else |_| {}
                                 } else |err| {
                                     log.warn("Discord: failed to download attachment: {}", .{err});
