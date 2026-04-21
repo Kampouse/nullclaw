@@ -24,15 +24,13 @@ const SAFE_ENV_VARS = [_][]const u8{
     "PATH", "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
 };
 
-/// Subprocess request - command to execute
+/// Subprocess request - command to execute (heap-allocated, lives until executor processes it)
 const SubprocessRequest = struct {
-    command: []const u8,
-    cwd: []const u8,
-    result_ptr: *?*SubprocessResult,
-    done: *std.atomic.Value(bool),
+    command: []const u8, // page_allocator-owned, freed by executor
+    cwd: []const u8,     // page_allocator-owned, freed by executor
 };
 
-/// Subprocess result - output from command execution
+/// Subprocess result - output from command execution (heap-allocated, freed by caller)
 const SubprocessResult = struct {
     success: bool,
     stdout: []const u8,
@@ -40,96 +38,131 @@ const SubprocessResult = struct {
     exit_code: ?u8,
 };
 
-/// Dedicated subprocess thread - executes shell commands safely
-/// This runs in a single thread to avoid macOS fork() issues with multi-threading
+/// Dedicated subprocess thread - executes shell commands safely.
+/// Uses a single-slot synchronous relay pattern: one request at a time,
+/// no queue, no stack-pointer sharing, proper cancellation on timeout.
 const SubprocessExecutor = struct {
-    request_queue: std.ArrayListUnmanaged(SubprocessRequest),
-    queue_spinlock: Spinlock,
     thread: ?std.Thread,
     running: std.atomic.Value(bool),
+
+    // Single request slot (written by caller, consumed by executor thread)
+    pending_request: ?*SubprocessRequest,
+    pending_lock: Spinlock,
+    request_available: std.atomic.Value(bool),
+
+    // Single result slot (written by executor thread, consumed by caller)
+    pending_result: ?*SubprocessResult,
+    result_available: std.atomic.Value(bool),
+
+    // Cancellation flag - set by caller on timeout, checked by executor
+    cancelled: std.atomic.Value(bool),
 
     fn run(executor: *SubprocessExecutor) void {
         log.info("Subprocess executor thread started", .{});
 
         while (executor.running.load(.acquire)) {
-            executor.queue_spinlock.lock();
-
-            if (executor.request_queue.items.len == 0) {
-                // Queue empty, wait for request
-                executor.queue_spinlock.unlock();
-                util.sleep(50 * std.time.ns_per_ms);
+            // Wait for a request
+            if (!executor.request_available.load(.acquire)) {
+                util.sleep(10 * std.time.ns_per_ms);
                 continue;
             }
 
-            const req = executor.request_queue.orderedRemove(0);
-            executor.queue_spinlock.unlock();
+            // Grab the request
+            executor.pending_lock.lock();
+            const req = executor.pending_request.?;
+            executor.pending_request = null;
+            executor.pending_lock.unlock();
+            executor.request_available.store(false, .release);
 
-            log.debug("Subprocess executor executing: {s}", .{req.command[0..@min(req.command.len, 100)]});
+            // Reset cancellation for this request
+            executor.cancelled.store(false, .release);
 
+            // Execute the command
             const proc = @import("process_util.zig");
-            const result = proc.run(std.heap.page_allocator, &.{ platform.getShell(), platform.getShellFlag(), req.command }, .{
+            const result = proc.run(std.heap.page_allocator, &.{
+                platform.getShell(), platform.getShellFlag(), req.command,
+            }, .{
                 .cwd = req.cwd,
                 .max_output_bytes = DEFAULT_MAX_OUTPUT_BYTES,
             }) catch |err| {
                 log.err("Subprocess execution failed: {}", .{err});
-                const result_ptr = std.heap.page_allocator.create(SubprocessResult) catch {
+
+                // Build an error result
+                const err_result = std.heap.page_allocator.create(SubprocessResult) catch {
                     log.err("Failed to allocate error result", .{});
                     std.heap.page_allocator.free(req.command);
                     std.heap.page_allocator.free(req.cwd);
+                    std.heap.page_allocator.destroy(req);
                     continue;
                 };
-                result_ptr.* = SubprocessResult{
+                err_result.* = .{
                     .success = false,
                     .stdout = "",
                     .stderr = "Execution failed",
                     .exit_code = null,
                 };
 
-                req.result_ptr.* = result_ptr;
-                req.done.store(true, .release);
-                std.heap.page_allocator.free(req.command);
-                std.heap.page_allocator.free(req.cwd);
-                continue;
-            };
-
-            // Store result in page allocator memory (always valid)
-            const result_ptr = std.heap.page_allocator.create(SubprocessResult) catch {
-                log.err("Failed to allocate subprocess result", .{});
-                const err_result_ptr = std.heap.page_allocator.create(SubprocessResult) catch {
-                    std.heap.page_allocator.free(result.stderr);
-                    std.heap.page_allocator.free(result.stdout);
+                // Check cancellation before delivering
+                if (executor.cancelled.load(.acquire)) {
+                    // Caller timed out - clean up everything ourselves
+                    std.heap.page_allocator.destroy(err_result);
                     std.heap.page_allocator.free(req.command);
                     std.heap.page_allocator.free(req.cwd);
+                    std.heap.page_allocator.destroy(req);
                     continue;
-                };
-                err_result_ptr.* = SubprocessResult{
-                    .success = false,
-                    .stdout = "",
-                    .stderr = "Memory allocation failed",
-                    .exit_code = null,
-                };
+                }
 
-                req.result_ptr.* = err_result_ptr;
-                req.done.store(true, .release);
+                executor.pending_result = err_result;
+                executor.result_available.store(true, .release);
                 std.heap.page_allocator.free(req.command);
                 std.heap.page_allocator.free(req.cwd);
+                std.heap.page_allocator.destroy(req);
                 continue;
             };
 
-            result_ptr.* = SubprocessResult{
+            // Build the success/failure result
+            const result_ptr = std.heap.page_allocator.create(SubprocessResult) catch {
+                log.err("Failed to allocate subprocess result", .{});
+                result.deinit(std.heap.page_allocator);
+                std.heap.page_allocator.free(req.command);
+                std.heap.page_allocator.free(req.cwd);
+                std.heap.page_allocator.destroy(req);
+                continue;
+            };
+            result_ptr.* = .{
                 .success = result.success,
-                .stdout = std.heap.page_allocator.dupe(u8, result.stdout) catch "",
-                .stderr = std.heap.page_allocator.dupe(u8, result.stderr) catch "",
+                .stdout = if (result.stdout.len > 0)
+                    std.heap.page_allocator.dupe(u8, result.stdout) catch ""
+                else
+                    "",
+                .stderr = if (result.stderr.len > 0)
+                    std.heap.page_allocator.dupe(u8, result.stderr) catch ""
+                else
+                    "",
                 .exit_code = if (result.exit_code) |code| @as(u8, @intCast(code)) else null,
             };
+            result.deinit(std.heap.page_allocator);
 
-            std.heap.page_allocator.free(result.stderr);
-            std.heap.page_allocator.free(result.stdout);
+            // Check cancellation before delivering
+            if (executor.cancelled.load(.acquire)) {
+                // Caller timed out - clean up everything ourselves
+                if (result_ptr.stdout.len > 0) std.heap.page_allocator.free(result_ptr.stdout);
+                if (result_ptr.stderr.len > 0) std.heap.page_allocator.free(result_ptr.stderr);
+                std.heap.page_allocator.destroy(result_ptr);
+                std.heap.page_allocator.free(req.command);
+                std.heap.page_allocator.free(req.cwd);
+                std.heap.page_allocator.destroy(req);
+                continue;
+            }
 
-            req.result_ptr.* = result_ptr;
-            req.done.store(true, .release);
+            // Deliver result
+            executor.pending_result = result_ptr;
+            executor.result_available.store(true, .release);
+
+            // Free request resources (no longer needed)
             std.heap.page_allocator.free(req.command);
             std.heap.page_allocator.free(req.cwd);
+            std.heap.page_allocator.destroy(req);
         }
     }
 
@@ -137,11 +170,15 @@ const SubprocessExecutor = struct {
         const executor = try allocator.create(SubprocessExecutor);
         errdefer allocator.destroy(executor);
 
-        executor.* = SubprocessExecutor{
-            .request_queue = .{},
-            .queue_spinlock = Spinlock.init(),
+        executor.* = .{
             .thread = null,
             .running = std.atomic.Value(bool).init(true),
+            .pending_request = null,
+            .pending_lock = Spinlock.init(),
+            .request_available = std.atomic.Value(bool).init(false),
+            .pending_result = null,
+            .result_available = std.atomic.Value(bool).init(false),
+            .cancelled = std.atomic.Value(bool).init(false),
         };
 
         executor.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, run, .{executor});
@@ -151,56 +188,68 @@ const SubprocessExecutor = struct {
     }
 
     pub fn deinit(self: *SubprocessExecutor, allocator: std.mem.Allocator) void {
-        // Signal thread to stop
         self.running.store(false, .release);
 
         if (self.thread) |t| {
             t.join();
         }
 
-        // Clean up any remaining requests in queue
-        self.queue_spinlock.lock();
-        defer self.queue_spinlock.unlock();
-        for (self.request_queue.items) |*req| {
-            std.heap.page_allocator.free(req.command);
-            std.heap.page_allocator.free(req.cwd);
-        }
-        self.request_queue.deinit(allocator);
-
         allocator.destroy(self);
         log.info("Subprocess executor thread stopped", .{});
     }
 
-    pub fn execute(self: *SubprocessExecutor, command: []const u8, cwd: []const u8, allocator: std.mem.Allocator) !*SubprocessResult {
-        var result_ptr: ?*SubprocessResult = null;
-        var done = std.atomic.Value(bool).init(false);
-
-        // Create and enqueue request (duplicate command/cwd for subprocess thread)
-        const req = SubprocessRequest{
+    /// Submit a command and block until the result is ready (or timeout).
+    /// Returns a heap-allocated SubprocessResult — caller MUST free it with freeResult().
+    pub fn execute(self: *SubprocessExecutor, command: []const u8, cwd: []const u8) !*SubprocessResult {
+        // Allocate request on heap (lives until executor processes it)
+        const req = try std.heap.page_allocator.create(SubprocessRequest);
+        errdefer std.heap.page_allocator.destroy(req);
+        req.* = .{
             .command = try std.heap.page_allocator.dupe(u8, command),
             .cwd = try std.heap.page_allocator.dupe(u8, cwd),
-            .result_ptr = &result_ptr,
-            .done = &done,
         };
+        errdefer {
+            std.heap.page_allocator.free(req.command);
+            std.heap.page_allocator.free(req.cwd);
+        }
 
-        self.queue_spinlock.lock();
-        try self.request_queue.append(allocator, req);
-        self.queue_spinlock.unlock();
+        // Reset state
+        self.cancelled.store(false, .release);
+        self.result_available.store(false, .release);
 
-        // Poll for result (with timeout)
-        // 60 second timeout with 10ms sleep intervals = 6000 iterations
+        // Submit request
+        self.pending_lock.lock();
+        self.pending_request = req;
+        self.pending_lock.unlock();
+        self.request_available.store(true, .release);
+
+        // Wait for result with timeout (60s at 10ms intervals = 6000 iterations)
         const timeout_iterations = 6000;
         var iteration: usize = 0;
 
-        while (!done.load(.acquire)) {
+        while (!self.result_available.load(.acquire)) {
             if (iteration >= timeout_iterations) {
+                // Timeout - tell executor to clean up the request and result
+                self.cancelled.store(true, .release);
                 return error.Timeout;
             }
             util.sleep(10 * std.time.ns_per_ms);
             iteration += 1;
         }
 
-        return result_ptr.?;
+        // Grab result
+        self.result_available.store(false, .release);
+        const result = self.pending_result.?;
+        self.pending_result = null;
+
+        return result;
+    }
+
+    /// Free a result previously returned by execute().
+    pub fn freeResult(result: *SubprocessResult) void {
+        if (result.stdout.len > 0) std.heap.page_allocator.free(result.stdout);
+        if (result.stderr.len > 0) std.heap.page_allocator.free(result.stderr);
+        std.heap.page_allocator.destroy(result);
     }
 };
 
@@ -208,13 +257,14 @@ const SubprocessExecutor = struct {
 var subprocess_executor: ?*SubprocessExecutor = null;
 var subprocess_executor_spinlock: Spinlock = .init();
 
-/// Get or create the global subprocess executor
-fn getSubprocessExecutor(allocator: std.mem.Allocator) !*SubprocessExecutor {
+/// Get or create the global subprocess executor.
+/// Uses page_allocator since the executor is a process-lifetime singleton.
+fn getSubprocessExecutor() !*SubprocessExecutor {
     subprocess_executor_spinlock.lock();
     defer subprocess_executor_spinlock.unlock();
 
     if (subprocess_executor == null) {
-        subprocess_executor = try SubprocessExecutor.init(allocator);
+        subprocess_executor = try SubprocessExecutor.init(std.heap.page_allocator);
     }
 
     return subprocess_executor.?;
@@ -295,32 +345,18 @@ pub const ShellTool = struct {
         // Environment filtering is not supported in the new API.
         // TODO: Implement environment filtering if needed for security
 
-        // TEMPORARILY DISABLED: Execute in dedicated subprocess thread to avoid macOS fork() crashes
-        // The subprocess executor is causing memory corruption that crashes other tools
-        // TODO: Fix thread-safety issues with subprocess executor
-        // const executor = try getSubprocessExecutor(allocator);
-        // slog.logStructured("DEBUG", "shell", "spawn_start", .{});
-        // const result_ptr = try executor.execute(command, effective_cwd, allocator);
-        // slog.logStructured("DEBUG", "shell", "spawn_complete", .{.success = result_ptr.success});
-
-        // Direct execution (will crash on macOS with multi-threading, but avoids memory corruption)
-        slog.logStructured("DEBUG", "shell", "direct_execute_start", .{});
-        const proc = @import("process_util.zig");
-        const exec_result = proc.run(allocator, &.{ platform.getShell(), platform.getShellFlag(), command }, .{
-            .cwd = effective_cwd,
-            .max_output_bytes = DEFAULT_MAX_OUTPUT_BYTES,
-        }) catch |err| {
+        // Execute in dedicated subprocess thread to avoid macOS fork() crashes
+        slog.logStructured("DEBUG", "shell", "spawn_start", .{});
+        const executor = try getSubprocessExecutor();
+        const exec_result = executor.execute(command, effective_cwd) catch |err| {
             slog.logStructured("ERROR", "shell", "execute_failed", .{.err_str = @errorName(err)});
             const msg = try std.fmt.allocPrint(allocator, "Shell execution failed: {}", .{err});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
-        defer {
-            allocator.free(exec_result.stdout);
-            allocator.free(exec_result.stderr);
-        }
-        slog.logStructured("DEBUG", "shell", "direct_execute_complete", .{.success = exec_result.success});
+        defer SubprocessExecutor.freeResult(exec_result);
+        slog.logStructured("DEBUG", "shell", "spawn_complete", .{.success = exec_result.success});
 
-        // Convert direct execution result to ToolResult
+        // Convert subprocess result to ToolResult
         if (exec_result.success) {
             const result = if (exec_result.stdout.len > 0)
                 ToolResult{ .success = true, .output = try allocator.dupe(u8, exec_result.stdout), .owns_output = true }
