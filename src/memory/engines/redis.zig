@@ -570,7 +570,7 @@ pub const RedisMemory = struct {
         return entries.toOwnedSlice(allocator);
     }
 
-    fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
+    fn implForget(ptr: *anyopaque, key: []const u8, _: ?[]const u8) anyerror!bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
         const entry_key = try self_.prefixedKey("entry", key);
@@ -995,7 +995,7 @@ test "integration: redis store and get" {
     const m = mem.memory();
 
     // Clean up first
-    _ = try m.forget("test-integration-key");
+    _ = try m.forget("test-integration-key", null);
 
     try m.store("test-integration-key", "hello redis", .core, null);
 
@@ -1008,7 +1008,7 @@ test "integration: redis store and get" {
     try std.testing.expect(entry.category.eql(.core));
 
     // Cleanup
-    _ = try m.forget("test-integration-key");
+    _ = try m.forget("test-integration-key", null);
 }
 
 test "integration: redis count" {
@@ -1029,8 +1029,8 @@ test "integration: redis count" {
     try std.testing.expect(n >= 2);
 
     // Cleanup
-    _ = try m.forget("count-a");
-    _ = try m.forget("count-b");
+    _ = try m.forget("count-a", null);
+    _ = try m.forget("count-b", null);
 }
 
 test "integration: redis recall substring" {
@@ -1053,8 +1053,8 @@ test "integration: redis recall substring" {
     try std.testing.expectEqualStrings("the quick brown fox", results[0].content);
 
     // Cleanup
-    _ = try m.forget("recall-1");
-    _ = try m.forget("recall-2");
+    _ = try m.forget("recall-1", null);
+    _ = try m.forget("recall-2", null);
 }
 
 test "integration: redis forget" {
@@ -1068,7 +1068,7 @@ test "integration: redis forget" {
     const m = mem.memory();
 
     try m.store("forget-me", "temp data", .conversation, null);
-    const ok = try m.forget("forget-me");
+    const ok = try m.forget("forget-me", null);
     try std.testing.expect(ok);
 
     const entry = try m.get(std.testing.allocator, "forget-me");

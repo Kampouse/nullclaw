@@ -435,11 +435,13 @@ pub fn integrate(allocator: std.mem.Allocator, candidate: SkillCandidate, skills
     defer allocator.free(target_path);
 
     // Clone the repository using git
+    // Use .ignore for stdout/stderr to avoid pipe-buffer deadlock:
+    // git can produce >64KB output which fills the pipe and blocks the child.
     const argv = &.{ "git", "clone", candidate.repo_url, target_path };
     var child = std.process.spawn(std.Options.debug_io, .{
         .argv = argv,
-        .stderr = .pipe,
-        .stdout = .pipe,
+        .stderr = .ignore,
+        .stdout = .ignore,
     }) catch {
         return IntegrationResult{
             .skill_name = safe_name,

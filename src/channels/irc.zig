@@ -533,15 +533,10 @@ pub const IrcChannel = struct {
         }
 
         if (self.stream) |stream| {
-            // Close the socket using OS-specific syscall
-            if (comptime builtin.os.tag == .linux) {
-                _ = std.os.linux.close(stream);
-            } else if (comptime builtin.os.tag == .macos) {
-                const macos_close = struct {
-                    extern "c" fn close(c_int) c_int;
-                };
-                _ = macos_close.close(@as(c_int, @intCast(stream)));
-            }
+            // Close the socket fd. Use shutdown(SHUT_RD) first to unblock
+            // any blocking read in the reader thread, then close the fd.
+            _ = std.posix.system.shutdown(stream, std.posix.SHUT.RD);
+            _ = std.os.linux.close(stream);
             self.stream = null;
         }
     }

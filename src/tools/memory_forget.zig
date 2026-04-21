@@ -33,12 +33,14 @@ pub const MemoryForgetTool = struct {
             return ToolResult.fail("Missing 'key' parameter");
         if (key.len == 0) return ToolResult.fail("'key' must not be empty");
 
+        const session_id = root.getString(args, "session_id");
+
         const m = self.memory orelse {
             const msg = try std.fmt.allocPrint(allocator, "Memory backend not configured. Cannot forget: {s}", .{key});
             return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };
 
-        const forgotten = m.forget(key) catch |err| {
+        const forgotten = m.forget(key, session_id) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "Failed to forget memory '{s}': {s}", .{ key, @errorName(err) });
             return ToolResult{ .success = false, .output = msg, .owns_output = true };
         };

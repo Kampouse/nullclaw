@@ -237,7 +237,7 @@ pub fn pruneConversationRows(allocator: std.mem.Allocator, mem: Memory, retentio
         // Parse timestamp from entry key (format: "conv_<timestamp>_<id>")
         const ts = parseConversationTimestamp(entry.key) orelse continue;
         if (ts < cutoff_secs) {
-            _ = mem.forget(entry.key) catch continue;
+            _ = mem.forget(entry.key, null) catch continue;
             pruned += 1;
         }
     }

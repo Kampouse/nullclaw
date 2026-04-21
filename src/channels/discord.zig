@@ -356,25 +356,12 @@ pub const DiscordChannel = struct {
         self.running.store(false, .release);
         self.heartbeat_stop.store(true, .release);
         self.stopAllTyping() catch {};
-        // Close socket to unblock blocking read
+        // Unblock the blocking read in the gateway thread by shutting down
+        // the socket for reading. The gateway thread's defer ws.deinit()
+        // will close the fd — do NOT close it here to avoid double-close.
         const fd = self.ws_fd.load(.acquire);
         if (fd != invalid_socket) {
-            if (comptime builtin.os.tag == .windows) {
-                _ = std.os.windows.ws2_32.closesocket(fd);
-            } else {
-                const posix_close = struct {
-                    fn close(fd_val: std.posix.fd_t) void {
-                        // Use system-specific close for file descriptors
-                        if (comptime builtin.os.tag == .linux) {
-                            _ = std.os.linux.close(fd_val);
-                        } else {
-                            // Fallback for other POSIX systems
-                            _ = std.c.close(@as(std.c.fd_t, @intCast(fd_val)));
-                        }
-                    }
-                };
-                posix_close.close(fd);
-            }
+            _ = std.posix.system.shutdown(fd, std.posix.SHUT.RD);
         }
         if (self.gateway_thread) |t| {
             t.join();

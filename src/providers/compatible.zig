@@ -73,6 +73,7 @@ pub const OpenAiCompatibleProvider = struct {
     http_client: std.http.Client,
     /// Cached chat completions URI (computed once, invalidated if base_url changes).
     cached_chat_uri: ?std.Uri = null,
+    cached_chat_url: ?[]const u8 = null,  // keep URL alive for URI slices
     /// Cached auth header value (computed once in init for bearer style).
     cached_auth_header: ?[]u8 = null,
 
@@ -117,7 +118,8 @@ pub const OpenAiCompatibleProvider = struct {
     pub fn cachedChatCompletionsUri(self: *OpenAiCompatibleProvider, allocator: std.mem.Allocator) !std.Uri {
         if (self.cached_chat_uri) |uri| return uri;
         const url = try self.chatCompletionsUrl(allocator);
-        defer allocator.free(url);
+        // IMPORTANT: keep url alive — std.Uri.parse returns slices pointing into the input
+        self.cached_chat_url = url;
         self.cached_chat_uri = std.Uri.parse(url) catch return error.InvalidUrl;
         return self.cached_chat_uri.?;
     }
@@ -797,6 +799,8 @@ pub const OpenAiCompatibleProvider = struct {
     }
 
     pub fn deinit(self: *OpenAiCompatibleProvider) void {
+        if (self.cached_chat_url) |u| self.allocator.free(u);
+        if (self.cached_auth_header) |h| self.allocator.free(h);
         self.http_client.deinit();
     }
 
@@ -1092,7 +1096,8 @@ test "parseTextResponse classifies rate-limit errors" {
 }
 
 test "authHeaderValue bearer style" {
-    const p = OpenAiCompatibleProvider.init(std.testing.allocator, "test", "https://example.com", "my-key", .bearer);
+    var p = OpenAiCompatibleProvider.init(std.testing.allocator, "test", "https://example.com", "my-key", .bearer);
+    defer p.deinit();
     const auth = (try p.authHeaderValue(std.testing.allocator)).?;
     defer if (auth.needs_free) std.testing.allocator.free(auth.value);
     try std.testing.expectEqualStrings("authorization", auth.name);
@@ -1100,7 +1105,7 @@ test "authHeaderValue bearer style" {
 }
 
 test "authHeaderValue x-api-key style" {
-    const p = OpenAiCompatibleProvider.init(std.testing.allocator, "test", "https://example.com", "my-key", .x_api_key);
+    var p = OpenAiCompatibleProvider.init(std.testing.allocator, "test", "https://example.com", "my-key", .x_api_key);
     const auth = (try p.authHeaderValue(std.testing.allocator)).?;
     defer if (auth.needs_free) std.testing.allocator.free(auth.value);
     try std.testing.expectEqualStrings("x-api-key", auth.name);
@@ -1108,7 +1113,7 @@ test "authHeaderValue x-api-key style" {
 }
 
 test "authHeaderValue no key" {
-    const p = OpenAiCompatibleProvider.init(std.testing.allocator, "test", "https://example.com", null, .bearer);
+    var p = OpenAiCompatibleProvider.init(std.testing.allocator, "test", "https://example.com", null, .bearer);
     try std.testing.expect(try p.authHeaderValue(std.testing.allocator) == null);
 }
 
@@ -1335,7 +1340,7 @@ test "authHeaderValue custom style" {
 }
 
 test "authHeaderValue custom style without custom_header falls back" {
-    const p = OpenAiCompatibleProvider.init(std.testing.allocator, "custom", "https://api.example.com", "my-key", .custom);
+    var p = OpenAiCompatibleProvider.init(std.testing.allocator, "custom", "https://api.example.com", "my-key", .custom);
     const auth = (try p.authHeaderValue(std.testing.allocator)).?;
     defer if (auth.needs_free) std.testing.allocator.free(auth.value);
     try std.testing.expectEqualStrings("authorization", auth.name);

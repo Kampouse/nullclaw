@@ -233,6 +233,17 @@ pub const CloudflareTunnel = struct {
         }) catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
         self.child = child;
 
+        // Close stdin — cloudflared never reads it, but the pipe holds an fd.
+        if (self.child.?.stdin) |stdin_file| {
+            stdin_file.close(std.Options.debug_io);
+            self.child.?.stdin = null;
+        }
+        // Close stdout — we only read stderr for the URL.
+        if (self.child.?.stdout) |stdout_file| {
+            stdout_file.close(std.Options.debug_io);
+            self.child.?.stdout = null;
+        }
+
         // Read stderr to find the public URL (cloudflared prints it there)
         if (self.child.?.stderr) |stderr_file| {
             var read_buf: [4096]u8 = undefined;
@@ -360,6 +371,17 @@ pub const NgrokTunnel = struct {
             .stderr = .pipe,
         }) catch return TunnelAdapter.TunnelError.ProcessSpawnFailed;
         self.child = child;
+
+        // Close stdin — ngrok never reads it, but the pipe holds an fd.
+        if (self.child.?.stdin) |stdin_file| {
+            stdin_file.close(std.Options.debug_io);
+            self.child.?.stdin = null;
+        }
+        // Close stderr — we only read stdout for the URL.
+        if (self.child.?.stderr) |stderr_file| {
+            stderr_file.close(std.Options.debug_io);
+            self.child.?.stderr = null;
+        }
 
         // Read stdout for url= pattern (ngrok logfmt output)
         if (self.child.?.stdout) |stdout_file| {

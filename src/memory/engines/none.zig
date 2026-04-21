@@ -37,7 +37,7 @@ pub const NoneMemory = struct {
         return allocator.alloc(MemoryEntry, 0);
     }
 
-    fn implForget(_: *anyopaque, _: []const u8) anyerror!bool {
+    fn implForget(_: *anyopaque, _: []const u8, _: ?[]const u8) anyerror!bool {
         return false;
     }
 
@@ -98,7 +98,7 @@ test "none memory is noop" {
     defer std.testing.allocator.free(listed);
     try std.testing.expectEqual(@as(usize, 0), listed.len);
 
-    const forgotten = try m.forget("k");
+    const forgotten = try m.forget("k", null);
     try std.testing.expect(!forgotten);
 
     try std.testing.expectEqual(@as(usize, 0), try m.count());

@@ -511,7 +511,7 @@ const PostgresMemoryImpl = struct {
         return entries.toOwnedSlice(allocator);
     }
 
-    fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
+    fn implForget(ptr: *anyopaque, key: []const u8, _: ?[]const u8) anyerror!bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
         const key_z = try self_.allocator.dupeZ(u8, key);

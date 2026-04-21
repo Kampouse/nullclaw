@@ -872,7 +872,7 @@ fn runMemory(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
             std.process.exit(1);
         }
         const key = sub_args[1];
-        const deleted = mem_rt.memory.forget(key) catch |err| {
+        const deleted = mem_rt.memory.forget(key, null) catch |err| {
             std.debug.print("memory forget failed: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };

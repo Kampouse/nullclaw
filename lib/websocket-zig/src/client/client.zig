@@ -133,6 +133,7 @@ pub const Client = struct {
             std.log.info("ws_client: starting TLS handshake...", .{});
             tls_client = TLSClient.init(allocator, net_stream, &config, tls_io) catch |err| {
                 std.log.err("ws_client: TLS init failed: {}", .{err});
+                _ = posix.system.close(fd);
                 return err;
             };
             std.log.info("ws_client: TLS handshake complete", .{});

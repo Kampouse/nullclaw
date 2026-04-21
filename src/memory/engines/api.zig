@@ -610,7 +610,7 @@ pub const ApiMemory = struct {
         return parseEntries(alloc, resp.body);
     }
 
-    fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
+    fn implForget(ptr: *anyopaque, key: []const u8, _: ?[]const u8) anyerror!bool {
         const self: *Self = @ptrCast(@alignCast(ptr));
         const alloc = self.allocator;
 

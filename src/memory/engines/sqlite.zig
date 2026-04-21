@@ -53,6 +53,7 @@ pub const SqliteMemory = struct {
         try self_.configurePragmas();
         try self_.migrate();
         try self_.migrateSessionId();
+        try self_.migrateConsolidationPatterns();
         return self_;
     }
 
@@ -121,8 +122,9 @@ pub const SqliteMemory = struct {
             \\  created_at TEXT NOT NULL,
             \\  updated_at TEXT NOT NULL
             \\);
+            \\CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
             \\CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
-            \\CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_key_session ON memories(key, COALESCE(session_id, '__global__'));
+            \\CREATE INDEX IF NOT EXISTS idx_memories_key_session ON memories(key, COALESCE(session_id, '__global__'));
             \\CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
             \\CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
             \\
@@ -227,6 +229,45 @@ pub const SqliteMemory = struct {
         }
     }
 
+    /// Migration: create consolidation_patterns table for pattern review workflow.
+    /// Safe to run repeatedly — CREATE TABLE IF NOT EXISTS is idempotent.
+    pub fn migrateConsolidationPatterns(self: *Self) !void {
+        const sql =
+            \\CREATE TABLE IF NOT EXISTS consolidation_patterns (
+            \\  id TEXT PRIMARY KEY,
+            \\  pattern_type TEXT NOT NULL CHECK(pattern_type IN ('positive','negative','improvement')),
+            \\  description TEXT NOT NULL,
+            \\  confidence REAL NOT NULL DEFAULT 0.0,
+            \\  reward REAL NOT NULL DEFAULT 0.0,
+            \\  hint TEXT,
+            \\  source_conversations TEXT,
+            \\  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+            \\  auto_approved INTEGER NOT NULL DEFAULT 0,
+            \\  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            \\  reviewed_at TEXT
+            \\);
+        ;
+        var err_msg: [*c]u8 = null;
+        const rc = c.sqlite3_exec(self.db, sql, null, null, &err_msg);
+        if (rc != c.SQLITE_OK) {
+            self.logExecFailure("consolidation_patterns migration", "CREATE TABLE IF NOT EXISTS consolidation_patterns", rc, err_msg);
+            if (err_msg) |msg| c.sqlite3_free(msg);
+            return error.MigrationFailed;
+        }
+
+        // Create indexes
+        const indexes =
+            \\CREATE INDEX IF NOT EXISTS idx_patterns_status ON consolidation_patterns(status);
+            \\CREATE INDEX IF NOT EXISTS idx_patterns_type ON consolidation_patterns(pattern_type);
+        ;
+        var err_msg2: [*c]u8 = null;
+        const rc2 = c.sqlite3_exec(self.db, indexes, null, null, &err_msg2);
+        if (rc2 != c.SQLITE_OK) {
+            self.logExecFailure("consolidation_patterns migration", "CREATE INDEX", rc2, err_msg2);
+            if (err_msg2) |msg| c.sqlite3_free(msg);
+        }
+    }
+
     // ── Memory trait implementation ────────────────────────────────
 
     fn implName(_: *anyopaque) []const u8 {
@@ -245,11 +286,12 @@ pub const SqliteMemory = struct {
         const cat_str = category.toString();
 
         // Single UPSERT — avoids DELETE+INSERT (2 round-trips + double FTS5 trigger)
+        // ON CONFLICT(key) ensures same-key entries are updated even when session_id changes.
         const sql =
             "INSERT INTO memories (id, key, content, category, session_id, created_at, updated_at) " ++
             "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) " ++
-            "ON CONFLICT(key, COALESCE(session_id, '__global__')) " ++
-            "DO UPDATE SET content=excluded.content, category=excluded.category, updated_at=excluded.updated_at";
+            "ON CONFLICT(key) " ++
+            "DO UPDATE SET content=excluded.content, category=excluded.category, session_id=excluded.session_id, updated_at=excluded.updated_at";
 
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
@@ -370,13 +412,13 @@ pub const SqliteMemory = struct {
         return entries.toOwnedSlice(allocator);
     }
 
-    fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
+    fn implForget(ptr: *anyopaque, key: []const u8, session_id: ?[]const u8) anyerror!bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
-        // Only delete global (session_id IS NULL) entries to avoid accidentally
-        // removing session-scoped memories when the tool API has no session param.
+        // When session_id is null, only delete global entries.
+        // When session_id is provided, delete that specific session-scoped entry.
         if (self_.stmt_forget == null) {
-            const sql = "DELETE FROM memories WHERE key = ?1 AND session_id IS NULL";
+            const sql = "DELETE FROM memories WHERE key = ?1 AND (session_id IS NULL AND ?2 IS NULL OR session_id = ?2)";
             var stmt: ?*c.sqlite3_stmt = null;
             const rc = c.sqlite3_prepare_v2(self_.db, sql.ptr, @intCast(sql.len), &stmt, null);
             if (rc != c.SQLITE_OK) return error.PrepareFailed;
@@ -387,6 +429,11 @@ pub const SqliteMemory = struct {
         _ = c.sqlite3_reset(stmt);
         _ = c.sqlite3_clear_bindings(stmt);
         _ = c.sqlite3_bind_text(stmt, 1, key.ptr, @intCast(key.len), SQLITE_STATIC);
+        if (session_id) |sid| {
+            _ = c.sqlite3_bind_text(stmt, 2, sid.ptr, @intCast(sid.len), SQLITE_STATIC);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 2);
+        }
 
         const rc = c.sqlite3_step(stmt);
         if (rc != c.SQLITE_DONE) return error.StepFailed;
@@ -986,7 +1033,7 @@ test "sqlite forget" {
     try m.store("temp", "temporary data", .conversation, null);
     try std.testing.expectEqual(@as(usize, 1), try m.count());
 
-    const removed = try m.forget("temp");
+    const removed = try m.forget("temp", null);
     try std.testing.expect(removed);
     try std.testing.expectEqual(@as(usize, 0), try m.count());
 }
@@ -996,7 +1043,7 @@ test "sqlite forget nonexistent" {
     defer mem.deinit();
     const m = mem.memory();
 
-    const removed = try m.forget("nope");
+    const removed = try m.forget("nope", null);
     try std.testing.expect(!removed);
 }
 
@@ -1081,7 +1128,7 @@ test "sqlite forget then recall no ghost results" {
     const m = mem.memory();
 
     try m.store("ghost", "phantom memory content", .core, null);
-    _ = try m.forget("ghost");
+    _ = try m.forget("ghost", null);
 
     const results = try m.recall(std.testing.allocator, "phantom memory", 10, null);
     defer root.freeEntries(std.testing.allocator, results);
@@ -1094,7 +1141,7 @@ test "sqlite forget and re-store same key" {
     const m = mem.memory();
 
     try m.store("cycle", "version 1", .core, null);
-    _ = try m.forget("cycle");
+    _ = try m.forget("cycle", null);
     try m.store("cycle", "version 2", .core, null);
 
     const entry = (try m.get(std.testing.allocator, "cycle")).?;
@@ -1209,7 +1256,7 @@ test "sqlite fts5 syncs on delete" {
     const m = mem.memory();
 
     try m.store("del_key", "deletable_content_abc", .core, null);
-    _ = try m.forget("del_key");
+    _ = try m.forget("del_key", null);
 
     const sql = "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '\"deletable_content_abc\"'";
     var stmt: ?*c.sqlite3_stmt = null;
@@ -1396,11 +1443,11 @@ test "sqlite store and forget multiple keys" {
 
     try std.testing.expectEqual(@as(usize, 3), try m.count());
 
-    _ = try m.forget("k2");
+    _ = try m.forget("k2", null);
     try std.testing.expectEqual(@as(usize, 2), try m.count());
 
-    _ = try m.forget("k1");
-    _ = try m.forget("k3");
+    _ = try m.forget("k1", null);
+    _ = try m.forget("k3", null);
     try std.testing.expectEqual(@as(usize, 0), try m.count());
 }
 
@@ -1497,7 +1544,7 @@ test "sqlite health check after operations" {
     const m = mem.memory();
 
     try m.store("k", "v", .core, null);
-    _ = try m.forget("k");
+    _ = try m.forget("k", null);
 
     try std.testing.expect(m.healthCheck());
 }

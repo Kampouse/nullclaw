@@ -152,9 +152,11 @@ pub fn clearInbox(self: *Poller) !void {
     try argv.append(self.allocator, self.binary_path);
     try argv.append(self.allocator, "clear");
 
-    var child = try std.process.spawn(std.Options.debug_io, .{ .argv = argv.items });
-    child.stderr_behavior = .Ignore;
-    child.stdout_behavior = .Ignore;
+    var child = try std.process.spawn(std.Options.debug_io, .{
+        .argv = argv.items,
+        .stderr = .ignore,
+        .stdout = .ignore,
+    });
 
     // child already spawned
     _ = child.wait(std.Options.debug_io) catch {};

@@ -98,7 +98,7 @@ fn contractCrud(m: Memory) !void {
     try std.testing.expectEqual(@as(usize, 2), try m.count());
 
     // 7. forget the first entry, verify count=1
-    const forgotten = try m.forget("test_key");
+    const forgotten = try m.forget("test_key", null);
     try std.testing.expect(forgotten);
     try std.testing.expectEqual(@as(usize, 1), try m.count());
 
@@ -136,7 +136,7 @@ fn contractNone(m: Memory) !void {
     try std.testing.expectEqual(@as(usize, 0), try m.count());
 
     // forget returns false
-    try std.testing.expect(!(try m.forget("test_key")));
+    try std.testing.expect(!(try m.forget("test_key", null)));
 
     // Store a second entry, count is still 0
     try m.store("second_key", "second content", .core, null);
@@ -189,7 +189,7 @@ fn contractMarkdown(m: Memory) !void {
     try std.testing.expectEqual(@as(usize, 2), try m.count());
 
     // forget always returns false (append-only)
-    try std.testing.expect(!(try m.forget("test_key")));
+    try std.testing.expect(!(try m.forget("test_key", null)));
     // count unchanged after forget
     try std.testing.expectEqual(@as(usize, 2), try m.count());
 }

@@ -31,6 +31,8 @@ const mem_root = @import("../root.zig");
 const Memory = mem_root.Memory;
 const MemoryEntry = mem_root.MemoryEntry;
 const ConvMessageEntry = consolidation.MessageEntry;
+const pattern_store_mod = @import("pattern_store.zig");
+const PatternStore = pattern_store_mod.PatternStore;
 
 const log = std.log.scoped(.consolidation_scheduler);
 
@@ -61,6 +63,7 @@ fn timestampMillis() i64 {
 pub const ConsolidationScheduler = struct {
     engine: consolidation.ConsolidationEngine,
     allocator: std.mem.Allocator,
+    pattern_store: ?PatternStore = null,
     last_run_timestamp: i64 = 0,
     last_conversation_id: ?[]const u8 = null,
     metrics: Metrics = .{},
@@ -97,6 +100,12 @@ pub const ConsolidationScheduler = struct {
         if (self.last_conversation_id) |id| {
             self.allocator.free(id);
         }
+    }
+
+    /// Attach a PatternStore for persisting extracted patterns to SQLite.
+    /// The store must remain valid for the lifetime of this scheduler.
+    pub fn setPatternStore(self: *Self, store: PatternStore) void {
+        self.pattern_store = store;
     }
 
     /// Check if consolidation should run based on schedule.
@@ -286,6 +295,22 @@ pub const ConsolidationScheduler = struct {
 
             if (should_approve and pattern.confidence >= 0.8) {
                 self.metrics.total_patterns_approved += 1;
+            }
+        }
+
+        // 5b. Persist patterns to SQLite if a PatternStore is attached
+        if (self.pattern_store) |*store| {
+            if (result.patterns.len > 0) {
+                const conv_ids = try self.allocator.alloc([]const u8, conversations.len);
+                defer self.allocator.free(conv_ids);
+                for (conversations, 0..) |conv, i| {
+                    conv_ids[i] = conv.conversation_id;
+                }
+                const stored = store.storePatterns(self.allocator, result.patterns, conv_ids) catch |err| blk: {
+                    log.warn("Failed to persist {d} patterns to SQLite: {}", .{ result.patterns.len, err });
+                    break :blk @as(usize, 0);
+                };
+                log.info("Persisted {d}/{d} patterns to pattern store", .{ stored, result.patterns.len });
             }
         }
 

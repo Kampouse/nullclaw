@@ -447,9 +447,9 @@ pub const LucidMemory = struct {
         return self.localMemory().list(allocator, category, session_id);
     }
 
-    fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
+    fn implForget(ptr: *anyopaque, key: []const u8, session_id: ?[]const u8) anyerror!bool {
         const self = castSelf(ptr);
-        return self.localMemory().forget(key);
+        return self.localMemory().forget(key, session_id);
     }
 
     fn implCount(ptr: *anyopaque) anyerror!usize {
@@ -631,7 +631,7 @@ test "lucid forget delegates to local" {
     const m = mem.memory();
 
     try m.store("temp", "temporary data", .core, null);
-    const forgotten = try m.forget("temp");
+    const forgotten = try m.forget("temp", null);
     try std.testing.expect(forgotten);
 
     const entry = try m.get(allocator, "temp");

@@ -553,7 +553,7 @@ pub const LanceDbMemory = struct {
         return try results.toOwnedSlice(allocator);
     }
 
-    fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
+    fn implForget(ptr: *anyopaque, key: []const u8, _: ?[]const u8) anyerror!bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
         const db = self_.db orelse return error.NotConnected;
 
@@ -667,7 +667,7 @@ test "lancedb forget" {
     try mem.store("to_forget", "bye", .conversation, null);
     try testing.expectEqual(@as(usize, 1), try mem.count());
 
-    const deleted = try mem.forget("to_forget");
+    const deleted = try mem.forget("to_forget", null);
     try testing.expect(deleted);
     try testing.expectEqual(@as(usize, 0), try mem.count());
 }
@@ -733,6 +733,6 @@ test "lancedb forget nonexistent returns false" {
     defer impl_.deinit();
 
     var mem = impl_.memory();
-    const deleted = try mem.forget("no_such_key");
+    const deleted = try mem.forget("no_such_key", null);
     try testing.expect(!deleted);
 }

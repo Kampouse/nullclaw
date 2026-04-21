@@ -344,7 +344,7 @@ pub const Memory = struct {
         recall: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, query: []const u8, limit: usize, session_id: ?[]const u8) anyerror![]MemoryEntry,
         get: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, key: []const u8) anyerror!?MemoryEntry,
         list: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, category: ?MemoryCategory, session_id: ?[]const u8) anyerror![]MemoryEntry,
-        forget: *const fn (ptr: *anyopaque, key: []const u8) anyerror!bool,
+        forget: *const fn (ptr: *anyopaque, key: []const u8, session_id: ?[]const u8) anyerror!bool,
         count: *const fn (ptr: *anyopaque) anyerror!usize,
         healthCheck: *const fn (ptr: *anyopaque) bool,
         deinit: *const fn (ptr: *anyopaque) void,
@@ -370,8 +370,8 @@ pub const Memory = struct {
         return self.vtable.list(self.ptr, allocator, category, session_id);
     }
 
-    pub fn forget(self: Memory, key: []const u8) !bool {
-        return self.vtable.forget(self.ptr, key);
+    pub fn forget(self: Memory, key: []const u8, session_id: ?[]const u8) !bool {
+        return self.vtable.forget(self.ptr, key, session_id);
     }
 
     pub fn count(self: Memory) !usize {

@@ -1145,7 +1145,8 @@ fn runAgentJob(
     var stderr: std.ArrayList(u8) = .empty;
     defer stderr.deinit(allocator);
 
-    const timed_out = try collectChildOutputWithTimeout(
+    // Collect output — if this fails, we must still wait() to close pipe fds.
+    const timed_out = collectChildOutputWithTimeout(
         &child,
         allocator,
         &stdout,
@@ -1153,7 +1154,12 @@ fn runAgentJob(
         timeout_secs,
         start_ns,
         io,
-    );
+    ) catch |err| {
+        log.warn("collectChildOutput failed: {}, cleaning up child", .{err});
+        child.kill(process_io);
+        _ = child.wait(process_io) catch {};
+        return err;
+    };
 
     const term = try child.wait(process_io);
     const success = !timed_out and switch (term) {

@@ -351,7 +351,7 @@ pub const MarkdownMemory = struct {
         return filtered.toOwnedSlice(allocator);
     }
 
-    fn implForget(_: *anyopaque, _: []const u8) anyerror!bool {
+    fn implForget(_: *anyopaque, _: []const u8, _: ?[]const u8) anyerror!bool {
         return false;
     }
 
@@ -407,9 +407,9 @@ test "markdown forget always returns false" {
     const m = mem.memory();
 
     // Multiple forget calls all return false
-    try std.testing.expect(!(try m.forget("key1")));
-    try std.testing.expect(!(try m.forget("key2")));
-    try std.testing.expect(!(try m.forget("")));
+    try std.testing.expect(!(try m.forget("key1", null)));
+    try std.testing.expect(!(try m.forget("key2", null)));
+    try std.testing.expect(!(try m.forget("", null)));
 }
 
 test "markdown parseEntries skips empty lines" {

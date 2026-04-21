@@ -342,7 +342,7 @@ pub const InMemoryLruMemory = struct {
         return results.toOwnedSlice(allocator);
     }
 
-    fn implForget(ptr: *anyopaque, key: []const u8) anyerror!bool {
+    fn implForget(ptr: *anyopaque, key: []const u8, _: ?[]const u8) anyerror!bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
 
         const removed = self_.entries.fetchRemove(key) orelse return false;
@@ -435,12 +435,12 @@ test "basic store/get/recall/forget cycle" {
     }
 
     // Forget
-    const forgotten = try m.forget("greeting");
+    const forgotten = try m.forget("greeting", null);
     try std.testing.expect(forgotten);
     try std.testing.expectEqual(@as(usize, 0), try m.count());
 
     // Forget nonexistent returns false
-    const forgotten2 = try m.forget("greeting");
+    const forgotten2 = try m.forget("greeting", null);
     try std.testing.expect(!forgotten2);
 }
 
@@ -610,9 +610,9 @@ test "count accuracy after store/forget" {
     try std.testing.expectEqual(@as(usize, 1), try m.count());
     try m.store("b", "2", .core, null);
     try std.testing.expectEqual(@as(usize, 2), try m.count());
-    _ = try m.forget("a");
+    _ = try m.forget("a", null);
     try std.testing.expectEqual(@as(usize, 1), try m.count());
-    _ = try m.forget("b");
+    _ = try m.forget("b", null);
     try std.testing.expectEqual(@as(usize, 0), try m.count());
 }
 
@@ -820,7 +820,7 @@ test "LRU forget nonexistent key returns false" {
     const m = mem.memory();
 
     try m.store("a", "exists", .core, null);
-    const result = try m.forget("nonexistent");
+    const result = try m.forget("nonexistent", null);
     try std.testing.expect(!result);
     try std.testing.expectEqual(@as(usize, 1), try m.count());
 }

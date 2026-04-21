@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const util = @import("util.zig");
 const health = @import("health.zig");
 const Config = @import("config.zig").Config;
@@ -16,6 +17,8 @@ const cron = @import("cron.zig");
 const bus_mod = @import("bus.zig");
 const consolidation_scheduler_mod = @import("memory/lifecycle/consolidation_scheduler.zig");
 const consolidation_mod = @import("memory/lifecycle/consolidation.zig");
+const pattern_store_mod = @import("memory/lifecycle/pattern_store.zig");
+const sqlite_mem_mod = if (build_options.enable_sqlite) @import("memory/engines/sqlite.zig") else @import("memory/engines/sqlite_disabled.zig");
 const mem_root = @import("memory/root.zig");
 const provider_helpers = @import("providers/helpers.zig");
 const dispatch = @import("channels/dispatch.zig");
@@ -453,6 +456,35 @@ fn schedulerThread(allocator: std.mem.Allocator, config: *const Config, state: *
                 con_scheduler = null;
             }
             con_config_ptr = null;
+        }
+    }
+
+    // PatternStore: separate SQLite connection for persisting consolidation patterns.
+    // Must outlive the scheduler, so declare at the same scope level.
+    var con_pattern_store_mem: ?sqlite_mem_mod.SqliteMemory = null;
+    defer if (con_pattern_store_mem) |*m| m.deinit();
+    if (con_scheduler != null and comptime build_options.enable_sqlite) {
+        if (std.fs.path.joinZ(allocator, &.{ config.workspace_dir, "memory.db" })) |db_path_z| {
+            defer allocator.free(db_path_z);
+            con_pattern_store_mem = blk: {
+                break :blk sqlite_mem_mod.SqliteMemory.init(allocator, db_path_z) catch |err| {
+                    log.warn("consolidation: pattern store init failed: {}", .{err});
+                    break :blk null;
+                };
+            };
+            if (con_pattern_store_mem != null and con_pattern_store_mem.?.db != null) {
+                var ps = pattern_store_mod.PatternStore.init(allocator, con_pattern_store_mem.?.db.?);
+                if (ps.ensureSchema()) {
+                    if (con_scheduler) |*s| {
+                        s.setPatternStore(ps);
+                        log.info("consolidation: pattern store wired to scheduler", .{});
+                    }
+                } else |err| {
+                    log.warn("consolidation: pattern store schema init failed: {}", .{err});
+                }
+            }
+        } else |_| {
+            log.warn("consolidation: pattern store db path join failed", .{});
         }
     }
 

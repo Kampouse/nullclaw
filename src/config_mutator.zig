@@ -411,7 +411,7 @@ test "setAtPath creates nested objects and stores value" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var root = std.json.Value{ .object = std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
+    var root = std.json.Value{ .object = try std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
     const tokens = [_][]const u8{ "memory", "backend" };
     const value = std.json.Value{ .string = try a.dupe(u8, "sqlite") };
 
@@ -427,7 +427,7 @@ test "unsetAtPath removes existing key" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var root = std.json.Value{ .object = std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
+    var root = std.json.Value{ .object = try std.json.ObjectMap.init(a, &[_][]const u8{}, &[_]std.json.Value{}) };
     const tokens = [_][]const u8{ "gateway", "port" };
     try setAtPath(&root, a, &tokens, .{ .integer = 3000 });
 

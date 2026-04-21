@@ -130,10 +130,18 @@ pub const ResponseCache = struct {
 
         const result = try allocator.dupe(u8, @as([*]const u8, @ptrCast(raw))[0..len]);
 
-        // NOTE: We intentionally skip the hit_count / accessed_at UPDATE here.
-        // The cache is a latency optimization, not an analytics store.
-        // Updating accessed_at on every hit defeats LRU eviction since
-        // every popular entry stays "fresh" forever.
+        // Increment hit_count for stats/diagnostics, but skip accessed_at
+        // update so popular entries don't defeat LRU eviction.
+        {
+            const update_sql = "UPDATE response_cache SET hit_count = hit_count + 1 WHERE prompt_hash = ?1";
+            var ustmt: ?*c.sqlite3_stmt = null;
+            const urc = c.sqlite3_prepare_v2(self.db, update_sql, -1, &ustmt, null);
+            if (urc == c.SQLITE_OK) {
+                defer _ = c.sqlite3_finalize(ustmt);
+                _ = c.sqlite3_bind_text(ustmt, 1, key_hex.ptr, @intCast(key_hex.len), SQLITE_STATIC);
+                _ = c.sqlite3_step(ustmt);
+            }
+        }
 
         return result;
     }
@@ -338,7 +346,7 @@ test "cache expired entry returns null" {
     try std.testing.expect(result == null);
 }
 
-test "cache hit count not incremented (analytics disabled)" {
+test "cache hit count incremented on get" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 1000);
     defer cache_inst.deinit();
 
@@ -347,17 +355,17 @@ test "cache hit count not incremented (analytics disabled)" {
 
     try cache_inst.put(std.testing.allocator, key_hex, "gpt-4", "Hi!", 5);
 
-    // 3 hits — but hit_count UPDATE is skipped for performance
+    // 3 hits — each increments hit_count
     for (0..3) |_| {
         const r = try cache_inst.get(std.testing.allocator, key_hex);
         if (r) |resp| std.testing.allocator.free(resp);
     }
 
     const s = try cache_inst.stats();
-    try std.testing.expectEqual(@as(u64, 0), s.hits);
+    try std.testing.expectEqual(@as(u64, 3), s.hits);
 }
 
-test "cache tokens saved not calculated (analytics disabled)" {
+test "cache tokens saved calculated from hits" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 1000);
     defer cache_inst.deinit();
 
@@ -366,14 +374,14 @@ test "cache tokens saved not calculated (analytics disabled)" {
 
     try cache_inst.put(std.testing.allocator, key_hex, "gpt-4", "Zig is...", 100);
 
-    // 5 cache hits — but hit_count UPDATE is skipped, so tokens_saved = 0
+    // 5 cache hits — each increments hit_count
     for (0..5) |_| {
         const r = try cache_inst.get(std.testing.allocator, key_hex);
         if (r) |resp| std.testing.allocator.free(resp);
     }
 
     const s = try cache_inst.stats();
-    try std.testing.expectEqual(@as(u64, 0), s.tokens_saved);
+    try std.testing.expectEqual(@as(u64, 500), s.tokens_saved);
 }
 
 test "cache lru eviction" {
@@ -531,7 +539,7 @@ test "cache multiple different keys" {
     try std.testing.expectEqualStrings("response2", r2.?);
 }
 
-test "cache stats after multiple puts (analytics disabled)" {
+test "cache stats after multiple puts and gets" {
     var cache_inst = try ResponseCache.init(":memory:", 60, 1000);
     defer cache_inst.deinit();
 
@@ -543,7 +551,7 @@ test "cache stats after multiple puts (analytics disabled)" {
     const key2 = ResponseCache.cacheKeyHex(&key_buf2, "gpt-4", null, "q2");
     try cache_inst.put(std.testing.allocator, key2, "gpt-4", "a2", 100);
 
-    // hits don't increment (analytics disabled for performance)
+    // hits increment on each get
     for (0..2) |_| {
         const r = try cache_inst.get(std.testing.allocator, key1);
         if (r) |resp| std.testing.allocator.free(resp);
@@ -555,9 +563,10 @@ test "cache stats after multiple puts (analytics disabled)" {
 
     const s = try cache_inst.stats();
     try std.testing.expectEqual(@as(usize, 2), s.count);
-    try std.testing.expectEqual(@as(u64, 0), s.hits);
-    // tokens_saved is 0 because hit_count is never updated
-    try std.testing.expectEqual(@as(u64, 0), s.tokens_saved);
+    try std.testing.expectEqual(@as(u64, 5), s.hits);
+    // tokens_saved = sum(hit_count * token_count) across entries
+    // key1: 2 hits * 50 tokens = 100, key2: 3 hits * 100 tokens = 300
+    try std.testing.expectEqual(@as(u64, 400), s.tokens_saved);
 }
 
 test "cache lru evicts oldest entries" {

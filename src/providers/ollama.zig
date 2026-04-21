@@ -670,17 +670,17 @@ test "supportsNativeTools returns true" {
 // ─── Tool Call Tests ─────────────────────────────────────────────────────────
 
 test "extractToolNameAndArgs with normal name" {
-    const result = extractToolNameAndArgs(std.testing.allocator, "shell", .null);
+    const result = try extractToolNameAndArgs(std.testing.allocator, "shell", .null);
     try std.testing.expectEqualStrings("shell", result.name);
 }
 
 test "extractToolNameAndArgs with tool. prefix" {
-    const result = extractToolNameAndArgs(std.testing.allocator, "tool.shell", .null);
+    const result = try extractToolNameAndArgs(std.testing.allocator, "tool.shell", .null);
     try std.testing.expectEqualStrings("shell", result.name);
 }
 
 test "extractToolNameAndArgs with tools. prefix" {
-    const result = extractToolNameAndArgs(std.testing.allocator, "tools.file_read", .null);
+    const result = try extractToolNameAndArgs(std.testing.allocator, "tools.file_read", .null);
     try std.testing.expectEqualStrings("file_read", result.name);
 }
 
@@ -765,7 +765,7 @@ test "extractToolNameAndArgs with nested tool_call wrapper" {
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json_str, .{});
     defer parsed.deinit();
 
-    const result = extractToolNameAndArgs(std.testing.allocator, "tool_call", parsed.value);
+    const result = try extractToolNameAndArgs(std.testing.allocator, "tool_call", parsed.value);
     try std.testing.expectEqualStrings("shell", result.name);
     // The inner arguments should contain "command"
     try std.testing.expect(result.args == .object);
@@ -781,7 +781,7 @@ test "extractToolNameAndArgs with tool.call wrapper" {
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json_str, .{});
     defer parsed.deinit();
 
-    const result = extractToolNameAndArgs(std.testing.allocator, "tool.call", parsed.value);
+    const result = try extractToolNameAndArgs(std.testing.allocator, "tool.call", parsed.value);
     try std.testing.expectEqualStrings("file_read", result.name);
 }
 

@@ -10,6 +10,9 @@
 //! const consolidation_providers = @import("consolidation_providers.zig");
 //!
 //! var config = providers.Config.init(allocator);
+//! consolidation_providers.setConfig(&config);
+//! defer consolidation_providers.clearConfig();
+//!
 //! const callback = consolidation_providers.createCallback(allocator, &config);
 //!
 //! const consolidation_config = consolidation.ConsolidationConfig{
@@ -20,10 +23,24 @@
 const std = @import("std");
 const helpers = @import("../../providers/helpers.zig");
 
+// ── Thread-local State ────────────────────────────────────────────────
+
+/// Opaque config pointer set via setConfig / createCallback.
+threadlocal var config_ptr: ?*const anyopaque = null;
+
+/// Completion function bound at setConfig / createCallback time.
+/// Signature: fn(allocator, *config, system_prompt, user_prompt) -> response
+threadlocal var complete_fn: ?*const fn (
+    std.mem.Allocator,
+    *const anyopaque,
+    []const u8,
+    []const u8,
+) anyerror![]const u8 = null;
+
 // ── Callback Factory ───────────────────────────────────────────────────
 
 /// System prompt for pattern extraction during consolidation.
-const CONSOLIDATION_SYSTEM_PROMPT: []const u8 =
+pub const CONSOLIDATION_SYSTEM_PROMPT: []const u8 =
     \\You are a conversation analyst specializing in behavioral pattern extraction.
     \\
     \\Your task is to analyze conversations and extract actionable patterns that
@@ -46,72 +63,58 @@ const CONSOLIDATION_SYSTEM_PROMPT: []const u8 =
 /// LLM callback function type (from consolidation.zig).
 pub const LlmCallback = *const fn (allocator: std.mem.Allocator, prompt: []const u8) anyerror![]const u8;
 
+/// Set the thread-local provider config for consolidation callbacks.
+/// Must be called on each thread that will invoke the callback returned by
+/// createCallback.  Pass null or call clearConfig to unset.
+pub fn setConfig(cfg: anytype) void {
+    const CfgType = @TypeOf(cfg);
+    const CfgPtr = if (@typeInfo(CfgType) == .pointer)
+        *const @typeInfo(CfgType).pointer.child
+    else
+        *const CfgType;
+
+    config_ptr = @ptrCast(cfg);
+    complete_fn = struct {
+        fn invoke(
+            allocator: std.mem.Allocator,
+            ptr: *const anyopaque,
+            system_prompt: []const u8,
+            user_prompt: []const u8,
+        ) anyerror![]const u8 {
+            const typed: CfgPtr = @ptrCast(@alignCast(ptr));
+            return helpers.completeWithSystem(allocator, typed, system_prompt, user_prompt);
+        }
+    }.invoke;
+}
+
+/// Clear the thread-local provider config.
+pub fn clearConfig() void {
+    config_ptr = null;
+    complete_fn = null;
+}
+
 /// Create a consolidation LLM callback from a provider config.
-/// The callback uses completeWithSystem for provider-agnostic completion.
+/// Stores the config in a thread-local so the bare fn pointer can access it.
+/// The caller must ensure setConfig (or createCallback) is called on the
+/// same thread that invokes the returned callback.
 pub fn createCallback(
     allocator: std.mem.Allocator,
     cfg: anytype,
 ) LlmCallback {
-    const CallbackState = struct {
-        allocator: std.mem.Allocator,
-        cfg: @TypeOf(cfg),
+    _ = allocator;
+    setConfig(cfg);
 
-        fn fnCallback(
-            allocator_inner: std.mem.Allocator,
-            prompt: []const u8,
-        ) anyerror![]const u8 {
-            _ = allocator_inner;
-            return helpers.completeWithSystem(
-                @ptrCast(*const @TypeOf(cfg)), // TODO: This is hacky
-                CONSOLIDATION_SYSTEM_PROMPT,
-                prompt,
-            );
-        }
-    };
-
-    // For now, use a simple wrapper that captures the config
-    // TODO: Make this more robust with proper state management
-    const Wrapper = struct {
-        fn callback(
-            alloc: std.mem.Allocator,
-            prompt: []const u8,
-        ) anyerror![]const u8 {
-            _ = alloc;
-            _ = prompt;
-            return error.ConsolidationCallbackNotConfigured;
-        }
-    };
-
-    return Wrapper.callback;
+    return consolidationCallback;
 }
 
-/// Create a consolidation LLM callback with a custom config struct.
-/// This version stores the config pointer in a closure-like structure.
-pub fn createCallbackWithConfig(
-    allocator: std.mem.Allocator,
-    cfg_ptr: anytype,
-) LlmCallback {
-    _ = allocator;
-    _ = cfg_ptr;
-
-    // TODO: Implement proper closure-like behavior
-    // Zig doesn't have closures, so we need a different approach:
-    // 1. Store the config pointer in a struct
-    // 2. Use a static function that looks up the config
-    // 3. Pass the config through context
-
-    const SimpleCallback = struct {
-        fn callback(
-            alloc: std.mem.Allocator,
-            prompt: []const u8,
-        ) anyerror![]const u8 {
-            _ = alloc;
-            _ = prompt;
-            return error.ConsolidationNeedsProviderConfig;
-        }
-    };
-
-    return SimpleCallback.callback;
+/// The actual callback function pointer.  Reads config from thread-locals.
+fn consolidationCallback(
+    alloc: std.mem.Allocator,
+    prompt: []const u8,
+) anyerror![]const u8 {
+    const ptr = config_ptr orelse return error.ConsolidationCallbackNotConfigured;
+    const fn_ptr = complete_fn orelse return error.ConsolidationCallbackNotConfigured;
+    return fn_ptr(alloc, ptr, CONSOLIDATION_SYSTEM_PROMPT, prompt);
 }
 
 // ── Mock Callback for Testing ─────────────────────────────────────────

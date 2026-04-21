@@ -155,7 +155,7 @@ pub const SqliteMemory = struct {
         return error.SqliteDisabled;
     }
 
-    fn implForget(_: *anyopaque, _: []const u8) anyerror!bool {
+    fn implForget(_: *anyopaque, _: []const u8, _: ?[]const u8) anyerror!bool {
         return error.SqliteDisabled;
     }
 

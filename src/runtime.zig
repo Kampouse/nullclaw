@@ -314,12 +314,17 @@ pub const WasmRuntime = struct {
             .stderr = .pipe,
         });
 
-        // child already spawned
-
+        // Read output before closing pipes (readAllAlloc drains the pipe).
         const stdout = try child.stdout.?.reader().readAllAlloc(allocator, 1024 * 1024);
         errdefer allocator.free(stdout);
         const stderr = try child.stderr.?.reader().readAllAlloc(allocator, 1024 * 1024);
         errdefer allocator.free(stderr);
+
+        // Close pipe handles — readAllAlloc does not close the fd.
+        child.stdout.?.close(std.Options.debug_io);
+        child.stdout = null;
+        child.stderr.?.close(std.Options.debug_io);
+        child.stderr = null;
 
         const term = try child.wait(std.Options.debug_io);
         const exit_code: i32 = switch (term) {

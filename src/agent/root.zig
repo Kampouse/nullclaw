@@ -429,7 +429,18 @@ pub const Agent = struct {
         if (self.focus_target_owned and self.focus_target != null) self.allocator.free(self.focus_target.?);
         if (self.dock_target_owned and self.dock_target != null) self.allocator.free(self.dock_target.?);
         if (self.cached_capabilities_section) |section| self.allocator.free(section);
-        if (self.cached_allowed_dirs.len > 0) self.allocator.free(self.cached_allowed_dirs);
+        if (self.cached_allowed_dirs.len > 0) {
+            // On macOS, entries starting with "/private/" were allocated via
+            // allocPrint in appendMultimodalAllowedDir and must be freed individually.
+            if (comptime @import("builtin").os.tag == .macos) {
+                for (self.cached_allowed_dirs) |dir| {
+                    if (std.mem.startsWith(u8, dir, "/private/")) {
+                        self.allocator.free(dir);
+                    }
+                }
+            }
+            self.allocator.free(self.cached_allowed_dirs);
+        }
         for (self.history.items) |*msg| {
             msg.deinit(self.allocator);
         }
@@ -954,7 +965,7 @@ pub const Agent = struct {
                     self.stream_callback.?,
                     self.stream_ctx.?,
                 ) catch |err| {
-                    slog.logStructured("ERROR", "agent", "llm_error", .{ .err_msg = err });
+                    slog.logStructured("ERROR", "agent", "llm_error", .{ .err_msg = @errorName(err) });
                     const fail_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - timer_start)));
                     const fail_event = ObserverEvent{ .llm_response = .{
                         .provider = self.provider.getName(),
