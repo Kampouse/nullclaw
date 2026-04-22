@@ -253,14 +253,14 @@ pub const EventTap = struct {
             // provider
             if (entry.provider_len > 0) {
                 fbs.writeAll(",\"provider\":\"") catch break;
-                fbs.writeAll(entry.provider[0..entry.provider_len]) catch break;
+                writeJsonString(&fbs, entry.provider[0..entry.provider_len]) catch break;
                 fbs.writeAll("\"") catch break;
             }
 
             // model (used for tool name too)
             if (entry.model_len > 0) {
                 fbs.writeAll(",\"model\":\"") catch break;
-                fbs.writeAll(entry.model[0..entry.model_len]) catch break;
+                writeJsonString(&fbs, entry.model[0..entry.model_len]) catch break;
                 fbs.writeAll("\"") catch break;
             }
 
@@ -284,45 +284,50 @@ pub const EventTap = struct {
             // detail
             if (entry.detail_len > 0) {
                 fbs.writeAll(",\"detail\":\"") catch break;
-                // JSON-escape the detail
-                const detail = entry.detail[0..entry.detail_len];
-                for (detail) |c| {
-                    switch (c) {
-                        '"' => fbs.writeAll("\\\"") catch break,
-                        '\\' => fbs.writeAll("\\\\") catch break,
-                        '\n' => fbs.writeAll("\\n") catch break,
-                        '\r' => fbs.writeAll("\\r") catch break,
-                        '\t' => fbs.writeAll("\\t") catch break,
-                        else => fbs.writeAll(&.{c}) catch break,
-                    }
-                }
+                writeJsonString(&fbs, entry.detail[0..entry.detail_len]) catch break;
                 fbs.writeAll("\"") catch break;
             }
 
-                        // content payload
+            // content payload
             if (entry.content_len > 0) {
                 fbs.writeAll(",\"content\":\"") catch break;
-                const cdata = entry.content[0..entry.content_len];
-                for (cdata) |cc| {
-                    switch (cc) {
-                        0x22 => fbs.writeAll("\\\"") catch break,
-                        0x5c => fbs.writeAll("\\\\") catch break,
-                        0x0a => fbs.writeAll("\\n") catch break,
-                        0x0d => fbs.writeAll("\\r") catch break,
-                        0x09 => fbs.writeAll("\\t") catch break,
-                        else => fbs.writeAll(&.{cc}) catch break,
-                    }
-                }
+                writeJsonString(&fbs, entry.content[0..entry.content_len]) catch break;
                 fbs.writeAll("\"") catch break;
             }
 
-fbs.writeAll("}") catch break;
+            fbs.writeAll("}") catch break;
             count += 1;
             pos += 1;
         }
 
         fbs.writeAll("]") catch {};
         return fbs.getWritten();
+    }
+
+    /// Write a byte slice as a JSON-escaped string (no surrounding quotes).
+    /// Escapes all control characters (0x00-0x1F) via \u00XX, plus " and \.
+    fn writeJsonString(fbs: *util.FixedBufferStream, data: []const u8) @TypeOf(fbs.writer()).Error!void {
+        const w = fbs.writer();
+        for (data) |c| {
+            switch (c) {
+                '"' => try w.writeAll("\\\""),
+                '\\' => try w.writeAll("\\\\"),
+                '\n' => try w.writeAll("\\n"),
+                '\r' => try w.writeAll("\\r"),
+                '\t' => try w.writeAll("\\t"),
+                else => {
+                    if (c < 0x20) {
+                        // Control character — encode as \u00XX
+                        const hex = "0123456789abcdef";
+                        try w.writeAll("\\u00");
+                        try w.writeByte(hex[c >> 4]);
+                        try w.writeByte(hex[c & 0x0f]);
+                    } else {
+                        try w.writeByte(c);
+                    }
+                },
+            }
+        }
     }
 
     /// Create an Observer vtable that feeds into this EventTap.
