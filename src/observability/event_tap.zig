@@ -415,7 +415,7 @@ pub const EventTap = struct {
                 if (seen_count >= seen_sessions.len) break; // too many sessions
                 // Close previous session's array (not before first)
                 if (seen_count > 0) {
-                    fbs.writeAll("\"]") catch break;
+                    fbs.writeAll("]") catch break;
                 }
                 session_idx = seen_count;
                 seen_sessions[seen_count] = sh;

@@ -360,7 +360,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .vtab:hover { color: var(--text); border-color: var(--border); }
 .vtab.active { color: var(--cyan); border-color: var(--cyan); background: rgba(74,192,232,0.06); }
 
-/* ═══ TRACE PANEL ═══ */
+/* ═══ TRACE PANEL — DENSE TABLE LAYOUT ═══ */
 #trace-panel {
   width: var(--feed-width); display: flex; flex-direction: column;
   border-right: 1px solid var(--border); overflow: hidden;
@@ -398,63 +398,89 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tfilter-chip.active[data-filter="err"] { color: var(--red); }
 .tfilter-chip.active[data-filter="msg"] { color: var(--magenta); }
 #trace-ruler {
-  height: 20px; position: relative; flex-shrink: 0;
+  height: 18px; position: relative; flex-shrink: 0;
   border-bottom: 1px solid var(--border); background: var(--bg-panel);
   overflow: hidden;
 }
 .trace-ruler-mark {
   position: absolute; top: 0; height: 100%;
   border-left: 1px solid rgba(85,90,110,0.3);
-  font-size: 9px; color: var(--text-dim); opacity: 0.4;
-  padding-left: 3px; line-height: 20px; white-space: nowrap;
+  font-size: 8px; color: var(--text-dim); opacity: 0.4;
+  padding-left: 3px; line-height: 18px; white-space: nowrap;
 }
 #trace-waterfall {
   flex: 1; overflow: auto; position: relative; background: var(--bg);
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
 }
 .trace-row {
-  display: flex; align-items: center; height: 22px; cursor: pointer;
-  border-bottom: 1px solid rgba(26,30,46,0.3); transition: background 0.08s;
-  position: relative;
+  display: flex; align-items: center; height: 18px; cursor: pointer;
+  border-bottom: 1px solid rgba(26,30,46,0.2); transition: background 0.06s;
+  position: relative; font-size: 10px; line-height: 18px;
 }
 .trace-row:hover { background: rgba(74,192,232,0.04); }
 .trace-row.selected { background: rgba(74,192,232,0.07); }
-.trace-row-label {
-  min-width: 180px; max-width: 180px; padding: 0 8px;
-  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
-  border-right: 1px solid var(--border); height: 100%;
-  font-size: 10px; color: var(--text-dim); overflow: hidden; white-space: nowrap;
-  background: var(--bg-panel); position: sticky; left: 0; z-index: 2;
+.trace-row.type-break { border-top: 1px solid rgba(85,90,110,0.15); margin-top: 0; }
+.tr-time {
+  flex-shrink: 0; width: 58px; padding: 0 4px 0 6px;
+  color: var(--text-dim); font-size: 9px; text-align: left;
+  opacity: 0.7;
 }
-.trace-row-label .tr-icon { font-size: 10px; flex-shrink: 0; width: 14px; text-align: center; }
-.trace-row-label .tr-name { overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-.trace-row-label .tr-time { color: var(--text-dim); font-size: 9px; margin-left: auto; flex-shrink: 0; }
-.trace-bar-area {
-  flex: 1; height: 100%; position: relative; min-width: 0;
+.tr-icon {
+  flex-shrink: 0; width: 16px; text-align: center; font-size: 10px;
 }
-.trace-bar {
-  position: absolute; top: 4px; height: 14px; border-radius: 2px;
-  min-width: 3px; transition: box-shadow 0.15s, opacity 0.15s;
-  opacity: 0.75;
+.tr-type-tag {
+  flex-shrink: 0; width: 28px; font-size: 8px; letter-spacing: 0.3px;
+  text-align: center; text-transform: uppercase; opacity: 0.65;
 }
-.trace-bar:hover { opacity: 1; box-shadow: 0 0 8px currentColor; z-index: 5; }
-.trace-bar.bar-llm { background: var(--purple); color: var(--purple); }
-.trace-bar.bar-tool { background: var(--cyan); color: var(--cyan); }
-.trace-bar.bar-http { background: #f0a030; color: #f0a030; }
-.trace-bar.bar-err { background: var(--red); color: var(--red); }
-.trace-bar.bar-dim { background: var(--text-dim); color: var(--text-dim); opacity: 0.35; }
-.trace-bar.bar-msg { background: var(--magenta); color: var(--magenta); }
-.trace-bar.bar-agent { background: var(--blue); color: var(--blue); }
-.trace-bar.bar-warn { background: var(--amber); color: var(--amber); }
+.tr-label {
+  flex-shrink: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--text); font-size: 10px;
+  padding-right: 6px;
+}
+.tr-dur {
+  flex-shrink: 0; width: 50px; text-align: right; padding-right: 6px;
+  font-size: 9px; color: var(--text-dim);
+}
+.tr-bar-cell {
+  flex-shrink: 0; width: 60px; height: 100%; position: relative;
+  padding: 0 4px; display: flex; align-items: center;
+}
+.tr-bar-inline {
+  height: 3px; border-radius: 1px; min-width: 2px; max-width: 52px;
+  opacity: 0.8;
+}
+.tr-bar-inline.bar-llm { background: var(--purple); }
+.tr-bar-inline.bar-tool { background: var(--cyan); }
+.tr-bar-inline.bar-http { background: #f0a030; }
+.tr-bar-inline.bar-err { background: var(--red); }
+.tr-bar-inline.bar-dim { background: var(--text-dim); opacity: 0.3; }
+.tr-bar-inline.bar-msg { background: var(--magenta); }
+.tr-bar-inline.bar-agent { background: var(--blue); }
+.tr-bar-inline.bar-warn { background: var(--amber); }
+.tr-content {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--text-dim); font-size: 9px;
+  padding-left: 6px; opacity: 0.8;
+}
+.tr-content.err-content { color: var(--red); opacity: 0.9; }
+.tr-status {
+  flex-shrink: 0; width: 14px; text-align: center; font-size: 9px;
+  padding-right: 4px;
+}
+.tr-status.fail { color: var(--red); }
+.tr-status.ok { color: rgba(100,220,150,0.6); }
 .trace-tooltip {
   display: none; position: fixed; z-index: 100;
   background: rgba(12,14,20,0.95); border: 1px solid var(--border-active);
   border-radius: 4px; padding: 6px 10px; pointer-events: none;
   font-size: 10px; line-height: 1.6; color: var(--text);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 320px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 400px;
+  max-height: 200px; overflow: hidden;
 }
 .trace-tooltip.visible { display: block; }
 .trace-tooltip .tt-type { color: var(--cyan); font-size: 9px; letter-spacing: 0.5px; }
-.trace-tooltip .tt-detail { color: var(--text-dim); margin-top: 2px; }
+.trace-tooltip .tt-detail { color: var(--text-dim); margin-top: 2px; word-break: break-all; white-space: pre-wrap; }
+.trace-tooltip .tt-content { color: var(--text); margin-top: 3px; font-size: 9px; word-break: break-all; white-space: pre-wrap; opacity: 0.8; }
 .trace-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 100%; color: var(--text-dim); font-size: 11px; gap: 6px;
@@ -2083,6 +2109,73 @@ function _traceEventDuration(ev) {
   return 0; // instant/dot
 }
 
+function _traceEventContent(ev) {
+  // Extract inline content preview per event type
+  const detail = ev.detail || '';
+  const provider = ev.provider || '';
+  const model = ev.model || '';
+  const v1 = ev.v1 || 0;
+  switch (ev.type) {
+    case 'tool_call':
+      return detail || (model || provider || 'executed');
+    case 'tool_call_start':
+      return 'starting...';
+    case 'llm_request':
+      return (provider ? provider + ' ' : '') + (model || '') + ' → request';
+    case 'llm_response':
+      const tokInfo = v1 > 0 ? v1 + 'ms' : '';
+      const respDetail = detail || '';
+      return [tokInfo, respDetail].filter(Boolean).join(' · ') || (provider + ' ' + model + ' → response');
+    case 'http_request':
+      return detail || (provider || 'request');
+    case 'err':
+      return detail || provider || 'error';
+    case 'channel_message':
+      return detail || (provider + ':' + model);
+    case 'agent_start':
+      return (provider || '') + ' ' + (model || '');
+    case 'agent_end':
+      return v1 > 0 ? 'completed in ' + fmtDuration(v1) : 'completed';
+    case 'turn_complete':
+      return v1 > 0 ? fmtDuration(v1) : 'done';
+    case 'tool_iterations_exhausted':
+      return detail || 'max iterations reached';
+    case 'heartbeat_tick':
+      return '';
+    default:
+      return detail || '';
+  }
+}
+
+function _traceTypeShort(ev) {
+  switch (ev.type) {
+    case 'llm_request': case 'llm_response': return 'llm';
+    case 'tool_call_start': case 'tool_call': return 'tool';
+    case 'http_request': return 'http';
+    case 'err': return 'err';
+    case 'channel_message': return 'msg';
+    case 'agent_start': case 'agent_end': return 'agt';
+    case 'turn_complete': return 'turn';
+    case 'heartbeat_tick': return 'hb';
+    case 'tool_iterations_exhausted': return 'wrn';
+    default: return ev.type.slice(0, 4);
+  }
+}
+
+function _traceTypeColor(ev) {
+  switch (ev.type) {
+    case 'llm_request': case 'llm_response': return 'var(--purple)';
+    case 'tool_call_start': case 'tool_call': return 'var(--cyan)';
+    case 'http_request': return '#f0a030';
+    case 'err': return 'var(--red)';
+    case 'channel_message': return 'var(--magenta)';
+    case 'agent_start': case 'agent_end': return 'var(--blue)';
+    case 'turn_complete': case 'heartbeat_tick': return 'var(--text-dim)';
+    case 'tool_iterations_exhausted': return 'var(--amber)';
+    default: return 'var(--text-dim)';
+  }
+}
+
 function renderTraceWaterfall() {
   const container = $('trace-waterfall');
   const ruler = $('trace-ruler');
@@ -2118,7 +2211,7 @@ function renderTraceWaterfall() {
     const dur = _traceEventDuration(ev);
     if (dur > maxDur) maxDur = dur;
   }
-  const viewMs = Math.max(totalMs + maxDur * 0.1, 100); // add 10% padding for durations
+  const viewMs = Math.max(totalMs + maxDur * 0.1, 100);
 
   // Render ruler
   const rulerMarks = _computeRulerMarks(viewMs);
@@ -2129,8 +2222,9 @@ function renderTraceWaterfall() {
   }
   ruler.innerHTML = rulerHtml;
 
-  // Render rows
+  // Render dense rows
   let html = '';
+  let prevType = null;
   for (const ev of allEvents) {
     const offsetMs = (ev.ts - minTs) / 1e6;
     const dur = _traceEventDuration(ev);
@@ -2138,31 +2232,43 @@ function renderTraceWaterfall() {
     const icon = TYPE_ICONS[ev.type] || '·';
     const label = _traceEventLabel(ev);
     const timeStr = fmtTime(ev.ts);
+    const content = _traceEventContent(ev);
+    const typeShort = _traceTypeShort(ev);
+    const typeColor = _traceTypeColor(ev);
+    const metric = dur > 0 ? fmtDuration(dur) : '';
 
-    // bar positioning
-    const leftPct = (offsetMs / viewMs) * 100;
-    let widthPct;
+    // mini-bar: proportional width within 52px, min 2px
+    let barW;
     if (dur > 0) {
-      widthPct = Math.max((dur / viewMs) * 100, 0.15);
+      barW = Math.max(2, Math.min(52, (dur / viewMs) * 52));
     } else {
-      widthPct = 0.08; // dot
+      barW = 2; // dot
     }
+
+    // type break for visual grouping
+    const breakClass = (prevType !== null && ev.type !== prevType) ? ' type-break' : '';
+    prevType = ev.type;
 
     const selClass = (S.zoomedEvent && S.zoomedEvent._feedIdx === ev._feedIdx) ? ' selected' : '';
     const detail = ev.detail || '';
-    const metric = dur > 0 ? fmtDuration(dur) : '';
-    const tooltipData = `data-ts="${ev.ts}" data-type="${esc(ev.type)}" data-label="${esc(label)}" data-detail="${esc(detail)}" data-metric="${esc(metric)}" data-ok="${ev.ok}" data-provider="${esc(ev.provider||'')}" data-model="${esc(ev.model||'')}"`;
+    const tooltipData = `data-ts="${ev.ts}" data-type="${esc(ev.type)}" data-label="${esc(label)}" data-detail="${esc(detail)}" data-metric="${esc(metric)}" data-ok="${ev.ok}" data-provider="${esc(ev.provider||'')}" data-model="${esc(ev.model||'')}" data-content="${esc(content)}"`;
 
-    html += `<div class="trace-row${selClass}" ${tooltipData} onclick="openTraceDossier(this)">
-      <div class="trace-row-label">
-        <span class="tr-icon">${icon}</span>
-        <span class="tr-name" title="${esc(label)}">${esc(label)}</span>
-        <span class="tr-time">${timeStr}</span>
-      </div>
-      <div class="trace-bar-area">
-        <div class="trace-bar ${barClass}" style="left:${leftPct}%;width:${widthPct}%"></div>
-      </div>
-    </div>`;
+    const statusHtml = ev.ok === false
+      ? '<span class="tr-status fail">✗</span>'
+      : (dur > 0 ? '<span class="tr-status ok">✓</span>' : '');
+    const contentClass = (ev.type === 'err') ? 'tr-content err-content' : 'tr-content';
+    const contentEsc = content ? esc(content.length > 120 ? content.slice(0, 120) + '…' : content) : '';
+
+    html += `<div class="trace-row${breakClass}${selClass}" ${tooltipData} onclick="openTraceDossier(this)" style="border-left:2px solid ${typeColor}">`;
+    html += `<span class="tr-time">${timeStr}</span>`;
+    html += `<span class="tr-icon">${icon}</span>`;
+    html += `<span class="tr-type-tag" style="color:${typeColor}">${typeShort}</span>`;
+    html += `<span class="tr-label" title="${esc(label)}">${esc(label)}</span>`;
+    html += `<span class="tr-dur">${metric}</span>`;
+    html += `<span class="tr-bar-cell"><span class="tr-bar-inline ${barClass}" style="width:${barW}px"></span></span>`;
+    html += `<span class="${contentClass}">${contentEsc}</span>`;
+    html += statusHtml;
+    html += `</div>`;
   }
   container.innerHTML = html;
 }
@@ -2197,11 +2303,13 @@ function _initTraceTooltip() {
     const detail = row.dataset.detail;
     const metric = row.dataset.metric;
     const ok = row.dataset.ok;
+    const content = row.dataset.content || '';
     let ttHtml = `<div class="tt-type">${esc(type)}</div>`;
     ttHtml += `<div>${esc(label)}</div>`;
     if (metric) ttHtml += `<div style="color:var(--text-dim)">${esc(metric)}</div>`;
     if (ok === 'false') ttHtml += `<div style="color:var(--red)">✗ failed</div>`;
-    if (detail) ttHtml += `<div class="tt-detail">${esc(detail.length > 120 ? detail.slice(0,120)+'…' : detail)}</div>`;
+    if (content) ttHtml += `<div class="tt-content">${esc(content.length > 300 ? content.slice(0,300)+'…' : content)}</div>`;
+    else if (detail) ttHtml += `<div class="tt-detail">${esc(detail.length > 300 ? detail.slice(0,300)+'…' : detail)}</div>`;
     ttHtml += `<div class="tt-detail">${ts ? fmtTime(Number(ts)) : ''}</div>`;
     _traceTooltipEl.innerHTML = ttHtml;
     _traceTooltipEl.classList.add('visible');
