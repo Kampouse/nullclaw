@@ -1380,7 +1380,7 @@ pub const Agent = struct {
                         .tool = call.name,
                         .duration_ms = tool_duration,
                         .success = result.success,
-                        .detail = if (result.success) null else result.output,
+                        .detail = result.output,
                     } };
                     self.observer.recordEvent(&tool_event);
 
@@ -1733,7 +1733,7 @@ pub const Agent = struct {
                 .tool = call.name,
                 .duration_ms = tool_duration,
                 .success = result.success,
-                .detail = if (result.success) null else result.output,
+                .detail = result.output,
             } };
             context.observer.recordEvent(&tool_event);
 

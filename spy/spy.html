@@ -487,6 +487,61 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 }
 .trace-empty .icon { font-size: 20px; opacity: 0.25; }
 .trace-empty .hint { font-size: 10px; opacity: 0.5; }
+
+/* ═══ FILE ACTIVITY — trace file bar ═══ */
+#trace-files {
+  display: flex; gap: 4px; padding: 3px 8px; overflow-x: auto;
+  border-bottom: 1px solid var(--border); background: var(--bg-panel);
+  align-items: center; flex-shrink: 0; min-height: 24px;
+}
+#trace-files:empty { display: none; }
+.file-chip {
+  padding: 1px 7px; color: var(--text-dim); cursor: pointer; font-size: 9px;
+  border: 1px solid var(--border); white-space: nowrap; user-select: none;
+  transition: all 0.1s; flex-shrink: 0; display: flex; align-items: center; gap: 4px;
+}
+.file-chip:hover { border-color: var(--text-dim); color: var(--text); }
+.file-chip.active { color: var(--text-bright); background: rgba(255,255,255,0.04); }
+.file-chip.op-read { border-left: 2px solid var(--blue); }
+.file-chip.op-read.active { border-color: var(--blue); color: var(--blue); }
+.file-chip.op-write { border-left: 2px solid var(--green); }
+.file-chip.op-write.active { border-color: var(--green); color: var(--green); }
+.file-chip.op-patch { border-left: 2px solid var(--amber); }
+.file-chip.op-patch.active { border-color: var(--amber); color: var(--amber); }
+.file-chip.op-git { border-left: 2px solid var(--purple); }
+.file-chip.op-git.active { border-color: var(--purple); color: var(--purple); }
+.file-chip .fc-count {
+  font-size: 8px; opacity: 0.5; padding: 0 3px;
+  background: rgba(255,255,255,0.04);
+}
+.file-chip .fc-op {
+  font-size: 8px; font-weight: 700; letter-spacing: 0.5px;
+}
+
+/* ═══ FILE ACTIVITY — dossier FILES tab ═══ */
+.file-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.file-table th {
+  text-align: left; padding: 4px 6px; color: var(--text-dim);
+  font-size: 9px; letter-spacing: 1px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--bg-card); z-index: 1;
+}
+.file-table td {
+  padding: 3px 6px; border-bottom: 1px solid rgba(26,30,46,0.4);
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 200px;
+}
+.file-table tr { cursor: pointer; transition: background 0.06s; }
+.file-table tr:hover { background: rgba(74,192,232,0.04); }
+.file-table .ft-path { color: var(--text-bright); font-family: var(--mono); }
+.file-table .ft-ops { color: var(--text-dim); }
+.file-table .ft-last { font-size: 9px; }
+.file-table .ft-time { color: var(--text-dim); font-size: 9px; }
+.file-table .ft-status { font-size: 9px; }
+.file-table .ft-status.st-write { color: var(--green); }
+.file-table .ft-status.st-patch { color: var(--amber); }
+.file-table .ft-status.st-read { color: var(--blue); }
+.file-table .ft-status.st-git { color: var(--purple); }
+.file-table .ft-status.st-append { color: var(--cyan); }
 </style>
 </head>
 <body>
@@ -529,6 +584,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   <div id="trace-panel" style="display:none">
     <div id="trace-sessions"></div>
     <div id="trace-filters"></div>
+    <div id="trace-files"></div>
     <div id="trace-ruler"></div>
     <div id="trace-waterfall"></div>
   </div>
@@ -547,6 +603,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
       <div class="dtab" data-tab="graph">GRAPH</div>
       <div class="dtab" data-tab="timeline">TIMELINE</div>
       <div class="dtab" data-tab="context">CONTEXT</div>
+      <div class="dtab" data-tab="files">FILES</div>
     </div>
     <div id="dossier-content">
       <div class="empty-state" id="dossier-empty">
@@ -630,6 +687,9 @@ const S = {
   traceFilter: null,
   activeSession: null,
   traceDirty: false,
+  // file activity tracking
+  fileOps: {},        // {filepath: [{op, tool, ts, _evIdx}]}
+  activeFile: null,   // file path filter for trace view
 };
 
 // ═══ DOM REFS ═══
@@ -681,6 +741,59 @@ function fmtUptime(ns) {
 }
 
 // ═══ ENTITY TRACKING ═══
+function extractFileOps(ev) {
+  if (ev.type !== 'llm_response' || !ev.content) return [];
+  let parsed;
+  try { parsed = JSON.parse(ev.content); } catch(e) { return []; }
+  const tools = Array.isArray(parsed?.t) ? parsed.t : [];
+  const ops = [];
+  for (const tc of tools) {
+    const name = tc.n || '';
+    const argsStr = tc.a || '';
+    let args;
+    try { args = JSON.parse(argsStr); } catch(e) { continue; }
+    if (['file_read', 'file_write', 'file_edit', 'file_append'].includes(name) && args.path) {
+      const opMap = { file_read: 'read', file_write: 'write', file_edit: 'patch', file_append: 'append' };
+      ops.push({ path: args.path, op: opMap[name], tool: name, ts: ev.ts, _evIdx: ev._idx });
+    }
+    if (name === 'git_operations') {
+      ops.push({ path: args.command || args.path || 'git', op: 'git', tool: name, ts: ev.ts, _evIdx: ev._idx });
+    }
+  }
+  return ops;
+}
+
+function trackFileOps(ev) {
+  const ops = extractFileOps(ev);
+  for (const op of ops) {
+    if (!S.fileOps[op.path]) S.fileOps[op.path] = [];
+    S.fileOps[op.path].push(op);
+    // Also register as file entity with op info
+    if (!S.entities[op.path]) {
+      S.entities[op.path] = { type: 'file', events: [], related: {}, fileOps: [] };
+    }
+    S.entities[op.path].fileOps = S.entities[op.path].fileOps || [];
+    S.entities[op.path].fileOps.push(op);
+    // Tag the entity type as file if it was something else
+    if (S.entities[op.path].type !== 'file') S.entities[op.path].type = 'file';
+  }
+}
+
+function getFilePrimaryOp(path) {
+  const ops = S.fileOps[path];
+  if (!ops || ops.length === 0) return 'read';
+  const priority = ['write', 'patch', 'git', 'append', 'read'];
+  const opCounts = {};
+  for (const op of ops) opCounts[op.op] = (opCounts[op.op] || 0) + 1;
+  for (const p of priority) {
+    if (opCounts[p]) return p;
+  }
+  return ops[ops.length - 1].op;
+}
+
+const OP_COLORS = { read: '#4a9eff', write: '#3dd68c', patch: '#f0a030', append: '#4ac0e8', git: '#a070f0' };
+const OP_ICONS = { read: 'R', write: 'W', patch: 'P', append: 'A', git: 'G' };
+
 function extractEntities(ev) {
   const ents = [];
   if (ev.provider) ents.push({ name: ev.provider, type: 'provider' });
@@ -690,15 +803,27 @@ function extractEntities(ev) {
   } else if (ev.model) {
     ents.push({ name: ev.model, type: 'model' });
   }
-  // Extract file-like things from detail
-  if (ev.detail) {
-    const fileMatch = ev.detail.match(/[\w./\-]+\.\w{1,5}/g);
+  // Extract file-like things from detail (skip for file tools — use structured data instead)
+  if (ev.detail && ev.model !== 'file_read' && ev.model !== 'file_write' && ev.model !== 'file_edit' && ev.model !== 'file_append') {
+    const fileMatch = ev.detail.match(/[\w.\/\-]+\.\w{1,5}/g);
     if (fileMatch) {
       fileMatch.forEach(f => {
         if (f.includes('.') && f.length > 3 && !f.startsWith('http')) {
           ents.push({ name: f, type: 'file' });
         }
       });
+    }
+  }
+  // Also extract file paths from llm_response tool call args (structured data)
+  if (ev.type === 'llm_response' && ev.content) {
+    const ops = extractFileOps(ev);
+    for (const op of ops) {
+      if (op.op !== 'git') {
+        // Avoid duplicate if already added
+        if (!ents.some(e => e.name === op.path)) {
+          ents.push({ name: op.path, type: 'file', op: op.op });
+        }
+      }
     }
   }
   return ents;
@@ -853,6 +978,7 @@ function appendEvents(newEvents) {
     ev._idx = idx;
     S.events.push(ev);
     trackEntity(ev);
+    trackFileOps(ev);
     frag.appendChild(renderEvent(ev, idx));
   });
 
@@ -987,6 +1113,7 @@ function switchTab(tab) {
     case 'graph': renderDossierGraph(primary); break;
     case 'timeline': renderDossierTimeline(primary); break;
     case 'context': renderDossierContext(primary); break;
+    case 'files': renderDossierFiles(primary); break;
   }
 }
 
@@ -1114,6 +1241,13 @@ function renderDossierGraph(primary) {
 
   const TYPE_COL = { provider: '#a070f0', model: '#4a9eff', tool: '#4ac0e8', file: '#3dd68c', channel: '#f060c0', error: '#f05050', err: '#f05050' };
   const col = t => TYPE_COL[t] || '#8888aa';
+  const nodeCol = n => {
+    if (n.type === 'file' && S.fileOps[n.id]) {
+      const op = getFilePrimaryOp(n.id);
+      return OP_COLORS[op] || '#3dd68c';
+    }
+    return TYPE_COL[n.type] || '#8888aa';
+  };
 
   const dpr = window.devicePixelRatio || 1;
   function resize() {
@@ -1153,7 +1287,15 @@ function renderDossierGraph(primary) {
       if (dx*dx + dy*dy < (nr + 6) * (nr + 6)) { hovered = n; break; }
     }
     if (hovered) {
-      tip.innerHTML = '<b style="color:' + col(hovered.type) + '">' + esc(hovered.id) + '</b><br><span style="color:#888">' + hovered.type + '</span> &middot; ' + hovered.weight + ' events';
+      let tipHtml = '<b style="color:' + nodeCol(hovered) + '">' + esc(hovered.id) + '</b><br><span style="color:#888">' + hovered.type + '</span> &middot; ' + hovered.weight + ' events';
+      if (hovered.type === 'file' && S.fileOps[hovered.id]) {
+        const ops = S.fileOps[hovered.id];
+        const counts = {};
+        for (const op of ops) counts[op.op] = (counts[op.op] || 0) + 1;
+        const breakdown = Object.entries(counts).map(([op, cnt]) => cnt + ' ' + op + (cnt > 1 ? 's' : '')).join(', ');
+        tipHtml += '<br><span style="color:#666;font-size:10px">' + breakdown + '</span>';
+      }
+      tip.innerHTML = tipHtml;
       tip.style.display = 'block';
       tip.style.left = (e.clientX - canvas.getBoundingClientRect().left + 14) + 'px';
       tip.style.top = (e.clientY - canvas.getBoundingClientRect().top - 10) + 'px';
@@ -1171,7 +1313,13 @@ function renderDossierGraph(primary) {
   });
   canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; hovered = null; });
 
-  function nodeRadius(n) { return 5 + Math.min(n.weight, 30) * 0.6; }
+  function nodeRadius(n) {
+    if (n.type === 'file' && S.fileOps[n.id]) {
+      const ops = S.fileOps[n.id];
+      return 6 + Math.min(ops.length, 30) * 0.7;
+    }
+    return 5 + Math.min(n.weight, 30) * 0.6;
+  }
 
   let simSteps = 0;
   function simulate() {
@@ -1223,8 +1371,8 @@ function renderDossierGraph(primary) {
       const alpha = isHl ? 0.5 : 0.12;
       const width = isHl ? 1.5 + e.w * 0.3 : 0.5 + e.w * 0.15;
       const grad = ctx.createLinearGradient(sa.x, sa.y, sb.x, sb.y);
-      grad.addColorStop(0, col(a.type));
-      grad.addColorStop(1, col(b.type));
+      grad.addColorStop(0, nodeCol(a));
+      grad.addColorStop(1, nodeCol(b));
       ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y);
       ctx.strokeStyle = grad; ctx.globalAlpha = alpha; ctx.lineWidth = width * cam.z; ctx.stroke();
       ctx.globalAlpha = 1;
@@ -1244,7 +1392,7 @@ function renderDossierGraph(primary) {
     nodes.forEach(n => {
       const sp = w2s(n.x, n.y);
       const r = nodeRadius(n) * cam.z;
-      const c = col(n.type);
+      const c = nodeCol(n);
       const isPrimary = primary && n.id === primary.name;
       const isHov = hovered && hovered.id === n.id;
       const isRel = hovered && edges.some(ed => (nodes[ed.s].id === hovered.id && nodes[ed.t].id === n.id) || (nodes[ed.t].id === hovered.id && nodes[ed.s].id === n.id));
@@ -1274,6 +1422,23 @@ function renderDossierGraph(primary) {
         ctx.fillStyle = dimmed ? 'rgba(200,204,216,0.2)' : isPrimary ? '#ffffff' : isHov ? '#e8ecf4' : 'rgba(200,204,216,0.75)';
         ctx.fillText(n.label, sp.x, sp.y + r + 12 * cam.z);
       }
+
+      // File operation badge
+      if (n.type === 'file' && S.fileOps[n.id] && (cam.z > 0.4 || isPrimary || isHov)) {
+        const op = getFilePrimaryOp(n.id);
+        const badge = OP_ICONS[op] || '?';
+        const badgeSize = Math.max(7, 9 * cam.z);
+        ctx.font = 'bold ' + badgeSize + 'px "SF Mono",monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Badge background
+        const bw = badgeSize + 4, bh = badgeSize + 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(sp.x + r * 0.5 - bw/2, sp.y - r * 0.5 - bh/2, bw, bh);
+        ctx.fillStyle = dimmed ? (c + '40') : c;
+        ctx.fillText(badge, sp.x + r * 0.5, sp.y - r * 0.5 + 1);
+        ctx.textBaseline = 'alphabetic';
+      }
     });
 
     // legend
@@ -1282,10 +1447,25 @@ function renderDossierGraph(primary) {
     const types = [...new Set(nodes.map(n => n.type))];
     let lx = 10;
     types.forEach(tp => {
-      ctx.fillStyle = col(tp); ctx.beginPath(); ctx.arc(lx + 4, ly, 3, 0, Math.PI * 2); ctx.fill();
+      const c = TYPE_COL[tp] || '#8888aa';
+      ctx.fillStyle = c; ctx.beginPath(); ctx.arc(lx + 4, ly, 3, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#555a6e'; ctx.fillText(tp, lx + 10, ly + 3);
       lx += ctx.measureText(tp).width + 22;
     });
+    // File op legend
+    const fileNodes = nodes.filter(n => n.type === 'file' && S.fileOps[n.id]);
+    if (fileNodes.length > 0) {
+      ctx.fillStyle = '#333848';
+      ctx.fillText('|', lx, ly + 3);
+      lx += 10;
+      for (const [op, oc] of Object.entries(OP_COLORS)) {
+        const hasOp = fileNodes.some(n => getFilePrimaryOp(n.id) === op);
+        if (!hasOp) continue;
+        ctx.fillStyle = oc; ctx.beginPath(); ctx.arc(lx + 4, ly, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#555a6e'; ctx.fillText(OP_ICONS[op] + '=' + op, lx + 10, ly + 3);
+        lx += ctx.measureText(OP_ICONS[op] + '=' + op).width + 22;
+      }
+    }
     ctx.fillStyle = '#333848'; ctx.textAlign = 'right';
     ctx.fillText(nodes.length + ' entities \u00b7 ' + edges.length + ' links', cw - 10, ly + 3);
   }
@@ -1776,7 +1956,7 @@ document.addEventListener('keydown', (e) => {
     case 'Tab':
       e.preventDefault();
       if (S.zoomedEvent) {
-        const tabs = ['overview', 'graph', 'timeline', 'context'];
+        const tabs = ['overview', 'graph', 'timeline', 'context', 'files'];
         const ci = tabs.indexOf(S.activeTab);
         switchTab(tabs[(ci + 1) % tabs.length]);
       }
@@ -1845,6 +2025,8 @@ function clearFeed() {
   S.sincePos = null;
   S.selectedIdx = -1;
   S.entities = {};
+  S.fileOps = {};
+  S.activeFile = null;
   feed.innerHTML = '';
   $('event-count').textContent = '0';
 }
@@ -1979,6 +2161,58 @@ function loadMockData() {
   openDossier(Math.floor(mockEvents.length * 0.6));
 }
 
+// ═══ DOSSIER FILES TAB ═══
+function renderDossierFiles(primary) {
+  const content = $('dossier-content');
+  const paths = Object.keys(S.fileOps);
+  if (paths.length === 0) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">◇</div><div>No file activity tracked</div><div class="hint">file operations will appear here as the agent reads/writes files</div></div>';
+    return;
+  }
+  // Sort by most recently touched
+  const sorted = paths.map(path => {
+    const ops = S.fileOps[path];
+    const lastOp = ops[ops.length - 1];
+    const counts = {};
+    for (const op of ops) counts[op.op] = (counts[op.op] || 0) + 1;
+    return { path, ops, lastOp, counts, totalOps: ops.length, primaryOp: getFilePrimaryOp(path) };
+  }).sort((a, b) => b.lastOp.ts - a.lastOp.ts);
+
+  let html = `<div class="dossier-section"><div class="section-title">FILE ACTIVITY (${sorted.length} files)</div>`;
+  html += '<div style="overflow:auto;max-height:calc(100vh - 180px)"><table class="file-table"><thead><tr>';
+  html += '<th>FILE</th><th>OPS</th><th>LAST</th><th>WHEN</th><th>STATUS</th>';
+  html += '</tr></thead><tbody>';
+
+  for (const f of sorted) {
+    const basename = f.path.split('/').pop();
+    const dir = f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/') + 1) : '';
+    const opBreakdown = Object.entries(f.counts).map(([op, cnt]) => `${OP_ICONS[op] || op}${cnt}`).join(' ');
+    const lastOpLabel = OP_ICONS[f.lastOp.op] || f.lastOp.op;
+    const timeStr = fmtTime(f.lastOp.ts);
+    const statusClass = 'st-' + f.primaryOp;
+    const statusLabel = f.primaryOp.toUpperCase();
+
+    html += `<tr class="file-row" data-path="${esc(f.path)}" onclick="openFileInGraph('${esc(f.path)}')">`;
+    html += `<td class="ft-path" title="${esc(f.path)}"><span style="color:var(--text-dim)">${esc(dir)}</span>${esc(basename)}</td>`;
+    html += `<td class="ft-ops">${opBreakdown}</td>`;
+    html += `<td class="ft-last">${lastOpLabel}</td>`;
+    html += `<td class="ft-time">${timeStr}</td>`;
+    html += `<td class="ft-status ${statusClass}">${statusLabel}</td>`;
+    html += '</tr>';
+  }
+
+  html += '</tbody></table></div></div>';
+  content.innerHTML = html;
+}
+
+function openFileInGraph(path) {
+  const ent = S.entities[path];
+  if (ent && ent.events.length > 0) {
+    openDossier(ent.events[ent.events.length - 1]._idx);
+    switchTab('graph');
+  }
+}
+
 // ═══ TRACE VIEW ═══
 const TRACE_TYPE_COLORS = {
   llm_request: 'bar-llm', llm_response: 'bar-llm',
@@ -2054,9 +2288,44 @@ function pollTrace() {
 function renderTraceView() {
   renderTraceSessions();
   renderTraceFilters();
+  renderTraceFiles();
   renderTraceWaterfall();
 }
 
+function renderTraceFiles() {
+  const el = $('trace-files');
+  const paths = Object.keys(S.fileOps);
+  if (paths.length === 0) {
+    el.innerHTML = '';
+    return;
+  }
+  // Sort by most recently touched
+  const sorted = paths.sort((a, b) => {
+    const aLast = S.fileOps[a][S.fileOps[a].length - 1].ts;
+    const bLast = S.fileOps[b][S.fileOps[b].length - 1].ts;
+    return bLast - aLast;
+  }).slice(0, 30); // cap at 30 files
+
+  let html = '<span style="color:var(--text-dim);font-size:9px;opacity:0.5;margin-right:4px">FILES</span>';
+  for (const path of sorted) {
+    const ops = S.fileOps[path];
+    const primaryOp = getFilePrimaryOp(path);
+    const opLetter = OP_ICONS[primaryOp] || '?';
+    const count = ops.length;
+    const basename = path.split('/').pop();
+    const isActive = S.activeFile === path;
+    html += `<div class="file-chip op-${primaryOp} ${isActive ? 'active' : ''}" onclick="toggleTraceFile('${esc(path)}')" title="${esc(path)} — ${count} ops">
+      <span class="fc-op">${opLetter}</span>${esc(basename)}<span class="fc-count">${count}</span>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function toggleTraceFile(path) {
+  S.activeFile = S.activeFile === path ? null : path;
+  renderTraceFiles();
+  renderTraceWaterfall();
+}
 function renderTraceSessions() {
   const el = $('trace-sessions');
   const sessions = Object.entries(S.traceSessions);
@@ -2116,8 +2385,10 @@ function _traceEventContent(ev) {
   const model = ev.model || '';
   const v1 = ev.v1 || 0;
   switch (ev.type) {
-    case 'tool_call':
-      return detail || (model || provider || 'executed');
+    case 'tool_call': {
+      const output = ev.content || detail || '';
+      return output || (model || provider || 'executed');
+    }
     case 'tool_call_start':
       return 'starting...';
     case 'llm_request':
@@ -2194,6 +2465,34 @@ function renderTraceWaterfall() {
   }
   // Hide heartbeats unless toggled
   if (!S.showHeartbeats) allEvents = allEvents.filter(e => e.type !== 'heartbeat_tick');
+
+  // Filter by active file if selected
+  if (S.activeFile) {
+    const filePaths = new Set();
+    // Collect all event indices that reference the active file
+    for (const [path, ops] of Object.entries(S.fileOps)) {
+      if (path === S.activeFile) {
+        for (const op of ops) {
+          if (op._evIdx !== undefined) filePaths.add(op._evIdx);
+        }
+      }
+    }
+    // Also include tool_call events for file tools that reference this file
+    // by checking the model field and detail matching the file path
+    allEvents = allEvents.filter(e => {
+      if (filePaths.has(e._feedIdx)) return true;
+      // Also match by model being a file tool and detail containing the file basename
+      if (e.model && ['file_read', 'file_write', 'file_edit', 'file_append'].includes(e.model)) {
+        if (e.detail && e.detail.includes(S.activeFile.split('/').pop())) return true;
+      }
+      // Include llm_response events that contain tool calls for this file
+      if (e.type === 'llm_response' && e.content) {
+        const ops = extractFileOps(e);
+        if (ops.some(op => op.path === S.activeFile)) return true;
+      }
+      return false;
+    });
+  }
 
   if (allEvents.length === 0) {
     container.innerHTML = '<div class="trace-empty"><div class="icon">◉</div><div>no trace events</div><div class="hint">waiting for session data from /api/trace</div></div>';

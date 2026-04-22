@@ -17,7 +17,7 @@ const log = std.log.scoped(.event_tap);
 pub const RING_SIZE: usize = 512;
 
 /// Maximum detail string length stored per event (truncated if longer).
-pub const MAX_DETAIL_LEN: usize = 256;
+pub const MAX_DETAIL_LEN: usize = 512;
 
 /// Maximum content payload for llm events (message snapshots, response previews).
 pub const MAX_CONTENT_LEN: usize = 8192;
@@ -249,6 +249,10 @@ pub const EventTap = struct {
                 entry.flag = e.success;
                 if (e.detail) |d| {
                     entry.detail_len = @intCast(TapEvent.copyString(&entry.detail, d));
+                }
+                // Store tool output in content field for trace visibility
+                if (e.detail) |d| {
+                    entry.content_len = @intCast(TapEvent.copyString(&entry.content, d));
                 }
             },
             .tool_iterations_exhausted => |e| {
