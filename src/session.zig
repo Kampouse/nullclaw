@@ -19,6 +19,7 @@ const Provider = providers.Provider;
 const memory_mod = @import("memory/root.zig");
 const Memory = memory_mod.Memory;
 const observability = @import("observability.zig");
+const event_tap = @import("observability/event_tap.zig");
 const Observer = observability.Observer;
 const tools_mod = @import("tools/root.zig");
 const Tool = tools_mod.Tool;
@@ -300,6 +301,13 @@ pub const SessionManager = struct {
         } else {
             session.agent.stream_callback = null;
             session.agent.stream_ctx = null;
+        }
+
+        // Set session hash in threadlocal for event tap correlation
+        if (session.agent.memory_session_id) |sid| {
+            event_tap.setSessionHash(std.hash.Wyhash.hash(0, sid));
+        } else {
+            event_tap.setSessionHash(0);
         }
 
         const response = try session.agent.turn(content);

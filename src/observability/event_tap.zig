@@ -63,6 +63,9 @@ pub const TapEvent = struct {
     detail_len: u16 = 0,
     content: [MAX_CONTENT_LEN]u8 = [_]u8{0} ** MAX_CONTENT_LEN,
     content_len: u16 = 0,
+    /// Session identifier - Wyhash of session key (e.g. "telegram:5125145880").
+    /// Set via threadlocal before agent turn. 0 means no session.
+    session_hash: u64 = 0,
 
     fn copyString(dst: []u8, src: []const u8) usize {
         const len = @min(src.len, dst.len);
@@ -100,6 +103,20 @@ pub fn globalObserver() observability.Observer {
         return noop.observer();
     };
     return tap.observer();
+}
+
+/// Thread-local session hash - set before agent turn, read during record().
+/// 0 = no session context (eval endpoint, health checks, etc.).
+threadlocal var current_session_hash: u64 = 0;
+
+/// Set the session hash for the current thread. Call before agent.turn().
+pub fn setSessionHash(hash: u64) void {
+    current_session_hash = hash;
+}
+
+/// Get the current thread's session hash.
+pub fn getSessionHash() u64 {
+    return current_session_hash;
 }
 
 /// Get the global event tap pointer (null if not initialized).
@@ -142,6 +159,7 @@ pub const EventTap = struct {
         entry.flag = false;
         entry.detail_len = 0;
         entry.content_len = 0;
+        entry.session_hash = 0;
 
         switch (event.*) {
             .agent_start => |e| {
@@ -217,6 +235,9 @@ pub const EventTap = struct {
             },
         }
 
+        // Capture session hash from threadlocal (set before agent.turn())
+        entry.session_hash = current_session_hash;
+
         self.write_pos.store(pos + 1, .release);
     }
 
@@ -249,6 +270,12 @@ pub const EventTap = struct {
             fbs.writeAll(",\"type\":\"") catch break;
             fbs.writeAll(@tagName(entry.event_type)) catch break;
             fbs.writeAll("\"") catch break;
+
+            // session
+            if (entry.session_hash > 0) {
+                fbs.writeAll(",\"session\":") catch break;
+                fbs.print("{d}", .{entry.session_hash}) catch break;
+            }
 
             // provider
             if (entry.provider_len > 0) {
