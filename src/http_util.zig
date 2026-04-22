@@ -3,10 +3,36 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const profiling = @import("profiling.zig");
+const util = @import("util.zig");
+const event_tap = @import("observability/event_tap.zig");
 
 const log = std.log.scoped(.http_util);
 
 const tls = @import("tls");
+
+/// Lightweight HTTP tracing — records outbound requests into the event tap.
+/// Zero-cost when the tap is not initialized (early return on null check).
+const HttpTrace = struct {
+    start_ns: i128,
+    url: []const u8,
+    method: []const u8,
+    source: []const u8,
+
+    fn init(url: []const u8, method: []const u8, source: []const u8) HttpTrace {
+        return .{
+            .start_ns = util.nanoTimestamp(),
+            .url = url,
+            .method = method,
+            .source = source,
+        };
+    }
+
+    fn record(self: HttpTrace, status: u16, success: bool) void {
+        const elapsed_ns = util.nanoTimestamp() - self.start_ns;
+        const duration_ms: u64 = @intCast(@divTrunc(elapsed_ns, 1_000_000));
+        event_tap.recordHttpRequest(self.url, self.method, status, duration_ms, success, self.source);
+    }
+};
 
 // Thread-local storage for the Threaded Io instance
 // std.Options.debug_io doesn't support async network operations, so we need
@@ -70,6 +96,8 @@ pub fn curlPostWithProxy(
     _ = proxy;
     _ = max_time;
 
+    const trace = HttpTrace.init(url, "POST", "");
+
     const client = getThreadLocalHttpClient();
 
     // Build headers array - always include Content-Type: application/json
@@ -92,6 +120,7 @@ pub fn curlPostWithProxy(
 
     var req = client.request(.POST, uri, .{ .extra_headers = extra_headers }) catch |err| {
         log.warn("curlPostWithProxy: request failed: {}", .{err});
+        trace.record(0, false);
         return err;
     };
     defer req.deinit();
@@ -103,6 +132,7 @@ pub fn curlPostWithProxy(
     var redirect_buf: [4096]u8 = undefined;
     const response = req.receiveHead(&redirect_buf) catch |err| {
         log.warn("curlPostWithProxy: receiveHead failed: {}", .{err});
+        trace.record(0, false);
         return err;
     };
 
@@ -138,6 +168,7 @@ pub fn curlPostWithProxy(
         }
 
         log.warn("curlPostWithProxy: HTTP status not ok: {} | body: {s}", .{response.head.status, error_buffer.items});
+        trace.record(@intFromEnum(response.head.status), false);
         return error.HttpError;
     }
 
@@ -166,6 +197,7 @@ pub fn curlPostWithProxy(
                 break;
             }
             log.warn("curlPostWithProxy: fill failed: {}", .{err});
+            trace.record(0, false);
             return err;
         };
 
@@ -180,6 +212,7 @@ pub fn curlPostWithProxy(
     }
 
     const response_body = try response_buffer.toOwnedSlice(allocator);
+    trace.record(200, true);
     return response_body;
 }
 
@@ -214,6 +247,8 @@ pub fn curlPostStream(
     const zone = profiling.zoneNamed(@src(), "http_post_stream");
     defer zone.end();
 
+    const trace = HttpTrace.init(url, "POST", "stream");
+
     const client = getThreadLocalHttpClient();
 
     // Build headers array - always include Content-Type: application/json
@@ -235,6 +270,7 @@ pub fn curlPostStream(
 
     var req = client.request(.POST, uri, .{ .extra_headers = extra_headers }) catch |err| {
         log.err("curlPostStream: request failed: {}", .{err});
+        trace.record(0, false);
         return err;
     };
     defer req.deinit();
@@ -246,11 +282,13 @@ pub fn curlPostStream(
     var redirect_buf: [4096]u8 = undefined;
     const response = req.receiveHead(&redirect_buf) catch |err| {
         log.err("curlPostStream: receiveHead failed: {}", .{err});
+        trace.record(0, false);
         return err;
     };
 
     if (response.head.status != .ok) {
         log.err("curlPostStream: HTTP status not ok: {}", .{response.head.status});
+        trace.record(@intFromEnum(response.head.status), false);
         return error.HttpError;
     }
 
@@ -276,6 +314,7 @@ pub fn curlPostStream(
                 break;
             }
             log.err("curlPostStream: fill failed: {}", .{err});
+            trace.record(0, false);
             return err;
         };
 
@@ -290,6 +329,8 @@ pub fn curlPostStream(
         try callback(data, callback_ctx);
         total_read += data.len;
     }
+
+    trace.record(200, true);
 }
 
 /// HTTP POST and include HTTP status code in response.
@@ -439,6 +480,8 @@ pub fn curlGetWithProxy(
     _ = timeout_secs;
     _ = proxy;
 
+    const trace = HttpTrace.init(url, "GET", "");
+
     log.info("curlGetWithProxy: Starting request for {s}", .{url});
 
     const uri = try std.Uri.parse(url);
@@ -447,6 +490,7 @@ pub fn curlGetWithProxy(
     // Use tls.zig for all HTTPS requests (supports ECDSA)
     if (is_https) {
         log.debug("curlGetWithProxy: Using tls.zig for HTTPS: {s}", .{url});
+        // Note: curlGetTlsLibrary has its own HttpTrace instrumentation
         return curlGetTlsLibrary(allocator, url, headers);
     }
 
@@ -472,6 +516,7 @@ pub fn curlGetWithProxy(
 
     var req = client.request(.GET, uri, .{ .extra_headers = extra_headers }) catch |err| {
         log.err("curlGetWithProxy: Request failed for {s}: {}", .{url, err});
+        trace.record(0, false);
         return err;
     };
     defer req.deinit();
@@ -485,6 +530,7 @@ pub fn curlGetWithProxy(
 
     if (response.head.status != .ok) {
         log.err("curlGetWithProxy: HTTP error for {s}: {}", .{url, response.head.status});
+        trace.record(@intFromEnum(response.head.status), false);
         return error.HttpError;
     }
 
@@ -518,6 +564,7 @@ pub fn curlGetWithProxy(
                 try response_buffer.appendSlice(allocator, data);
                 break;
             }
+            trace.record(0, false);
             return err;
         };
 
@@ -531,6 +578,7 @@ pub fn curlGetWithProxy(
         try response_buffer.appendSlice(allocator, data);
     }
 
+    trace.record(200, true);
     return response_buffer.toOwnedSlice(allocator);
 }
 
@@ -555,6 +603,8 @@ pub fn curlGet(allocator: Allocator, url: []const u8, headers: []const []const u
 /// This is called when std.http.Client fails with TlsInitializationFailed.
 fn curlGetTlsLibrary(allocator: Allocator, url: []const u8, headers: []const []const u8) ![]u8 {
     log.info("curlGetTlsLibrary: Using tls.zig fallback for {s}", .{url});
+
+    const trace = HttpTrace.init(url, "GET", "tls");
 
     const uri = try std.Uri.parse(url);
     const host = uri.host.?.percent_encoded;
@@ -658,6 +708,7 @@ fn curlGetTlsLibrary(allocator: Allocator, url: []const u8, headers: []const []c
     const full_response = response_buffer.items;
     const header_end = std.mem.indexOf(u8, full_response, "\r\n\r\n") orelse {
         log.err("curlGetTlsLibrary: Invalid HTTP response - no header terminator", .{});
+        trace.record(0, false);
         return error.InvalidHttpResponse;
     };
 
@@ -668,9 +719,11 @@ fn curlGetTlsLibrary(allocator: Allocator, url: []const u8, headers: []const []c
 
     // Check for HTTP error status codes (4xx, 5xx)
     // Log warning but don't fail - let the caller decide what to do with the response
+    var http_status: u16 = 200;
     if (status_line.len >= 12) { // "HTTP/1.x XXX"
         const status_code_str = status_line[9..12];
         if (std.fmt.parseInt(u16, status_code_str, 10)) |status_code| {
+            http_status = status_code;
             if (status_code >= 400) {
                 log.warn("curlGetTlsLibrary: HTTP {d} status: {s}", .{status_code, status_line});
             } else {
@@ -683,6 +736,7 @@ fn curlGetTlsLibrary(allocator: Allocator, url: []const u8, headers: []const []c
     const body = full_response[header_end + 4 ..];
     log.info("curlGetTlsLibrary: Extracted {d} bytes body", .{body.len});
 
+    trace.record(http_status, http_status < 400);
     return allocator.dupe(u8, body);
 }
 

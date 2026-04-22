@@ -35,6 +35,8 @@ pub const TapEventType = enum {
     channel_message,
     heartbeat_tick,
     err,
+    /// Outbound HTTP request completed. detail=url, model=method, v1=status, v2=duration_ms, ok=success, provider=source_label.
+    http_request,
 
     pub fn jsonStringify(self: TapEventType, jw: anytype) !void {
         try jw.write(@tagName(self));
@@ -117,6 +119,42 @@ pub fn setSessionHash(hash: u64) void {
 /// Get the current thread's session hash.
 pub fn getSessionHash() u64 {
     return current_session_hash;
+}
+
+/// Record an outbound HTTP request directly into the event tap.
+/// Bypasses the observer vtable — called from http_util.zig.
+/// All params are optional comptime-known strings except url/method.
+/// Thread-safe, allocation-free (truncates to fit fixed-size fields).
+pub fn recordHttpRequest(
+    url: []const u8,
+    method: []const u8,
+    status_code: u16,
+    duration_ms: u64,
+    success: bool,
+    source_label: []const u8,
+) void {
+    const tap = global_tap orelse return;
+    // Spinlock for write
+    while (tap.write_lock.swap(true, .acquire)) {}
+    defer tap.write_lock.store(false, .release);
+
+    const pos = tap.write_pos.load(.monotonic);
+    const idx = pos % RING_SIZE;
+    var entry = &tap.ring[idx];
+    entry.timestamp_ns = 0; // will be set below
+    entry.event_type = .http_request;
+    entry.provider_len = 0;
+    entry.model_len = @intCast(TapEvent.copyString(&entry.model, method));
+    entry.value1 = status_code;
+    entry.value2 = duration_ms;
+    entry.flag = success;
+    entry.detail_len = @intCast(TapEvent.copyString(&entry.detail, url));
+    entry.content_len = 0;
+    entry.provider_len = @intCast(TapEvent.copyString(&entry.provider, source_label));
+    entry.timestamp_ns = util.nanoTimestamp();
+    entry.session_hash = current_session_hash;
+
+    tap.write_pos.store(pos + 1, .release);
 }
 
 /// Get the global event tap pointer (null if not initialized).
@@ -332,10 +370,15 @@ pub const EventTap = struct {
     }
 
     /// Write a byte slice as a JSON-escaped string (no surrounding quotes).
-    /// Escapes all control characters (0x00-0x1F) via \u00XX, plus " and \.
+    /// Escapes control characters (0x00-0x1F) via \u00XX, plus " and \.
+    /// Invalid UTF-8 bytes (lone continuations, overlong sequences, etc.)
+    /// are also escaped as \u00XX to ensure valid JSON output.
     fn writeJsonString(fbs: *util.FixedBufferStream, data: []const u8) @TypeOf(fbs.writer()).Error!void {
         const w = fbs.writer();
-        for (data) |c| {
+        const hex = "0123456789abcdef";
+        var i: usize = 0;
+        while (i < data.len) {
+            const c = data[i];
             switch (c) {
                 '"' => try w.writeAll("\\\""),
                 '\\' => try w.writeAll("\\\\"),
@@ -344,16 +387,62 @@ pub const EventTap = struct {
                 '\t' => try w.writeAll("\\t"),
                 else => {
                     if (c < 0x20) {
-                        // Control character — encode as \u00XX
-                        const hex = "0123456789abcdef";
+                        // Control character
                         try w.writeAll("\\u00");
                         try w.writeByte(hex[c >> 4]);
                         try w.writeByte(hex[c & 0x0f]);
-                    } else {
+                    } else if (c < 0x80) {
+                        // Valid ASCII (0x20-0x7F)
                         try w.writeByte(c);
+                    } else {
+                        // Multi-byte UTF-8 — validate and write or escape
+                        const seq_len: usize = switch (c) {
+                            0xC0...0xDF => 2,
+                            0xE0...0xEF => 3,
+                            0xF0...0xF7 => 4,
+                            else => 0, // invalid start byte (0x80-0xBF, 0xF8-0xFF)
+                        };
+                        if (seq_len == 0 or i + seq_len > data.len) {
+                            // Invalid start byte or truncated sequence — escape this byte
+                            try w.writeAll("\\u00");
+                            try w.writeByte(hex[c >> 4]);
+                            try w.writeByte(hex[c & 0x0f]);
+                            i += 1;
+                            continue;
+                        }
+                        // Validate continuation bytes
+                        var valid = true;
+                        for (data[i + 1 .. i + seq_len]) |cb| {
+                            if (cb < 0x80 or cb > 0xBF) {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        // Check for overlong encodings
+                        if (valid and seq_len == 2 and c < 0xC2) valid = false;
+                        if (valid and seq_len == 3 and c == 0xE0 and data[i + 1] < 0xA0) valid = false;
+                        if (valid and seq_len == 3 and c == 0xED and data[i + 1] > 0x9F) valid = false;
+                        if (valid and seq_len == 4 and c == 0xF0 and data[i + 1] < 0x90) valid = false;
+                        if (valid and seq_len == 4 and c == 0xF4 and data[i + 1] > 0x8F) valid = false;
+
+                        if (!valid) {
+                            // Invalid sequence — escape just the start byte
+                            try w.writeAll("\\u00");
+                            try w.writeByte(hex[c >> 4]);
+                            try w.writeByte(hex[c & 0x0f]);
+                            i += 1;
+                            continue;
+                        }
+                        // Valid UTF-8 sequence — write raw bytes
+                        for (data[i .. i + seq_len]) |b| {
+                            try w.writeByte(b);
+                        }
+                        i += seq_len;
+                        continue;
                     }
                 },
             }
+            i += 1;
         }
     }
 
