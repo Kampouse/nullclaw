@@ -342,7 +342,6 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   <div class="meta">
     <span>UPTIME <span class="val" id="uptime">--</span></span>
     <span>EVENTS <span class="val" id="event-count">0</span></span>
-    <span>TAP <span class="val" id="tap-pos">0</span></span>
   </div>
   <div class="controls">
     <input type="text" class="filter-input" id="filter" placeholder="/ filter..." title="Filter events (type /)">
@@ -428,6 +427,7 @@ const S = {
   status: null,         // /api/status response
   sseRetries: 0,
   startTime: Date.now(),
+  graphAnimId: null,
 };
 
 // ═══ DOM REFS ═══
@@ -450,8 +450,14 @@ const TYPE_ICONS = {
 };
 
 // ═══ FORMAT HELPERS ═══
+const _escEl = document.createElement('div');
+function esc(s) {
+  _escEl.textContent = s;
+  return _escEl.innerHTML;
+}
+
 function fmtTime(ts) {
-  const d = new Date(ts / 1e6); // ns -> ms
+  const d = new Date(ts / 1e6);
   return d.toTimeString().slice(0, 8);
 }
 
@@ -596,12 +602,6 @@ function renderEvent(ev, idx) {
   return div;
 }
 
-function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
 function appendEvents(newEvents) {
   const hadConnecting = $('connecting');
   if (hadConnecting) hadConnecting.remove();
@@ -680,6 +680,12 @@ function closeDossier() {
 }
 
 function switchTab(tab) {
+  // Stop any running graph animation when leaving graph tab
+  if (S.graphAnimId && S.activeTab === 'graph' && tab !== 'graph') {
+    cancelAnimationFrame(S.graphAnimId);
+    S.graphAnimId = null;
+  }
+
   S.activeTab = tab;
   document.querySelectorAll('.dtab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
 
@@ -743,19 +749,7 @@ function renderDossierOverview(primary, ev) {
       }).join('')}
     </div>`;
 
-    // Wire click handlers after render
-    setTimeout(() => {
-      content.querySelectorAll('.rel-entity').forEach(el => {
-        el.addEventListener('click', () => {
-          const name = el.dataset.name;
-          const entityData2 = S.entities[name];
-          if (entityData2 && entityData2.events.length > 0) {
-            const lastEv = entityData2.events[entityData2.events.length - 1];
-            openDossier(lastEv._idx);
-          }
-        });
-      });
-    }, 0);
+    // (rel-entity clicks handled by delegation on dossier-content — see init)
   }
 
   // Raw JSON
@@ -768,6 +762,9 @@ function renderDossierOverview(primary, ev) {
 }
 
 function renderDossierGraph(primary) {
+  // Kill previous animation if any
+  if (S.graphAnimId) { cancelAnimationFrame(S.graphAnimId); S.graphAnimId = null; }
+
   const content = $('dossier-content');
   const allNames = Object.keys(S.entities);
   if (allNames.length === 0) {
@@ -979,13 +976,10 @@ function renderDossierGraph(primary) {
     ctx.fillText(nodes.length + ' entities \u00b7 ' + edges.length + ' links', cw - 10, ly + 3);
   }
 
-  function loop() { if (simSteps < 300) simulate(); draw(); animId = requestAnimationFrame(loop); }
+  function loop() { if (simSteps < 300) simulate(); draw(); S.graphAnimId = requestAnimationFrame(loop); }
   loop();
-
-  const origCleanup = window._pgCleanup;
-  if (origCleanup) origCleanup();
-  window._pgCleanup = () => { if (animId) cancelAnimationFrame(animId); };
 }
+
 function renderDossierTimeline(primary) {
   const content = $('dossier-content');
   const entityData = S.entities[primary.name];
@@ -1015,11 +1009,7 @@ function renderDossierTimeline(primary) {
   content.innerHTML = html;
 
   // Wire clicks to jump to event in feed
-  content.querySelectorAll('.dt-event').forEach(el => {
-    el.addEventListener('click', () => {
-      selectEvent(parseInt(el.dataset.idx));
-    });
-  });
+  // (dt-event clicks handled by delegation on dossier-content — see init)
 }
 
 
@@ -1042,13 +1032,13 @@ function renderDossierContext(primary) {
     } else if (ev.type === 'llm_request' && currentTurn) {
       currentTurn.provider = ev.provider || currentTurn.provider;
       currentTurn.model = ev.model || currentTurn.model;
-      currentTurn.inputTokens = ev.v1 || 0;
+      currentTurn.inputTokens += ev.v1 || 0;
       if (ev.content) {
         try { currentTurn.messages = JSON.parse(ev.content); } catch(e) {}
       }
       currentTurn.events.push(ev);
     } else if (ev.type === 'llm_response' && currentTurn) {
-      currentTurn.outputTokens = ev.v1 || 0;
+      currentTurn.outputTokens += ev.v1 || 0;
       currentTurn.totalTokens = currentTurn.inputTokens + currentTurn.outputTokens;
       if (ev.ok === false) currentTurn.errors.push(ev.detail || 'LLM error');
       // Parse response content and accumulate
@@ -1304,7 +1294,6 @@ function renderStatus() {
 
   // Tap position
   if (S.status.event_tap) {
-    $('tap-pos').textContent = S.status.event_tap.pos;
     $('tap-ring').textContent = `${S.status.event_tap.pos % 512}/${S.status.event_tap.ring_size}`;
   }
 
@@ -1389,7 +1378,7 @@ document.addEventListener('keydown', (e) => {
     case 'Tab':
       e.preventDefault();
       if (S.zoomedEvent) {
-        const tabs = ['overview', 'graph', 'timeline'];
+        const tabs = ['overview', 'graph', 'timeline', 'context'];
         const ci = tabs.indexOf(S.activeTab);
         switchTab(tabs[(ci + 1) % tabs.length]);
       }
@@ -1397,10 +1386,12 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ═══ FILTER ═══
+// ═══ FILTER (debounced) ═══
+let _filterTimer = null;
 $('filter').addEventListener('input', (e) => {
   S.filter = e.target.value;
-  rerenderFeed();
+  clearTimeout(_filterTimer);
+  _filterTimer = setTimeout(() => rerenderFeed(), 150);
 });
 
 // ═══ SEARCH ═══
@@ -1429,11 +1420,7 @@ $('search-input').addEventListener('input', (e) => {
   });
 });
 
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && $('search-overlay').classList.contains('visible')) {
-    $('search-overlay').classList.remove('visible');
-  }
-});
+// (Escape for search handled in main keydown handler above)
 
 // ═══ BUTTONS ═══
 $('btn-pause').addEventListener('click', () => {
@@ -1465,6 +1452,22 @@ $('dossier-close').addEventListener('click', closeDossier);
 
 document.querySelectorAll('.dtab').forEach(tab => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+});
+
+// ═══ EVENT DELEGATION — dossier-content ═══
+$('dossier-content').addEventListener('click', (e) => {
+  const relEntity = e.target.closest('.rel-entity');
+  if (relEntity) {
+    const name = relEntity.dataset.name;
+    const ent = S.entities[name];
+    if (ent && ent.events.length > 0) openDossier(ent.events[ent.events.length - 1]._idx);
+    return;
+  }
+  const dtEvent = e.target.closest('.dt-event');
+  if (dtEvent) {
+    selectEvent(parseInt(dtEvent.dataset.idx));
+    return;
+  }
 });
 
 
@@ -1506,17 +1509,17 @@ function loadMockData() {
     { ts: base + 56_300_000_000, type: 'tool_call_start', model: 'shell' },
     { ts: base + 57_800_000_000, type: 'tool_call', model: 'shell', v1: 1500, ok: true, detail: 'make restart -> Done' },
     { ts: base + 58_200_000_000, type: 'turn_complete' },
-    { ts: base + 70_000_000_000, type: 'heartbeat_tick' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Search for zig 0.16 migration info"},{"r":"assistant","c":"Let me search for that."}]' },
+    { ts: base + 70_000_000_000, type: 'heartbeat_tick'  },
     { ts: base + 80_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 71 },
     { ts: base + 82_100_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2100, ok: true , content: '{"r":"Searching for Zig 0.16 migration patterns.","t":[{"n":"web_search","a":"zig 0.16 migration guide"}]}' },
     { ts: base + 82_200_000_000, type: 'tool_call_start', model: 'web_search' },
     { ts: base + 84_500_000_000, type: 'tool_call', model: 'web_search', v1: 2300, ok: true, detail: 'zig 0.16 migration guide' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Search for zig 0.16 migration info"},{"r":"assistant","c":"Searching..."},{"r":"tool","c":"zig 0.16 migration guide"}]' },
     { ts: base + 85_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 95 },
-    { ts: base + 87_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2200, ok: true , content: '{"r":"Found the migration guide. The key changes are: ArrayList is now unmanaged, ptrCast takes 1 arg, ObjectMap.init returns error union. Updating the code now."}' },
+    { ts: base + 87_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2200, ok: true  },
     { ts: base + 87_300_000_000, type: 'turn_complete' },
     { ts: base + 87_400_000_000, type: 'agent_end', v1: 51_400_000_000, v2: 4820 },
     { ts: base + 95_000_000_000, type: 'err', provider: 'memory', detail: 'sqlite: database is locked' },
-    { ts: base + 96_100_000_000, type: 'heartbeat_tick' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Check for TODOs and FIXMEs"}]' },
+    { ts: base + 96_100_000_000, type: 'heartbeat_tick'  },
     { ts: base + 100_000_000_000, type: 'llm_request', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 200 },
     { ts: base + 102_000_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2000, ok: true , content: '{"r":"Checking for remaining TODOs and FIXMEs in the codebase.","t":[{"n":"shell","a":"grep TODO src/"},{"n":"shell","a":"grep FIXME src/"},{"n":"shell","a":"grep HACK src/"}]}' },
     { ts: base + 102_100_000_000, type: 'tool_call_start', model: 'shell' },
