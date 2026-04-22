@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NULLCLAW — Spy</title>
+</head>
+<body>
+  <div id="app">
+    <div class="status-bar">
+      <span class="title">NULLCLAW SPY</span>
+      <span class="sep"></span>
+      <span id="sse-dot" class="status-dot wait"></span>
+      <span id="uptime">0s</span>
+      <span class="sep"></span>
+      <span>Events: <span id="event-count">0</span></span>
+      <span class="sep"></span>
+      <span id="err-badge" class="err-badge" title="Filter errors">0 ERR</span>
+      <div class="toolbar" style="margin-left:auto">
+        <button id="btn-pause">||</button>
+        <button id="btn-follow" class="active">vv</button>
+        <button id="btn-clear">x</button>
+        <button id="btn-export">save</button>
+        <button id="btn-search">search</button>
+        <button id="btn-help">?</button>
+      </div>
+    </div>
+    <div class="hints">
+      <span><kbd>/</kbd> search</span>
+      <span><kbd>h</kbd> hide ticks</span>
+      <span><kbd>Esc</kbd> close</span>
+      <span><kbd>j/k</kbd> navigate</span>
+      <span><kbd>?</kbd> help</span>
+    </div>
+    <div class="main-layout">
+      <div class="feed-wrap"><div id="feed" class="feed"></div></div>
+      <div id="dossier" class="dossier collapsed">
+        <div class="dossier-header">
+          <div class="tabs">
+            <button id="dossier-tab-summary" class="dossier-tab active">SUMMARY</button>
+            <button id="dossier-tab-context" class="dossier-tab">CONTEXT</button>
+            <button id="dossier-tab-raw" class="dossier-tab">RAW</button>
+          </div>
+          <button id="dossier-close" class="close">X</button>
+        </div>
+        <div id="dossier-content" class="dossier-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="search-overlay" class="overlay">
+    <div class="overlay-box">
+      <h3>Search Events</h3>
+      <input id="search-input" type="text" placeholder="Type to search..." />
+      <div id="search-results" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <div id="help-overlay" class="overlay">
+    <div class="overlay-box">
+      <h3>Keyboard Shortcuts</h3>
+      <div class="help-grid">
+        <kbd>/</kbd><span>Search events</span>
+        <kbd>j / k</kbd><span>Navigate up and down</span>
+        <kbd>Enter</kbd><span>Select event</span>
+        <kbd>Esc</kbd><span>Close overlay or dossier</span>
+        <kbd>h</kbd><span>Toggle heartbeats</span>
+        <kbd>e</kbd><span>Filter errors only</span>
+        <kbd>Space</kbd><span>Pause or resume feed</span>
+        <kbd>f</kbd><span>Toggle auto-follow</span>
+        <kbd>?</kbd><span>This help</span>
+      </div>
+    </div>
+  </div>
+  <script>function spyHasDemo(){return new URLSearchParams(window.location.search).has('demo')}</script>
+  <script type="module" src="./src/Main.res.js"></script>
+</body>
+</html>
