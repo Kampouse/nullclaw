@@ -286,55 +286,51 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .pg-tooltip { display: none; position: absolute; z-index: 50; background: rgba(12,14,20,0.95); border: 1px solid var(--border-active); border-radius: 4px; padding: 6px 10px; pointer-events: none; font-size: 11px; line-height: 1.5; color: var(--text); box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 280px; }
 
 /* Context tab styles */
-.ctx-bar-container { margin-bottom: 12px; }
-.ctx-bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; display: flex; }
-.ctx-bar-fill { height: 100%; transition: width 0.3s; }
-.ctx-bar-fill.ctx-input { background: var(--blue); }
-.ctx-bar-fill.ctx-output { background: var(--green); }
-.ctx-bar-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; }
-.ctx-bar-tokens { color: var(--text-dim); font-size: 10px; }
-.ctx-bar-legend { display: flex; gap: 12px; margin-top: 4px; }
-.ctx-legend-item { display: flex; align-items: center; gap: 4px; font-size: 9px; color: var(--text-dim); }
-.ctx-legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+/* ═══ CONTEXT TAB — wiretap aesthetic ═══ */
+.ctx-bar-container { margin-bottom: 10px; }
+.ctx-bar { height: 3px; background: rgba(255,255,255,0.04); overflow: hidden; display: flex; }
+.ctx-bar-fill { height: 100%; }
+.ctx-bar-fill.ctx-input { background: var(--blue); opacity: 0.6; }
+.ctx-bar-fill.ctx-output { background: var(--green); opacity: 0.6; }
+.ctx-bar-labels { display: flex; justify-content: space-between; margin-top: 3px; font-size: 10px; font-family: var(--mono); }
+.ctx-bar-tokens { color: var(--text-dim); font-size: 9px; }
 
-.ctx-summary { display: flex; gap: 6px; margin-bottom: 8px; }
-.ctx-stat { flex: 1; text-align: center; padding: 8px 4px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); }
-.ctx-stat-val { font-size: 16px; font-weight: 700; color: var(--text-bright); }
-.ctx-stat-lbl { font-size: 8px; color: var(--text-dim); letter-spacing: 1px; margin-top: 2px; }
+.ctx-summary { display: flex; gap: 2px; margin-bottom: 10px; font-family: var(--mono); font-size: 10px; color: var(--text-dim); padding: 4px 6px; background: rgba(0,0,0,0.2); border-left: 2px solid var(--border); }
+.ctx-summary span { flex: 1; text-align: center; }
+.ctx-summary .val { color: var(--text-bright); }
 
-.ctx-turns { display: flex; flex-direction: column; gap: 6px; max-height: calc(100% - 140px); overflow-y: auto; }
-.ctx-turn { padding: 8px 10px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); cursor: pointer; transition: border-color 0.15s; }
-.ctx-turn:hover { border-color: var(--border-active); }
-.ctx-turn-active { border-color: var(--cyan) !important; background: var(--cyan-dim); }
+.ctx-turns { display: flex; flex-direction: column; gap: 1px; max-height: calc(100% - 100px); overflow-y: auto; }
+.ctx-turn { padding: 6px 8px; border-left: 2px solid var(--border); cursor: pointer; }
+.ctx-turn:hover { background: rgba(255,255,255,0.02); }
+.ctx-turn-active { border-left-color: var(--cyan); background: rgba(0,255,255,0.03); }
 
-.ctx-turn-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.ctx-turn-num { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 20px; }
-.ctx-turn-model { font-size: 11px; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctx-turn-time { font-size: 9px; color: var(--text-dim); }
+.ctx-turn-header { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; font-family: var(--mono); }
+.ctx-turn-num { font-size: 10px; color: var(--text-dim); min-width: 16px; }
+.ctx-turn-model { font-size: 9px; color: var(--text-dim); opacity: 0.5; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-turn-time { font-size: 9px; color: var(--text-dim); opacity: 0.4; }
+.ctx-turn-tokens { font-size: 9px; color: var(--text-dim); opacity: 0.5; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-.ctx-turn-bar-track { height: 4px; background: rgba(0,0,0,0.3); border-radius: 2px; overflow: hidden; display: flex; margin-bottom: 3px; }
-.ctx-turn-bar-in { height: 100%; background: var(--blue); }
-.ctx-turn-bar-out { height: 100%; background: var(--green); }
-.ctx-turn-tokens { font-size: 9px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.ctx-turn-tools { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 3px; }
+.ctx-tool-tag { font-size: 8px; font-family: var(--mono); padding: 0 4px; color: var(--text-dim); opacity: 0.6; }
+.ctx-tool-tag.err { color: var(--red); opacity: 0.8; }
+.ctx-turn-errors { margin-top: 2px; }
+.ctx-error { font-size: 9px; color: var(--red); font-family: var(--mono); padding: 1px 0; }
 
-.ctx-turn-tools { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
-.ctx-tool-tag { font-size: 9px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border-active); color: var(--text-dim); }
-.ctx-turn-errors { margin-top: 4px; }
-.ctx-error { font-size: 9px; color: var(--red); padding: 1px 0; }
-.ctx-turn-messages { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
-.ctx-msg { padding: 4px 8px; background: rgba(0,0,0,0.25); border-radius: 3px; border-left: 2px solid var(--border-active); cursor: pointer; }
-.ctx-msg:hover { background: rgba(0,0,0,0.35); }
-.ctx-msg-role { font-size: 9px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 2px; }
+.ctx-turn-messages { margin-top: 4px; display: flex; flex-direction: column; gap: 1px; }
+.ctx-msg { padding: 3px 6px; border-left: 1px solid rgba(255,255,255,0.06); cursor: pointer; }
+.ctx-msg:hover { background: rgba(255,255,255,0.015); }
+.ctx-msg-role { font-size: 8px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.5px; margin-bottom: 1px; opacity: 0.7; }
 .ctx-msg-role.role-system { color: var(--amber); }
 .ctx-msg-role.role-user { color: var(--cyan); }
 .ctx-msg-role.role-assistant { color: var(--green); }
 .ctx-msg-role.role-tool { color: var(--blue); }
-.ctx-msg-body { font-size: 10px; color: var(--text-dim); max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+.ctx-msg-body { font-size: 10px; color: var(--text); max-height: 48px; overflow: hidden; white-space: pre-wrap; word-break: break-word; line-height: 1.35; font-family: var(--mono); opacity: 0.85; }
 .ctx-msg.expanded .ctx-msg-body { max-height: none; }
-.ctx-msg-truncated { font-size: 9px; color: var(--text-dim); opacity: 0.6; margin-top: 2px; }
+.ctx-msg-truncated { font-size: 8px; color: var(--text-dim); opacity: 0.35; margin-top: 1px; font-family: var(--mono); }
 .ctx-msg.expanded .ctx-msg-truncated { display: none; }
-.ctx-turn-response { margin-top: 4px; padding: 4px 8px; background: rgba(0,0,0,0.2); border-radius: 3px; border-left: 2px solid var(--green); font-size: 10px; color: var(--text-dim); max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-word; cursor: pointer; }
-.ctx-turn-response:hover { background: rgba(0,0,0,0.3); }
+
+.ctx-turn-response { margin-top: 3px; padding: 3px 6px; border-left: 1px solid rgba(0,255,100,0.3); font-size: 10px; color: var(--text); max-height: 48px; overflow: hidden; white-space: pre-wrap; word-break: break-word; cursor: pointer; font-family: var(--mono); line-height: 1.35; opacity: 0.9; }
+.ctx-turn-response:hover { background: rgba(255,255,255,0.015); }
 .ctx-turn-response.expanded { max-height: none; }
 </style>
 </head>
@@ -668,7 +664,8 @@ function openDossier(idx) {
 
   $('entity-name').textContent = primary.name;
   $('entity-type').textContent = primary.type.toUpperCase();
-  $('dossier-empty').style.display = 'none';
+  const de = $('dossier-empty');
+  if (de) de.style.display = 'none';
 
   // Activate first tab
   switchTab('overview');
@@ -1029,7 +1026,6 @@ function renderDossierTimeline(primary) {
 function renderDossierContext(primary) {
   const content = $('dossier-content');
 
-  // Build turns from all events - group by agent conversation bursts
   const turns = [];
   let currentTurn = null;
 
@@ -1037,73 +1033,58 @@ function renderDossierContext(primary) {
     if (ev.type === 'agent_start' || ev.type === 'channel_message') {
       if (currentTurn) turns.push(currentTurn);
       currentTurn = {
-        id: turns.length + 1,
-        startTs: ev.ts,
-        provider: ev.provider,
-        model: ev.model,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        toolCalls: [],
-        errors: [],
-        completed: false,
-        messages: [],     // parsed from llm_request.content
-        response: null,   // from llm_response.content
-        events: [ev]
+        id: turns.length + 1, startTs: ev.ts,
+        provider: ev.provider, model: ev.model,
+        inputTokens: 0, outputTokens: 0, totalTokens: 0,
+        toolCalls: [], errors: [], completed: false,
+        messages: [], responses: [], events: [ev]
       };
     } else if (ev.type === 'llm_request' && currentTurn) {
       currentTurn.provider = ev.provider || currentTurn.provider;
       currentTurn.model = ev.model || currentTurn.model;
       currentTurn.inputTokens = ev.v1 || 0;
-      // Parse content field: JSON array of {"r":"role","c":"content_preview"}
       if (ev.content) {
-        try {
-          currentTurn.messages = JSON.parse(ev.content);
-        } catch(e) { /* content not valid JSON yet */ }
+        try { currentTurn.messages = JSON.parse(ev.content); } catch(e) {}
       }
       currentTurn.events.push(ev);
     } else if (ev.type === 'llm_response' && currentTurn) {
       currentTurn.outputTokens = ev.v1 || 0;
       currentTurn.totalTokens = currentTurn.inputTokens + currentTurn.outputTokens;
       if (ev.ok === false) currentTurn.errors.push(ev.detail || 'LLM error');
-      // Parse response content
+      // Parse response content and accumulate
+      let respText = null;
+      let respTools = null;
       if (ev.content) {
         try {
           const parsed = JSON.parse(ev.content);
-          if (parsed.r === 'response' && parsed.t) {
-            currentTurn.response = parsed.t; // tool calls JSON array
+          // Backend format: {"r":"<response_text>","t":[<tool_calls_json>]}
+          if (parsed && typeof parsed === 'object') {
+            if (Array.isArray(parsed.t)) respTools = parsed.t;
+            if (typeof parsed.r === 'string' && parsed.r.length > 0) respText = parsed.r;
           } else if (typeof parsed === 'string') {
-            currentTurn.response = parsed;
+            respText = parsed;
           } else {
-            currentTurn.response = ev.content;
+            respText = ev.content;
           }
         } catch(e) {
-          currentTurn.response = ev.content;
+          respText = ev.content;
         }
       }
+      currentTurn.responses.push({ text: respText, tools: respTools });
       currentTurn.events.push(ev);
     } else if (ev.type === 'tool_call_start' && currentTurn) {
       currentTurn.toolCalls.push({ name: ev.model || ev.provider || 'tool', startTs: ev.ts });
       currentTurn.events.push(ev);
     } else if (ev.type === 'tool_call' && currentTurn) {
       const tc = currentTurn.toolCalls[currentTurn.toolCalls.length - 1];
-      if (tc) {
-        tc.duration = ev.v1 || 0;
-        tc.ok = ev.ok;
-        tc.detail = ev.detail || '';
-      }
+      if (tc) { tc.duration = ev.v1 || 0; tc.ok = ev.ok; tc.detail = ev.detail || ''; }
       if (ev.ok === false) currentTurn.errors.push((ev.detail || 'tool error').slice(0, 60));
       currentTurn.events.push(ev);
     } else if (ev.type === 'turn_complete' && currentTurn) {
-      currentTurn.completed = true;
-      currentTurn.endTs = ev.ts;
-      currentTurn.events.push(ev);
-      turns.push(currentTurn);
-      currentTurn = null;
+      currentTurn.completed = true; currentTurn.endTs = ev.ts;
+      currentTurn.events.push(ev); turns.push(currentTurn); currentTurn = null;
     } else if (ev.type === 'agent_end' && currentTurn) {
-      currentTurn.endTs = ev.ts;
-      turns.push(currentTurn);
-      currentTurn = null;
+      currentTurn.endTs = ev.ts; turns.push(currentTurn); currentTurn = null;
     } else if (ev.type === 'err' && currentTurn) {
       currentTurn.errors.push((ev.detail || ev.provider || 'error').slice(0, 80));
       currentTurn.events.push(ev);
@@ -1113,138 +1094,136 @@ function renderDossierContext(primary) {
   });
   if (currentTurn) turns.push(currentTurn);
 
-  // Calculate totals for context window bar
   let totalInput = 0, totalOutput = 0;
   turns.forEach(t => { totalInput += t.inputTokens; totalOutput += t.outputTokens; });
   const totalTokens = totalInput + totalOutput;
   const ctxWindow = 200000;
 
-  // Highlight the turn that contains the zoomed event
   const zoomedIdx = S.zoomedEvent ? S.zoomedEvent._idx : -1;
   let activeTurnIdx = -1;
-  turns.forEach((t, i) => {
-    if (t.events.some(e => e._idx === zoomedIdx)) activeTurnIdx = i;
-  });
+  turns.forEach((t, i) => { if (t.events.some(e => e._idx === zoomedIdx)) activeTurnIdx = i; });
 
-  // ── Build HTML ──
-  let html = '';
+  if (turns.length === 0) {
+    content.innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:10px;padding:20px">no turns intercepted</div>';
+    return;
+  }
 
-  // Context window bar
+  // ── Context window usage bar ──
   const usedPct = Math.min(100, (totalTokens / ctxWindow) * 100);
   const inputPct = totalTokens > 0 ? (totalInput / totalTokens) * 100 : 0;
   const outputPct = totalTokens > 0 ? (totalOutput / totalTokens) * 100 : 0;
-  const barColor = usedPct > 80 ? 'var(--red)' : usedPct > 50 ? 'var(--amber)' : 'var(--green)';
 
-  html += `<div class="dossier-section">
-    <div class="section-title">CONTEXT WINDOW</div>
-    <div class="ctx-bar-container">
-      <div class="ctx-bar">
-        <div class="ctx-bar-fill ctx-input" style="width:${inputPct}%" title="Input: ${totalInput.toLocaleString()}"></div>
-        <div class="ctx-bar-fill ctx-output" style="width:${outputPct}%" title="Output: ${totalOutput.toLocaleString()}"></div>
-      </div>
-      <div class="ctx-bar-labels">
-        <span style="color:${barColor}">${usedPct.toFixed(1)}%</span>
-        <span class="ctx-bar-tokens">${totalTokens.toLocaleString()} / ${ctxWindow.toLocaleString()}</span>
-      </div>
-      <div class="ctx-bar-legend">
-        <span class="ctx-legend-item"><span class="ctx-legend-swatch" style="background:var(--blue)"></span>Input ${totalInput.toLocaleString()}</span>
-        <span class="ctx-legend-item"><span class="ctx-legend-swatch" style="background:var(--green)"></span>Output ${totalOutput.toLocaleString()}</span>
-      </div>
+  let html = `<div class="ctx-bar-container">
+    <div class="ctx-bar">
+      <div class="ctx-bar-fill ctx-input" style="width:${inputPct}%"></div>
+      <div class="ctx-bar-fill ctx-output" style="width:${outputPct}%"></div>
+    </div>
+    <div class="ctx-bar-labels">
+      <span>${usedPct.toFixed(1)}%</span>
+      <span class="ctx-bar-tokens">${totalTokens.toLocaleString()} tok</span>
     </div>
   </div>`;
 
-  // Summary stats
-  html += `<div class="dossier-section">
-    <div class="ctx-summary">
-      <div class="ctx-stat"><div class="ctx-stat-val">${turns.length}</div><div class="ctx-stat-lbl">TURNS</div></div>
-      <div class="ctx-stat"><div class="ctx-stat-val">${totalInput.toLocaleString()}</div><div class="ctx-stat-lbl">IN TOKENS</div></div>
-      <div class="ctx-stat"><div class="ctx-stat-val">${totalOutput.toLocaleString()}</div><div class="ctx-stat-lbl">OUT TOKENS</div></div>
-      <div class="ctx-stat"><div class="ctx-stat-val">${turns.reduce((s,t) => s + t.toolCalls.length, 0)}</div><div class="ctx-stat-lbl">TOOL CALLS</div></div>
-      <div class="ctx-stat"><div class="ctx-stat-val" style="color:${turns.some(t=>t.errors.length) ? 'var(--red)' : 'var(--green)'}">${turns.reduce((s,t) => s + t.errors.length, 0)}</div><div class="ctx-stat-lbl">ERRORS</div></div>
-    </div>
+  // ── Inline summary: turns · in · out · tools ──
+  const totalTools = turns.reduce((s,t) => s + t.toolCalls.length, 0);
+  const totalErrs = turns.reduce((s,t) => s + t.errors.length, 0);
+  html += `<div class="ctx-summary">
+    <span><span class="val">${turns.length}</span> turns</span>
+    <span><span class="val">${totalInput.toLocaleString()}</span> in</span>
+    <span><span class="val">${totalOutput.toLocaleString()}</span> out</span>
+    <span><span class="val">${totalTools}</span> tools</span>
+    ${totalErrs ? `<span style="color:var(--red)"><span class="val">${totalErrs}</span> err</span>` : ''}
   </div>`;
 
-  // Turn cards
-  html += `<div class="dossier-section"><div class="section-title">TURNS</div><div class="ctx-turns">`;
-  const maxTokens = Math.max(...turns.map(t => t.totalTokens), 1);
+  // ── Turn cards ──
+  html += '<div class="ctx-turns">';
 
   turns.forEach((turn, i) => {
     const isActive = i === activeTurnIdx;
     const turnColor = turn.errors.length ? 'var(--red)' : turn.completed ? 'var(--green)' : 'var(--amber)';
+    const shortModel = (turn.model || turn.provider || '?').split('/').pop();
     const msgCount = turn.messages.length;
-    const respPreview = turn.response ? (typeof turn.response === 'string' ? turn.response.slice(0, 120) : JSON.stringify(turn.response).slice(0, 120)) : '';
 
     html += `<div class="ctx-turn ${isActive ? 'ctx-turn-active' : ''}" data-turn="${i}">
       <div class="ctx-turn-header">
         <span class="ctx-turn-num" style="color:${turnColor}">${String(turn.id).padStart(2, '0')}</span>
-        <span class="ctx-turn-model">${esc((turn.provider || '') + '/' + (turn.model || ''))}</span>
+        <span class="ctx-turn-model">${esc(shortModel)}</span>
         <span class="ctx-turn-time">${fmtTime(turn.startTs)}</span>
-        <span style="font-size:9px;color:var(--text-dim);margin-left:auto">${msgCount}msg${msgCount !== 1 ? 's' : ''}</span>
-      </div>
-      <div class="ctx-turn-bar-track">
-        <div class="ctx-turn-bar-in" style="width:${turn.totalTokens > 0 ? (turn.inputTokens / maxTokens) * 100 : 0}%"></div>
-        <div class="ctx-turn-bar-out" style="width:${turn.totalTokens > 0 ? (turn.outputTokens / maxTokens) * 100 : 0}%"></div>
-      </div>
-      <div class="ctx-turn-tokens">${turn.inputTokens}in / ${turn.outputTokens}out = <b>${turn.totalTokens}</b></div>`;
+        <span class="ctx-turn-tokens">${turn.inputTokens}+${turn.outputTokens}=${turn.totalTokens}</span>
+      </div>`;
 
-    // Message previews
+    // Messages
     if (msgCount > 0) {
-      html += `<div class="ctx-turn-messages">`;
+      html += '<div class="ctx-turn-messages">';
       turn.messages.forEach(msg => {
         const role = msg.r || 'unknown';
         const body = msg.c || '';
-        const truncated = body.length > 200;
-        const preview = truncated ? body.slice(0, 200) : body;
+        const truncated = body.length > 300;
+        const preview = truncated ? body.slice(0, 300) : body;
         html += `<div class="ctx-msg" title="click to expand">
           <div class="ctx-msg-role role-${role}">${esc(role.toUpperCase())}</div>
           <div class="ctx-msg-body">${esc(preview)}</div>
-          ${truncated ? '<div class="ctx-msg-truncated">... click to expand</div>' : ''}
+          ${truncated ? '<div class="ctx-msg-truncated">...</div>' : ''}
         </div>`;
       });
-      html += `</div>`;
+      html += '</div>';
     }
 
-    // Response preview
-    if (respPreview) {
-      const respTruncated = (typeof turn.response === 'string' ? turn.response.length : JSON.stringify(turn.response).length) > 200;
-      html += `<div class="ctx-turn-response" title="click to expand">
-        <div class="ctx-msg-role role-assistant">RESPONSE</div>
-        ${esc(respPreview)}${respTruncated ? '<div class="ctx-msg-truncated">... click to expand</div>' : ''}
-      </div>`;
-    }
-
-    if (turn.toolCalls.length > 0) {
-      html += `<div class="ctx-turn-tools">`;
+    // Responses — each llm_response in the turn gets its own block
+    if (turn.responses.length > 0) {
+      turn.responses.forEach((resp, ri) => {
+        // Response text
+        if (resp.text) {
+          const truncated = resp.text.length > 300;
+          const preview = truncated ? resp.text.slice(0, 300) : resp.text;
+          html += `<div class="ctx-turn-response" title="click to expand">
+            <div class="ctx-msg-body">${esc(preview)}</div>
+            ${truncated ? '<div class="ctx-msg-truncated">...</div>' : ''}
+          </div>`;
+        }
+        // Tool calls with args from this response
+        const tools = Array.isArray(resp.tools) ? resp.tools : [];
+        if (tools.length > 0) {
+          tools.forEach(tc => {
+            const name = tc.n || tc.name || 'tool';
+            const args = tc.a || tc.arguments || '';
+            const argsStr = typeof args === 'string' ? args : JSON.stringify(args);
+            const truncated = argsStr.length > 200;
+            const preview = truncated ? argsStr.slice(0, 200) : argsStr;
+            html += `<div class="ctx-msg" title="click to expand">
+              <div class="ctx-msg-role role-tool">CALL ${esc(name)}</div>
+              <div class="ctx-msg-body">${esc(preview)}</div>
+              ${truncated ? '<div class="ctx-msg-truncated">...</div>' : ''}
+            </div>`;
+          });
+        }
+      });
+    } else if (turn.toolCalls.length > 0) {
+      // Fallback: no content, just tool name tags
+      html += '<div class="ctx-turn-tools">';
       turn.toolCalls.forEach(tc => {
-        const tcColor = tc.ok === false ? 'var(--red)' : 'var(--cyan)';
-        html += `<span class="ctx-tool-tag" style="border-color:${tcColor}" title="${esc(tc.detail || tc.name)}">${esc(tc.name)} ${tc.duration ? fmtDuration(tc.duration) : ''}${tc.ok === false ? ' ✗' : ''}</span>`;
+        const cls = tc.ok === false ? 'ctx-tool-tag err' : 'ctx-tool-tag';
+        html += `<span class="${cls}">${esc(tc.name)}${tc.ok === false ? ' ✗' : ''}</span>`;
       });
-      html += `</div>`;
+      html += '</div>';
     }
 
+    // Errors
     if (turn.errors.length > 0) {
-      html += `<div class="ctx-turn-errors">`;
-      turn.errors.forEach(err => {
-        html += `<div class="ctx-error">${esc(err)}</div>`;
-      });
-      html += `</div>`;
+      html += '<div class="ctx-turn-errors">';
+      turn.errors.forEach(err => { html += `<div class="ctx-error">${esc(err)}</div>`; });
+      html += '</div>';
     }
 
-    html += `</div>`;
+    html += '</div>';
   });
 
-  html += '</div></div>';
-
-  if (turns.length === 0) {
-    html = '<div class="empty-state"><div class="icon">◷</div><div>No conversation turns detected</div><div class="hint">LLM request/response events build context</div></div>';
-  }
-
+  html += '</div>';
   content.innerHTML = html;
 
-  // Wire click handlers
+  // Wire turn clicks
   content.querySelectorAll('.ctx-turn').forEach(el => {
     el.addEventListener('click', (e) => {
-      // Don't jump when clicking inside a message (allow expand)
       if (e.target.closest('.ctx-msg') || e.target.closest('.ctx-turn-response')) return;
       const turnIdx = parseInt(el.dataset.turn);
       const turn = turns[turnIdx];
@@ -1252,12 +1231,9 @@ function renderDossierContext(primary) {
     });
   });
 
-  // Wire message expand/collapse
+  // Wire expand/collapse
   content.querySelectorAll('.ctx-msg, .ctx-turn-response').forEach(el => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      el.classList.toggle('expanded');
-    });
+    el.addEventListener('click', (e) => { e.stopPropagation(); el.classList.toggle('expanded'); });
   });
 }
 
@@ -1499,50 +1475,50 @@ function loadMockData() {
   const mockEvents = [
     { ts: base, type: 'agent_start', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud' },
     { ts: base + 100_000_000, type: 'llm_request', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 42, content: '[{"r":"system","c":"You are NullClaw, a Zig-based AI agent..."},{"r":"user","c":"What is 2+2?"}]' },
-    { ts: base + 2_500_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2400, ok: true, content: '{"r":"response","t":"The answer is 4."}' },
+    { ts: base + 2_500_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2400, ok: true, content: '{"r":"The answer is 4.","t":[]}' },
     { ts: base + 2_600_000_000, type: 'turn_complete' },
     { ts: base + 15_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 67, content: '[{"r":"system","c":"You are NullClaw, a Zig-based AI agent with tool access..."},{"r":"user","c":"List files in /tmp"},{"r":"assistant","c":"I\'ll list the files for you."}]' },
-    { ts: base + 16_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1200, ok: true },
+    { ts: base + 16_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1200, ok: true , content: '{"r":"I will run ls to check the tmp directory.","t":[{"n":"shell","a":"ls -la /tmp | head -20"}]}' },
     { ts: base + 16_300_000_000, type: 'tool_call_start', model: 'shell' },
     { ts: base + 18_500_000_000, type: 'tool_call', model: 'shell', v1: 2200, ok: true, detail: 'ls -la /tmp | head -20' },
     { ts: base + 19_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 89, content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"List files in /tmp"},{"r":"assistant","c":"I\'ll list the files..."},{"r":"tool","c":"ls -la /tmp | head -20\ntotal 48\ndrwxrwxrwt  12 root root 4096 ..."}]' },
-    { ts: base + 20_800_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1800, ok: true },
+    { ts: base + 20_800_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1800, ok: true , content: '{"r":"I can see the files. Let me check the gateway code now.","t":[{"n":"file_read","a":"src/gateway.zig lines 2677-2690"}]}' },
     { ts: base + 20_900_000_000, type: 'tool_call_start', model: 'file_read' },
-    { ts: base + 21_100_000_000, type: 'tool_call', model: 'file_read', v1: 180, ok: true, detail: 'src/gateway.zig lines 2677-2690' },
+    { ts: base + 21_100_000_000, type: 'tool_call', model: 'file_read', v1: 180, ok: true, detail: 'src/gateway.zig lines 2677-2690' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"List files in /tmp"},{"r":"assistant","c":"Found the files."},{"r":"tool","c":"ls -la /tmp..."},{"r":"tool","c":"src/gateway.zig lines 2677-2690..."}]' },
     { ts: base + 21_500_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 112 },
-    { ts: base + 23_900_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2400, ok: true },
+    { ts: base + 23_900_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2400, ok: true , content: '{"r":"Found the issue. Writing the fix now.","t":[{"n":"file_write","a":"src/observability/event_tap.zig"}]}' },
     { ts: base + 24_000_000_000, type: 'tool_call_start', model: 'file_write' },
     { ts: base + 24_300_000_000, type: 'tool_call', model: 'file_write', v1: 280, ok: true, detail: 'src/observability/event_tap.zig' },
     { ts: base + 24_700_000_000, type: 'turn_complete' },
-    { ts: base + 35_000_000_000, type: 'channel_message', provider: 'telegram', model: 'inbound' },
+    { ts: base + 35_000_000_000, type: 'channel_message', provider: 'telegram', model: 'inbound' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Fix the build and run tests"},{"r":"assistant","c":"Running zig build test..."},{"r":"tool","c":"zig build test -> 4758 pass"}]' },
     { ts: base + 36_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 55 },
-    { ts: base + 37_500_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1500, ok: true },
+    { ts: base + 37_500_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1500, ok: true , content: '{"r":"Running the test suite to verify everything passes.","t":[{"n":"shell","a":"zig build test"}]}' },
     { ts: base + 37_600_000_000, type: 'tool_call_start', model: 'shell' },
-    { ts: base + 39_200_000_000, type: 'tool_call', model: 'shell', v1: 1600, ok: true, detail: 'zig build test -> 4758 pass' },
+    { ts: base + 39_200_000_000, type: 'tool_call', model: 'shell', v1: 1600, ok: true, detail: 'zig build test -> 4758 pass' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Fix the build and run tests"},{"r":"assistant","c":"Tests pass. Patching gateway..."},{"r":"tool","c":"zig build test -> 4758 pass"},{"r":"tool","c":"patch: gateway.zig SSE loop"}]' },
     { ts: base + 39_500_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 98 },
-    { ts: base + 41_000_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1500, ok: true },
+    { ts: base + 41_000_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 1500, ok: true , content: '{"r":"All tests pass. Applying the patch to gateway.zig now.","t":[{"n":"patch","a":"gateway.zig: replaced SSE loop"}]}' },
     { ts: base + 41_100_000_000, type: 'tool_call_start', model: 'patch' },
     { ts: base + 41_400_000_000, type: 'tool_call', model: 'patch', v1: 350, ok: true, detail: 'gateway.zig: replaced SSE loop' },
     { ts: base + 41_800_000_000, type: 'turn_complete' },
-    { ts: base + 41_900_000_000, type: 'channel_message', provider: 'telegram', model: 'outbound' },
+    { ts: base + 41_900_000_000, type: 'channel_message', provider: 'telegram', model: 'outbound' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"What is the weather?"}]' },
     { ts: base + 55_000_000_000, type: 'llm_request', provider: 'openrouter', model: 'gpt-4o', v1: 38 },
-    { ts: base + 56_200_000_000, type: 'llm_response', provider: 'openrouter', model: 'gpt-4o', v1: 1200, ok: false, detail: 'rate limit exceeded: 429' },
+    { ts: base + 56_200_000_000, type: 'llm_response', provider: 'openrouter', model: 'gpt-4o', v1: 1200, ok: false, detail: 'rate limit exceeded: 429' , content: '{"r":"","t":[]}' },
     { ts: base + 56_300_000_000, type: 'tool_call_start', model: 'shell' },
     { ts: base + 57_800_000_000, type: 'tool_call', model: 'shell', v1: 1500, ok: true, detail: 'make restart -> Done' },
     { ts: base + 58_200_000_000, type: 'turn_complete' },
-    { ts: base + 70_000_000_000, type: 'heartbeat_tick' },
+    { ts: base + 70_000_000_000, type: 'heartbeat_tick' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Search for zig 0.16 migration info"},{"r":"assistant","c":"Let me search for that."}]' },
     { ts: base + 80_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 71 },
-    { ts: base + 82_100_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2100, ok: true },
+    { ts: base + 82_100_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2100, ok: true , content: '{"r":"Searching for Zig 0.16 migration patterns.","t":[{"n":"web_search","a":"zig 0.16 migration guide"}]}' },
     { ts: base + 82_200_000_000, type: 'tool_call_start', model: 'web_search' },
-    { ts: base + 84_500_000_000, type: 'tool_call', model: 'web_search', v1: 2300, ok: true, detail: 'zig 0.16 migration guide' },
+    { ts: base + 84_500_000_000, type: 'tool_call', model: 'web_search', v1: 2300, ok: true, detail: 'zig 0.16 migration guide' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Search for zig 0.16 migration info"},{"r":"assistant","c":"Searching..."},{"r":"tool","c":"zig 0.16 migration guide"}]' },
     { ts: base + 85_000_000_000, type: 'llm_request', provider: 'anthropic', model: 'claude-sonnet-4', v1: 95 },
-    { ts: base + 87_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2200, ok: true },
+    { ts: base + 87_200_000_000, type: 'llm_response', provider: 'anthropic', model: 'claude-sonnet-4', v1: 2200, ok: true , content: '{"r":"Found the migration guide. The key changes are: ArrayList is now unmanaged, ptrCast takes 1 arg, ObjectMap.init returns error union. Updating the code now."}' },
     { ts: base + 87_300_000_000, type: 'turn_complete' },
     { ts: base + 87_400_000_000, type: 'agent_end', v1: 51_400_000_000, v2: 4820 },
     { ts: base + 95_000_000_000, type: 'err', provider: 'memory', detail: 'sqlite: database is locked' },
-    { ts: base + 96_100_000_000, type: 'heartbeat_tick' },
+    { ts: base + 96_100_000_000, type: 'heartbeat_tick' , content: '[{"r":"system","c":"You are NullClaw..."},{"r":"user","c":"Check for TODOs and FIXMEs"}]' },
     { ts: base + 100_000_000_000, type: 'llm_request', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 200 },
-    { ts: base + 102_000_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2000, ok: true },
+    { ts: base + 102_000_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2000, ok: true , content: '{"r":"Checking for remaining TODOs and FIXMEs in the codebase.","t":[{"n":"shell","a":"grep TODO src/"},{"n":"shell","a":"grep FIXME src/"},{"n":"shell","a":"grep HACK src/"}]}' },
     { ts: base + 102_100_000_000, type: 'tool_call_start', model: 'shell' },
     { ts: base + 103_600_000_000, type: 'tool_call', model: 'shell', v1: 1500, ok: true, detail: 'grep TODO src/ -> 14 matches' },
     { ts: base + 104_000_000_000, type: 'tool_call_start', model: 'shell' },
