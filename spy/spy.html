@@ -92,6 +92,11 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   border-radius: 2px; font-size: 10px; letter-spacing: 1px; z-index: 100;
 }
 
+/* ═══ SESSION HEADERS ═══ */
+.session-hdr { padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; justify-content: space-between; user-select: none; }
+.session-hdr:hover { background: var(--surface); }
+.session-hdr.collapsed { opacity: 0.5; }
+
 /* ═══ EVENT ROWS ═══ */
 .event {
   display: flex; align-items: flex-start; padding: 2px 10px; cursor: pointer;
@@ -239,7 +244,19 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .status-val { color: var(--text); }
 .status-sep { color: var(--border-active); }
 
+/* ═══ RESPONSIVE ═══ */
+@media (max-width: 768px) {
+  #main.dossier-open { grid-template-columns: 1fr !important; }
+  #dossier { position: fixed; inset: 0; z-index: 200; }
+  .feed { min-width: 0; }
+  .ctx-bar-container { flex-direction: column; }
+  .header { flex-wrap: wrap; }
+}
+
 /* ═══ EMPTY STATES ═══ */
+@keyframes live-pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+.event.live .ev-type::after { content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--green); margin-left: 4px; animation: live-pulse 1.2s ease-in-out infinite; vertical-align: middle; }
+
 .empty-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 100%; color: var(--text-dim); font-size: 11px; gap: 8px;
@@ -342,6 +359,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   <div class="meta">
     <span>UPTIME <span class="val" id="uptime">--</span></span>
     <span>EVENTS <span class="val" id="event-count">0</span></span>
+    <span id="err-badge" style="display:none;cursor:pointer" title="Filter errors">ERR <span class="val" id="err-count">0</span></span>
   </div>
   <div class="controls">
     <input type="text" class="filter-input" id="filter" placeholder="/ filter..." title="Filter events (type /)">
@@ -394,21 +412,45 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 <div id="status">
   <div class="status-channel"><div class="status-dot" id="sse-dot"></div><span class="status-label">POLL</span></div>
   <span class="status-sep">│</span>
+  <span style="cursor:pointer;color:var(--text-dim);font-size:10px;letter-spacing:1px" id="export-btn" title="Export events as JSON">EXPORT</span>
+  <span class="status-sep">│</span>
   <span class="status-label">HEALTH</span>
   <span class="status-val" id="health-status">--</span>
   <span class="status-sep">│</span>
   <span class="status-label" id="cost-label">$0.00</span>
   <span class="status-sep">│</span>
-  <span class="status-label">TAP</span>
-  <span class="status-val" id="tap-ring">0/512</span>
+  <span class="status-label" id="ctx-label">~0 tok</span>
   <span style="flex:1"></span>
-  <span class="status-label" style="opacity:0.4">j/k navigate · Enter inspect · Esc close · / filter · . pause · F follow</span>
+  <span class="status-label" style="opacity:0.6">j/k navigate · Enter inspect · Esc close · / filter · . pause · F follow · h heartbeats · ? help</span>
 </div>
 
 <!-- SEARCH OVERLAY -->
 <div id="search-overlay">
   <input type="text" id="search-input" placeholder="search events..." autofocus>
   <div id="search-results"></div>
+</div>
+
+<!-- HELP OVERLAY -->
+<div id="help-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:300;align-items:center;justify-content:center">
+  <div style="background:var(--bg-card);border:1px solid var(--border-active);border-radius:4px;padding:16px 24px;min-width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="color:var(--cyan);font-size:11px;letter-spacing:1.5px">KEYBOARD SHORTCUTS</span>
+      <span id="help-close" style="color:var(--text-dim);cursor:pointer;font-size:12px;padding:0 4px">✕</span>
+    </div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:11px">
+      <span style="color:var(--text-bright);text-align:right">j / ↓</span><span style="color:var(--text-dim)">Next event</span>
+      <span style="color:var(--text-bright);text-align:right">k / ↑</span><span style="color:var(--text-dim)">Previous event</span>
+      <span style="color:var(--text-bright);text-align:right">Enter</span><span style="color:var(--text-dim)">Open dossier</span>
+      <span style="color:var(--text-bright);text-align:right">Esc</span><span style="color:var(--text-dim)">Close panel / dossier</span>
+      <span style="color:var(--text-bright);text-align:right">/</span><span style="color:var(--text-dim)">Search events</span>
+      <span style="color:var(--text-bright);text-align:right">.</span><span style="color:var(--text-dim)">Pause / resume feed</span>
+      <span style="color:var(--text-bright);text-align:right">F</span><span style="color:var(--text-dim)">Toggle auto-scroll</span>
+      <span style="color:var(--text-bright);text-align:right">C</span><span style="color:var(--text-dim)">Clear feed</span>
+      <span style="color:var(--text-bright);text-align:right">h</span><span style="color:var(--text-dim)">Toggle heartbeats</span>
+      <span style="color:var(--text-bright);text-align:right">Tab</span><span style="color:var(--text-dim)">Cycle dossier tabs</span>
+      <span style="color:var(--text-bright);text-align:right">?</span><span style="color:var(--text-dim)">This help</span>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -428,6 +470,9 @@ const S = {
   sseRetries: 0,
   startTime: Date.now(),
   graphAnimId: null,
+  liveTurn: false,    // agent is mid-turn
+  errFilter: false,  // show errors only
+  showHeartbeats: false, // hidden by default
 };
 
 // ═══ DOM REFS ═══
@@ -531,11 +576,19 @@ function renderEvent(ev, idx) {
   if (S.zoomedEvent && S.zoomedEvent._idx === idx) div.classList.add('zoomed');
 
   // Apply filter
-  if (S.filter) {
-    const searchable = [ev.type, ev.provider || '', ev.model || '', ev.detail || ''].join(' ').toLowerCase();
-    if (!searchable.includes(S.filter.toLowerCase())) {
+  if (S.filter || S.errFilter) {
+    if (S.errFilter && ev.type !== 'err' && ev.ok !== false) {
       div.style.display = 'none';
+    } else if (S.filter) {
+      const searchable = [ev.type, ev.provider || '', ev.model || '', ev.detail || ''].join(' ').toLowerCase();
+      if (!searchable.includes(S.filter.toLowerCase())) {
+        div.style.display = 'none';
+      }
     }
+  }
+  // Hide heartbeats unless toggled on
+  if (ev.type === 'heartbeat_tick' && !S.showHeartbeats) {
+    div.style.display = 'none';
   }
 
   const icon = TYPE_ICONS[ev.type] || '·';
@@ -602,6 +655,36 @@ function renderEvent(ev, idx) {
   return div;
 }
 
+function updateLiveState() {
+  const last = S.events[S.events.length - 1];
+  const wasLive = S.liveTurn;
+  S.liveTurn = last && last.type !== 'turn_complete' && last.type !== 'agent_end' && last.type !== 'heartbeat_tick';
+  if (wasLive !== S.liveTurn) {
+    feed.querySelectorAll('.event.live').forEach(el => el.classList.remove('live'));
+    if (S.liveTurn) {
+      const lastEl = feed.querySelector(`.event[data-idx="${last._idx}"]`);
+      if (lastEl) lastEl.classList.add('live');
+    }
+  } else if (S.liveTurn) {
+    feed.querySelectorAll('.event.live').forEach(el => el.classList.remove('live'));
+    const lastEl = feed.querySelector(`.event[data-idx="${last._idx}"]`);
+    if (lastEl) lastEl.classList.add('live');
+  }
+}
+
+function updateErrorBadge() {
+  const errCount = S.events.filter(e => e.type === 'err' || e.ok === false).length;
+  const badge = $('err-badge');
+  const count = $('err-count');
+  if (errCount > 0) {
+    badge.style.display = 'inline';
+    badge.style.color = 'var(--red)';
+    count.textContent = errCount;
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
 function appendEvents(newEvents) {
   const hadConnecting = $('connecting');
   if (hadConnecting) hadConnecting.remove();
@@ -618,6 +701,10 @@ function appendEvents(newEvents) {
   feed.appendChild(frag);
   $('event-count').textContent = S.events.length;
 
+  // Track live state: agent is mid-turn if last event is not turn_complete/agent_end
+  updateLiveState();
+  updateErrorBadge();
+
   if (S.following && !S.paused) {
     feed.scrollTop = feed.scrollHeight;
   }
@@ -626,9 +713,49 @@ function appendEvents(newEvents) {
 function rerenderFeed() {
   const scrollTop = feed.scrollTop;
   const frag = document.createDocumentFragment();
+  let sessionNum = 0;
+  let sessionEvents = 0;
+  let sessionStartTs = 0;
   S.events.forEach((ev, idx) => {
-    frag.appendChild(renderEvent(ev, idx));
+    // Session header before agent_start
+    if (ev.type === 'agent_start') {
+      // Close previous session stats
+      if (sessionNum > 0 && sessionEvents > 0) {
+        const prevHdr = frag.querySelector(`.session-hdr[data-session="${sessionNum}"]`);
+        if (prevHdr) {
+          const span = (ev.ts - sessionStartTs) / 1e6;
+          prevHdr.querySelector('.session-stats').textContent = `${sessionEvents} events · ${fmtDuration(span)}`;
+        }
+      }
+      sessionNum++;
+      sessionEvents = 0;
+      sessionStartTs = ev.ts;
+      const hdr = document.createElement('div');
+      hdr.className = 'session-hdr';
+      hdr.dataset.session = sessionNum;
+      hdr.innerHTML = `<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px">SESSION ${sessionNum}</span> <span class="session-stats" style="color:var(--text-dim);font-size:9px"></span>`;
+      hdr.addEventListener('click', () => {
+        hdr.classList.toggle('collapsed');
+        feed.querySelectorAll(`.event[data-session="${sessionNum}"]`).forEach(el => {
+          el.style.display = hdr.classList.contains('collapsed') ? 'none' : '';
+        });
+      });
+      frag.appendChild(hdr);
+    }
+    if (sessionNum > 0) sessionEvents++;
+    const row = renderEvent(ev, idx);
+    if (sessionNum > 0) row.dataset.session = sessionNum;
+    frag.appendChild(row);
   });
+  // Finalize last session
+  if (sessionNum > 0) {
+    const lastHdr = frag.querySelector(`.session-hdr[data-session="${sessionNum}"]`);
+    if (lastHdr && sessionEvents > 0) {
+      const lastEv = S.events[S.events.length - 1];
+      const span = lastEv ? (lastEv.ts - sessionStartTs) / 1e6 : 0;
+      lastHdr.querySelector('.session-stats').textContent = `${sessionEvents} events · ${fmtDuration(span)}`;
+    }
+  }
   feed.innerHTML = '';
   feed.appendChild(frag);
   feed.scrollTop = scrollTop;
@@ -649,6 +776,9 @@ function selectEvent(idx) {
 function openDossier(idx) {
   const ev = S.events[idx];
   if (!ev) return;
+  // Skip dossier for trivial event types
+  const trivialTypes = ['heartbeat_tick', 'turn_complete'];
+  if (trivialTypes.includes(ev.type)) return;
 
   S.zoomedEvent = ev;
   main.classList.add('dossier-open');
@@ -724,6 +854,32 @@ function renderDossierOverview(primary, ev) {
   }
   statsHtml += '</div>';
 
+  // Tool performance summary
+  const toolEvs = S.events.filter(e => e.type === 'tool_call');
+  const toolStats = {};
+  toolEvs.forEach(e => {
+    const name = e.model || e.provider || 'unknown';
+    if (!toolStats[name]) toolStats[name] = { ok: 0, fail: 0, totalMs: 0 };
+    if (e.ok === false) toolStats[name].fail++;
+    else toolStats[name].ok++;
+    toolStats[name].totalMs += (e.v1 || 0);
+  });
+  const toolEntries = Object.entries(toolStats).sort((a, b) => (b[1].ok + b[1].fail) - (a[1].ok + a[1].fail)).slice(0, 8);
+  if (toolEntries.length > 0) {
+    statsHtml += `<div class="dossier-section" style="margin-top:10px"><div class="section-title">TOOLS</div>`;
+    toolEntries.forEach(([name, s]) => {
+      const total = s.ok + s.fail;
+      const pct = total > 0 ? Math.round(s.ok / total * 100) : 100;
+      const avgMs = total > 0 ? Math.round(s.totalMs / total) : 0;
+      const color = pct === 100 ? 'var(--green)' : pct >= 80 ? 'var(--amber)' : 'var(--red)';
+      statsHtml += `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:10px;border-bottom:1px solid var(--border)">
+        <span style="color:var(--cyan)">${esc(name)}</span>
+        <span><span style="color:${color}">${s.ok}/${total}</span> <span style="color:var(--text-dim)">${pct}%</span> <span style="color:var(--text-dim)">${fmtDuration(avgMs)}</span></span>
+      </div>`;
+    });
+    statsHtml += '</div>';
+  }
+
   // Event detail
   let detailHtml = '';
   if (ev.detail) {
@@ -754,8 +910,8 @@ function renderDossierOverview(primary, ev) {
 
   // Raw JSON
   let rawHtml = `<div class="dossier-section">
-    <div class="section-title">RAW</div>
-    <pre style="color:var(--text-dim);font-size:10px;overflow-x:auto;white-space:pre-wrap">${esc(JSON.stringify(ev, null, 2))}</pre>
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">RAW <span class="copy-btn" data-copy="raw" style="color:var(--text-dim);font-size:9px;cursor:pointer;letter-spacing:0">COPY</span></div>
+    <pre id="raw-json" style="color:var(--text-dim);font-size:10px;overflow-x:auto;white-space:pre-wrap">${esc(JSON.stringify(ev, null, 2))}</pre>
   </div>`;
 
   content.innerHTML = statsHtml + detailHtml + relatedHtml + rawHtml;
@@ -1016,10 +1172,24 @@ function renderDossierTimeline(primary) {
 function renderDossierContext(primary) {
   const content = $('dossier-content');
 
+  // Determine which session the zoomed event belongs to
+  const zoomedIdx = S.zoomedEvent ? S.zoomedEvent._idx : -1;
+  let sessionStartIdx = 0;
+  let sessionEndIdx = S.events.length - 1;
+  // Walk backwards to find agent_start
+  for (let i = zoomedIdx; i >= 0; i--) {
+    if (S.events[i].type === 'agent_start') { sessionStartIdx = i; break; }
+  }
+  // Walk forwards to find agent_end
+  for (let i = zoomedIdx; i < S.events.length; i++) {
+    if (S.events[i].type === 'agent_end') { sessionEndIdx = i; break; }
+  }
+  const sessionEvents = S.events.slice(sessionStartIdx, sessionEndIdx + 1);
+
   const turns = [];
   let currentTurn = null;
 
-  S.events.forEach(ev => {
+  sessionEvents.forEach(ev => {
     if (ev.type === 'agent_start' || ev.type === 'channel_message') {
       if (currentTurn) turns.push(currentTurn);
       currentTurn = {
@@ -1089,7 +1259,6 @@ function renderDossierContext(primary) {
   const totalTokens = totalInput + totalOutput;
   const ctxWindow = 200000;
 
-  const zoomedIdx = S.zoomedEvent ? S.zoomedEvent._idx : -1;
   let activeTurnIdx = -1;
   turns.forEach((t, i) => { if (t.events.some(e => e._idx === zoomedIdx)) activeTurnIdx = i; });
 
@@ -1104,13 +1273,17 @@ function renderDossierContext(primary) {
   const outputPct = totalTokens > 0 ? (totalOutput / totalTokens) * 100 : 0;
 
   let html = `<div class="ctx-bar-container">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="color:var(--text-dim);font-size:9px;letter-spacing:1px">CONTEXT</span>
+      <span class="copy-btn" data-copy="context" style="color:var(--text-dim);font-size:9px;cursor:pointer;letter-spacing:0">COPY</span>
+    </div>
     <div class="ctx-bar">
       <div class="ctx-bar-fill ctx-input" style="width:${inputPct}%"></div>
       <div class="ctx-bar-fill ctx-output" style="width:${outputPct}%"></div>
     </div>
     <div class="ctx-bar-labels">
-      <span>${usedPct.toFixed(1)}%</span>
-      <span class="ctx-bar-tokens">${totalTokens.toLocaleString()} tok</span>
+      <span></span>
+      <span class="ctx-bar-tokens">${totalTokens.toLocaleString()} tok · ${usedPct.toFixed(1)}%</span>
     </div>
   </div>`;
 
@@ -1124,6 +1297,31 @@ function renderDossierContext(primary) {
     <span><span class="val">${totalTools}</span> tools</span>
     ${totalErrs ? `<span style="color:var(--red)"><span class="val">${totalErrs}</span> err</span>` : ''}
   </div>`;
+
+  // ── Latency sparkline ──
+  const latencies = sessionEvents.filter(e => e.type === 'llm_response' && e.v1 > 0).map(e => e.v1);
+  if (latencies.length > 1) {
+    const sorted = [...latencies].sort((a, b) => a - b);
+    const p50 = sorted[Math.floor(sorted.length * 0.5)];
+    const p95 = sorted[Math.floor(sorted.length * 0.95)];
+    const avg = Math.round(latencies.reduce((s, v) => s + v, 0) / latencies.length);
+    const maxL = Math.max(...latencies);
+    html += `<div class="ctx-summary" style="margin-top:8px">
+      <span>p50 <span class="val">${fmtDuration(p50)}</span></span>
+      <span>p95 <span class="val">${fmtDuration(p95)}</span></span>
+      <span>avg <span class="val">${fmtDuration(avg)}</span></span>
+      <span>n <span class="val">${latencies.length}</span></span>
+    </div>`;
+    const w = 200, h = 24, pad = 2;
+    const pts = latencies.slice(-30).map((v, i) => {
+      const x = pad + (i / Math.max(29, latencies.length - 30 + 1)) * (w - pad * 2);
+      const y = h - pad - (v / maxL) * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    html += `<svg width="${w}" height="${h}" style="display:block;margin-top:4px;opacity:0.6">
+      <polyline points="${pts}" fill="none" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+  }
 
   // ── Turn cards ──
   html += '<div class="ctx-turns">';
@@ -1243,6 +1441,7 @@ function pollEvents() {
   fetch(url).then(res => res.json()).then(data => {
     if (data.error) return;
     S.connected = true;
+    S.pollBackoff = 0;
     $('sse-dot').className = 'status-dot ok';
     const conn = $('connecting');
     if (conn) conn.remove();
@@ -1265,8 +1464,19 @@ function pollEvents() {
 }
 
 function connectPolling() {
+  S.pollBackoff = 0;
+  S.pollSkips = 0;
   pollEvents();
-  setInterval(pollEvents, 1000); // poll every 1s
+  setInterval(() => {
+    if (!S.connected) {
+      S.pollSkips++;
+      const maxSkip = 1 << Math.min(S.pollBackoff, 5); // 2, 4, 8, 16, 32
+      if (S.pollSkips < maxSkip) return;
+      S.pollSkips = 0;
+      S.pollBackoff++;
+    }
+    pollEvents();
+  }, 1000);
 }
 
 // ═══ STATUS POLLING ═══
@@ -1292,11 +1502,6 @@ function renderStatus() {
   const m = Math.floor((uptimeSec % 3600) / 60);
   $('uptime').textContent = d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 
-  // Tap position
-  if (S.status.event_tap) {
-    $('tap-ring').textContent = `${S.status.event_tap.pos % 512}/${S.status.event_tap.ring_size}`;
-  }
-
   // Health
   if (S.status.health) {
     const comps = Object.entries(S.status.health);
@@ -1305,6 +1510,35 @@ function renderStatus() {
     const dot = $('health-status');
     dot.textContent = `${healthy}/${total}`;
     dot.style.color = healthy === total ? 'var(--green)' : healthy > 0 ? 'var(--amber)' : 'var(--red)';
+  }
+
+  // Cost estimate from events (heuristic: ~100 output tok/s for priced models)
+  const MODEL_PRICES = {
+    'claude-sonnet-4': { input: 3, output: 15 },
+    'claude-opus-4': { input: 15, output: 75 },
+    'gpt-4o': { input: 2.5, output: 10 },
+  };
+  let totalCost = 0;
+  S.events.forEach(e => {
+    if (e.type === 'llm_response' && e.model) {
+      const shortModel = e.model.split('/').pop();
+      const prices = MODEL_PRICES[shortModel];
+      if (prices && e.v1 > 0) {
+        // v1 is latency in ms, estimate output tokens at ~100 tok/s
+        const estOutputTokens = Math.round((e.v1 / 1000) * 100);
+        totalCost += (estOutputTokens * prices.output) / 1e6;
+      }
+    }
+  });
+  $('cost-label').textContent = '$' + totalCost.toFixed(4);
+
+  // Context window from backend
+  if (S.status.context_window) {
+    $('ctx-label').textContent = 'CTX ' + S.status.context_window;
+  } else {
+    // Estimate from events
+    const totalIn = S.events.filter(e => e.type === 'llm_request').reduce((s, e) => s + (e.v1 || 0), 0);
+    $('ctx-label').textContent = '~' + totalIn + ' tok';
   }
 }
 
@@ -1342,7 +1576,9 @@ document.addEventListener('keydown', (e) => {
       if (S.selectedIdx >= 0) openDossier(S.selectedIdx);
       break;
     case 'Escape':
-      if ($('search-overlay').classList.contains('visible')) {
+      if ($('help-overlay').style.display === 'flex') {
+        $('help-overlay').style.display = 'none';
+      } else if ($('search-overlay').classList.contains('visible')) {
         $('search-overlay').classList.remove('visible');
       } else if (!contextStrip.classList.contains('collapsed')) {
         contextStrip.classList.add('collapsed');
@@ -1375,6 +1611,10 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       clearFeed();
       break;
+    case 'h':
+      S.showHeartbeats = !S.showHeartbeats;
+      rerenderFeed();
+      break;
     case 'Tab':
       e.preventDefault();
       if (S.zoomedEvent) {
@@ -1382,6 +1622,10 @@ document.addEventListener('keydown', (e) => {
         const ci = tabs.indexOf(S.activeTab);
         switchTab(tabs[(ci + 1) % tabs.length]);
       }
+      break;
+    case '?':
+      e.preventDefault();
+      $('help-overlay').style.display = $('help-overlay').style.display === 'flex' ? 'none' : 'flex';
       break;
   }
 });
@@ -1449,6 +1693,29 @@ function clearFeed() {
 
 $('context-close').addEventListener('click', () => contextStrip.classList.add('collapsed'));
 $('dossier-close').addEventListener('click', closeDossier);
+$('help-close').addEventListener('click', () => { $('help-overlay').style.display = 'none'; });
+$('help-overlay').addEventListener('click', (e) => { if (e.target === $('help-overlay')) $('help-overlay').style.display = 'none'; });
+$('err-badge').addEventListener('click', () => {
+  S.errFilter = !S.errFilter;
+  $('filter').value = '';
+  S.filter = '';
+  $('err-badge').style.background = S.errFilter ? 'var(--red)' : '';
+  $('err-badge').style.borderRadius = S.errFilter ? '2px' : '';
+  $('err-badge').style.color = S.errFilter ? 'var(--bg)' : 'var(--red)';
+  $('err-badge').title = S.errFilter ? 'Showing errors only (click to show all)' : 'Filter errors';
+  rerenderFeed();
+});
+
+// ═══ EXPORT ═══
+$('export-btn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(S.events, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `nullclaw-events-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
 document.querySelectorAll('.dtab').forEach(tab => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
@@ -1466,6 +1733,23 @@ $('dossier-content').addEventListener('click', (e) => {
   const dtEvent = e.target.closest('.dt-event');
   if (dtEvent) {
     selectEvent(parseInt(dtEvent.dataset.idx));
+    return;
+  }
+  const copyBtn = e.target.closest('.copy-btn');
+  if (copyBtn) {
+    const type = copyBtn.dataset.copy;
+    let text = '';
+    if (type === 'raw') {
+      text = document.getElementById('raw-json')?.textContent || '';
+    } else if (type === 'context') {
+      text = $('dossier-content')?.textContent || '';
+    }
+    if (text) {
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.textContent = 'OK';
+        setTimeout(() => { copyBtn.textContent = 'COPY'; }, 1200);
+      });
+    }
     return;
   }
 });
@@ -1520,6 +1804,7 @@ function loadMockData() {
     { ts: base + 87_400_000_000, type: 'agent_end', v1: 51_400_000_000, v2: 4820 },
     { ts: base + 95_000_000_000, type: 'err', provider: 'memory', detail: 'sqlite: database is locked' },
     { ts: base + 96_100_000_000, type: 'heartbeat_tick'  },
+    { ts: base + 100_000_000_000, type: 'agent_start', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud' },
     { ts: base + 100_000_000_000, type: 'llm_request', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 200 },
     { ts: base + 102_000_000_000, type: 'llm_response', provider: 'ollama-cloud', model: 'qwen3-coder-next:cloud', v1: 2000, ok: true , content: '{"r":"Checking for remaining TODOs and FIXMEs in the codebase.","t":[{"n":"shell","a":"grep TODO src/"},{"n":"shell","a":"grep FIXME src/"},{"n":"shell","a":"grep HACK src/"}]}' },
     { ts: base + 102_100_000_000, type: 'tool_call_start', model: 'shell' },
@@ -1530,7 +1815,8 @@ function loadMockData() {
     { ts: base + 106_800_000_000, type: 'tool_call', model: 'shell', v1: 1300, ok: true, detail: 'grep HACK src/ -> 7' },
     { ts: base + 107_000_000_000, type: 'tool_iterations_exhausted', v1: 90 },
     { ts: base + 107_100_000_000, type: 'turn_complete' },
-  ];
+    { ts: base + 107_200_000_000, type: 'agent_end', v1: 7_200_000_000, v2: 810 },
+    ];
   appendEvents(mockEvents);
   openDossier(Math.floor(mockEvents.length * 0.6));
 }
