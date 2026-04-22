@@ -739,10 +739,13 @@ pub const ChannelRuntime = struct {
         event_tap.initGlobal() catch {};
         const tap_obs = event_tap.globalObserver();
 
-        var observers_buf: [2]observability.Observer = .{ noop_obs.observer(), tap_obs };
+        // Heap-allocate the observers buffer — must outlive initChannelRuntime's stack frame.
+        const observers_buf = try allocator.create([2]observability.Observer);
+        errdefer allocator.destroy(observers_buf);
+        observers_buf.* = .{ noop_obs.observer(), tap_obs };
         const multi_obs = try allocator.create(observability.MultiObserver);
         errdefer allocator.destroy(multi_obs);
-        multi_obs.* = .{ .observers = &observers_buf };
+        multi_obs.* = .{ .observers = observers_buf };
         const obs = multi_obs.observer();
 
         // Session manager

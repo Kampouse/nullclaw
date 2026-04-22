@@ -64,10 +64,10 @@ pub const TapEvent = struct {
     content: [MAX_CONTENT_LEN]u8 = [_]u8{0} ** MAX_CONTENT_LEN,
     content_len: u16 = 0,
 
-    fn copyString(dst: []u8, src: []const u8) u8 {
+    fn copyString(dst: []u8, src: []const u8) usize {
         const len = @min(src.len, dst.len);
         @memcpy(dst[0..len], src[0..len]);
-        return @intCast(len);
+        return len;
     }
 
     fn getString(src: []const u8, len: u8) []const u8 {
@@ -146,13 +146,13 @@ pub const EventTap = struct {
         switch (event.*) {
             .agent_start => |e| {
                 entry.event_type = .agent_start;
-                entry.provider_len = TapEvent.copyString(&entry.provider, e.provider);
-                entry.model_len = TapEvent.copyString(&entry.model, e.model);
+                entry.provider_len = @intCast(TapEvent.copyString(&entry.provider, e.provider));
+                entry.model_len = @intCast(TapEvent.copyString(&entry.model, e.model));
             },
             .llm_request => |e| {
                 entry.event_type = .llm_request;
-                entry.provider_len = TapEvent.copyString(&entry.provider, e.provider);
-                entry.model_len = TapEvent.copyString(&entry.model, e.model);
+                entry.provider_len = @intCast(TapEvent.copyString(&entry.provider, e.provider));
+                entry.model_len = @intCast(TapEvent.copyString(&entry.model, e.model));
                 entry.value1 = @intCast(e.messages_count);
                 if (e.messages_snapshot.len > 0) {
                     entry.content_len = @intCast(TapEvent.copyString(&entry.content, e.messages_snapshot));
@@ -160,8 +160,8 @@ pub const EventTap = struct {
             },
             .llm_response => |e| {
                 entry.event_type = .llm_response;
-                entry.provider_len = TapEvent.copyString(&entry.provider, e.provider);
-                entry.model_len = TapEvent.copyString(&entry.model, e.model);
+                entry.provider_len = @intCast(TapEvent.copyString(&entry.provider, e.provider));
+                entry.model_len = @intCast(TapEvent.copyString(&entry.model, e.model));
                 entry.value1 = e.duration_ms;
                 entry.flag = e.success;
                 if (e.error_message) |msg| {
@@ -184,11 +184,11 @@ pub const EventTap = struct {
             },
             .tool_call_start => |e| {
                 entry.event_type = .tool_call_start;
-                entry.model_len = TapEvent.copyString(&entry.model, e.tool);
+                entry.model_len = @intCast(TapEvent.copyString(&entry.model, e.tool));
             },
             .tool_call => |e| {
                 entry.event_type = .tool_call;
-                entry.model_len = TapEvent.copyString(&entry.model, e.tool);
+                entry.model_len = @intCast(TapEvent.copyString(&entry.model, e.tool));
                 entry.value1 = e.duration_ms;
                 entry.flag = e.success;
                 if (e.detail) |d| {
@@ -204,15 +204,15 @@ pub const EventTap = struct {
             },
             .channel_message => |e| {
                 entry.event_type = .channel_message;
-                entry.provider_len = TapEvent.copyString(&entry.provider, e.channel);
-                entry.model_len = TapEvent.copyString(&entry.model, e.direction);
+                entry.provider_len = @intCast(TapEvent.copyString(&entry.provider, e.channel));
+                entry.model_len = @intCast(TapEvent.copyString(&entry.model, e.direction));
             },
             .heartbeat_tick => {
                 entry.event_type = .heartbeat_tick;
             },
             .err => |e| {
                 entry.event_type = .err;
-                entry.provider_len = TapEvent.copyString(&entry.provider, e.component);
+                entry.provider_len = @intCast(TapEvent.copyString(&entry.provider, e.component));
                 entry.detail_len = @intCast(TapEvent.copyString(&entry.detail, e.message));
             },
         }
@@ -439,6 +439,6 @@ test "EventTap observer vtable works" {
 test "TapEvent.copyString truncates correctly" {
     var buf: [4]u8 = undefined;
     const len = TapEvent.copyString(&buf, "hello world");
-    try testing.expectEqual(@as(u8, 4), len);
+    try testing.expectEqual(@as(usize, 4), len);
     try testing.expectEqualSlices(u8, "hell", buf[0..len]);
 }
