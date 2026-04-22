@@ -349,6 +349,118 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .ctx-turn-response { margin-top: 3px; padding: 3px 6px; border-left: 1px solid rgba(0,255,100,0.3); font-size: 10px; color: var(--text); max-height: 48px; overflow: hidden; white-space: pre-wrap; word-break: break-word; cursor: pointer; font-family: var(--mono); line-height: 1.35; opacity: 0.9; }
 .ctx-turn-response:hover { background: rgba(255,255,255,0.015); }
 .ctx-turn-response.expanded { max-height: none; }
+
+/* ═══ VIEW TABS (FEED / TRACE) ═══ */
+#view-tabs { display: flex; gap: 2px; }
+.vtab {
+  padding: 1px 10px; color: var(--text-dim); cursor: pointer; font-size: 10px;
+  border: 1px solid transparent; border-radius: 2px; user-select: none;
+  letter-spacing: 1px; transition: all 0.1s;
+}
+.vtab:hover { color: var(--text); border-color: var(--border); }
+.vtab.active { color: var(--cyan); border-color: var(--cyan); background: rgba(74,192,232,0.06); }
+
+/* ═══ TRACE PANEL ═══ */
+#trace-panel {
+  width: var(--feed-width); display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); overflow: hidden;
+  transition: width 0.15s ease;
+}
+#main.dossier-open #trace-panel { width: 58%; }
+#trace-sessions {
+  display: flex; gap: 4px; padding: 4px 8px; overflow-x: auto;
+  border-bottom: 1px solid var(--border); background: var(--bg-panel);
+  align-items: center; flex-shrink: 0; min-height: 28px;
+}
+.trace-chip {
+  padding: 2px 8px; color: var(--text-dim); cursor: pointer; font-size: 10px;
+  border: 1px solid var(--border); border-radius: 2px; white-space: nowrap;
+  user-select: none; transition: all 0.1s; flex-shrink: 0;
+}
+.trace-chip:hover { border-color: var(--text-dim); color: var(--text); }
+.trace-chip.active { border-color: var(--cyan); color: var(--cyan); background: rgba(74,192,232,0.06); }
+.trace-chip .chip-count { color: var(--text-dim); opacity: 0.6; margin-left: 4px; font-size: 9px; }
+#trace-filters {
+  display: flex; gap: 4px; padding: 3px 8px;
+  border-bottom: 1px solid var(--border); background: var(--bg-panel);
+  align-items: center; flex-shrink: 0; min-height: 24px;
+}
+.tfilter-chip {
+  padding: 1px 7px; color: var(--text-dim); cursor: pointer; font-size: 9px;
+  border: 1px solid transparent; border-radius: 2px; user-select: none;
+  letter-spacing: 0.5px; transition: all 0.1s;
+}
+.tfilter-chip:hover { color: var(--text); }
+.tfilter-chip.active { border-color: currentColor; opacity: 1; }
+.tfilter-chip.active[data-filter="llm"] { color: var(--purple); }
+.tfilter-chip.active[data-filter="tool"] { color: var(--cyan); }
+.tfilter-chip.active[data-filter="http"] { color: var(--amber); }
+.tfilter-chip.active[data-filter="err"] { color: var(--red); }
+.tfilter-chip.active[data-filter="msg"] { color: var(--magenta); }
+#trace-ruler {
+  height: 20px; position: relative; flex-shrink: 0;
+  border-bottom: 1px solid var(--border); background: var(--bg-panel);
+  overflow: hidden;
+}
+.trace-ruler-mark {
+  position: absolute; top: 0; height: 100%;
+  border-left: 1px solid rgba(85,90,110,0.3);
+  font-size: 9px; color: var(--text-dim); opacity: 0.4;
+  padding-left: 3px; line-height: 20px; white-space: nowrap;
+}
+#trace-waterfall {
+  flex: 1; overflow: auto; position: relative; background: var(--bg);
+}
+.trace-row {
+  display: flex; align-items: center; height: 22px; cursor: pointer;
+  border-bottom: 1px solid rgba(26,30,46,0.3); transition: background 0.08s;
+  position: relative;
+}
+.trace-row:hover { background: rgba(74,192,232,0.04); }
+.trace-row.selected { background: rgba(74,192,232,0.07); }
+.trace-row-label {
+  min-width: 180px; max-width: 180px; padding: 0 8px;
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  border-right: 1px solid var(--border); height: 100%;
+  font-size: 10px; color: var(--text-dim); overflow: hidden; white-space: nowrap;
+  background: var(--bg-panel); position: sticky; left: 0; z-index: 2;
+}
+.trace-row-label .tr-icon { font-size: 10px; flex-shrink: 0; width: 14px; text-align: center; }
+.trace-row-label .tr-name { overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.trace-row-label .tr-time { color: var(--text-dim); font-size: 9px; margin-left: auto; flex-shrink: 0; }
+.trace-bar-area {
+  flex: 1; height: 100%; position: relative; min-width: 0;
+}
+.trace-bar {
+  position: absolute; top: 4px; height: 14px; border-radius: 2px;
+  min-width: 3px; transition: box-shadow 0.15s, opacity 0.15s;
+  opacity: 0.75;
+}
+.trace-bar:hover { opacity: 1; box-shadow: 0 0 8px currentColor; z-index: 5; }
+.trace-bar.bar-llm { background: var(--purple); color: var(--purple); }
+.trace-bar.bar-tool { background: var(--cyan); color: var(--cyan); }
+.trace-bar.bar-http { background: #f0a030; color: #f0a030; }
+.trace-bar.bar-err { background: var(--red); color: var(--red); }
+.trace-bar.bar-dim { background: var(--text-dim); color: var(--text-dim); opacity: 0.35; }
+.trace-bar.bar-msg { background: var(--magenta); color: var(--magenta); }
+.trace-bar.bar-agent { background: var(--blue); color: var(--blue); }
+.trace-bar.bar-warn { background: var(--amber); color: var(--amber); }
+.trace-tooltip {
+  display: none; position: fixed; z-index: 100;
+  background: rgba(12,14,20,0.95); border: 1px solid var(--border-active);
+  border-radius: 4px; padding: 6px 10px; pointer-events: none;
+  font-size: 10px; line-height: 1.6; color: var(--text);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 320px;
+}
+.trace-tooltip.visible { display: block; }
+.trace-tooltip .tt-type { color: var(--cyan); font-size: 9px; letter-spacing: 0.5px; }
+.trace-tooltip .tt-detail { color: var(--text-dim); margin-top: 2px; }
+.trace-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-dim); font-size: 11px; gap: 6px;
+}
+.trace-empty .icon { font-size: 20px; opacity: 0.25; }
+.trace-empty .hint { font-size: 10px; opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -356,6 +468,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 <!-- HEADER -->
 <div id="header">
   <div class="brand"><span>◉</span> NULLCLAW <span style="color:var(--text-dim)">SPY</span></div>
+  <div id="view-tabs">
+    <div class="vtab active" data-view="feed" onclick="switchView('feed')">FEED</div>
+    <div class="vtab" data-view="trace" onclick="switchView('trace')">TRACE</div>
+  </div>
   <div class="meta">
     <span>UPTIME <span class="val" id="uptime">--</span></span>
     <span>EVENTS <span class="val" id="event-count">0</span></span>
@@ -381,6 +497,14 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
       </div>
       <div id="context-body"></div>
     </div>
+  </div>
+
+  <!-- TRACE PANEL (hidden by default) -->
+  <div id="trace-panel" style="display:none">
+    <div id="trace-sessions"></div>
+    <div id="trace-filters"></div>
+    <div id="trace-ruler"></div>
+    <div id="trace-waterfall"></div>
   </div>
 
   <!-- DOSSIER PANEL -->
@@ -473,6 +597,13 @@ const S = {
   liveTurn: false,    // agent is mid-turn
   errFilter: false,  // show errors only
   showHeartbeats: false, // hidden by default
+  // trace view
+  activeView: 'feed',
+  traceSessions: {},
+  traceSincePos: null,
+  traceFilter: null,
+  activeSession: null,
+  traceDirty: false,
 };
 
 // ═══ DOM REFS ═══
@@ -492,6 +623,7 @@ const TYPE_ICONS = {
   err: '✖',
   turn_complete: '↵',
   tool_iterations_exhausted: '⚠',
+  http_request: '⇄',
 };
 
 // ═══ FORMAT HELPERS ═══
@@ -1821,6 +1953,283 @@ function loadMockData() {
   openDossier(Math.floor(mockEvents.length * 0.6));
 }
 
+// ═══ TRACE VIEW ═══
+const TRACE_TYPE_COLORS = {
+  llm_request: 'bar-llm', llm_response: 'bar-llm',
+  tool_call_start: 'bar-tool', tool_call: 'bar-tool',
+  http_request: 'bar-http',
+  err: 'bar-err',
+  turn_complete: 'bar-dim', heartbeat_tick: 'bar-dim',
+  channel_message: 'bar-msg',
+  agent_start: 'bar-agent', agent_end: 'bar-agent',
+  tool_iterations_exhausted: 'bar-warn',
+};
+const TRACE_TYPE_FILTERS = {
+  llm: ['llm_request','llm_response'],
+  tool: ['tool_call_start','tool_call'],
+  http: ['http_request'],
+  err: ['err','tool_iterations_exhausted'],
+  msg: ['channel_message'],
+};
+
+function switchView(view) {
+  S.activeView = view;
+  document.querySelectorAll('.vtab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
+  const fp = $('feed-panel');
+  const tp = $('trace-panel');
+  if (view === 'feed') {
+    fp.style.display = '';
+    tp.style.display = 'none';
+  } else {
+    fp.style.display = 'none';
+    tp.style.display = 'flex';
+    if (S.traceDirty || Object.keys(S.traceSessions).length === 0) {
+      renderTraceView();
+      S.traceDirty = false;
+    }
+  }
+}
+
+function pollTrace() {
+  const proto = location.protocol === 'https:' ? 'https' : 'http';
+  const url = `${proto}://${location.host}/api/trace?since=${S.traceSincePos !== null ? S.traceSincePos : 0}`;
+  fetch(url).then(res => res.json()).then(data => {
+    if (data.error) return;
+    if (data.pos) S.traceSincePos = data.pos;
+    if (data.sessions && typeof data.sessions === 'object') {
+      let changed = false;
+      for (const [sess, evts] of Object.entries(data.sessions)) {
+        if (!S.traceSessions[sess]) S.traceSessions[sess] = [];
+        S.traceSessions[sess].push(...evts);
+        changed = true;
+      }
+      if (changed) {
+        // assign _tidx for trace events and cross-reference with S.events
+        let tidx = 0;
+        for (const evts of Object.values(S.traceSessions)) {
+          for (const ev of evts) {
+            if (ev._tidx === undefined) {
+              ev._tidx = tidx++;
+              // try to find in S.events for dossier integration
+              const match = S.events.find(e => e.ts === ev.ts && e.type === ev.type && e.session === ev.session);
+              if (match) ev._feedIdx = match._idx;
+            }
+          }
+        }
+        if (S.activeView === 'trace') renderTraceView();
+        else S.traceDirty = true;
+      }
+    }
+  }).catch(err => {
+    console.error('trace poll error:', err);
+  });
+}
+
+function renderTraceView() {
+  renderTraceSessions();
+  renderTraceFilters();
+  renderTraceWaterfall();
+}
+
+function renderTraceSessions() {
+  const el = $('trace-sessions');
+  const sessions = Object.entries(S.traceSessions);
+  if (sessions.length === 0) {
+    el.innerHTML = '<span style="color:var(--text-dim);font-size:10px;opacity:0.5">no sessions</span>';
+    return;
+  }
+  let html = '';
+  // "ALL" chip
+  html += `<div class="trace-chip ${!S.activeSession ? 'active' : ''}" onclick="S.activeSession=null;renderTraceView()">ALL<span class="chip-count">${sessions.reduce((s,[,e])=>s+e.length,0)}</span></div>`;
+  for (const [hash, evts] of sessions) {
+    const short = hash.slice(0, 8);
+    html += `<div class="trace-chip ${S.activeSession === hash ? 'active' : ''}" onclick="S.activeSession='${hash}';renderTraceView()">${short}<span class="chip-count">${evts.length}</span></div>`;
+  }
+  el.innerHTML = html;
+}
+
+function renderTraceFilters() {
+  const el = $('trace-filters');
+  let html = '<span style="color:var(--text-dim);font-size:9px;opacity:0.5;margin-right:4px">FILTER</span>';
+  for (const [key, types] of Object.entries(TRACE_TYPE_FILTERS)) {
+    html += `<div class="tfilter-chip ${S.traceFilter === key ? 'active' : ''}" data-filter="${key}" onclick="S.traceFilter=S.traceFilter==='${key}'?null:'${key}';renderTraceWaterfall()">${key.toUpperCase()}</div>`;
+  }
+  el.innerHTML = html;
+}
+
+function _traceEventLabel(ev) {
+  switch (ev.type) {
+    case 'llm_request': return (ev.provider||'') + '/' + (ev.model||'');
+    case 'llm_response': return (ev.provider||'') + '/' + (ev.model||'');
+    case 'tool_call_start': return ev.model || ev.provider || 'tool';
+    case 'tool_call': return ev.model || ev.provider || 'tool';
+    case 'http_request': return ev.provider || ev.detail || 'http';
+    case 'channel_message': return (ev.provider||'') + ':' + (ev.model||'');
+    case 'err': return ev.provider || 'error';
+    case 'agent_start': return (ev.provider||'') + ' ' + (ev.model||'');
+    case 'agent_end': return 'agent';
+    case 'turn_complete': return 'turn complete';
+    case 'heartbeat_tick': return 'heartbeat';
+    case 'tool_iterations_exhausted': return 'iter exhausted';
+    default: return ev.type;
+  }
+}
+
+function _traceEventDuration(ev) {
+  // v1 is ms for these types
+  if (ev.type === 'llm_response' || ev.type === 'tool_call' || ev.type === 'http_request' || ev.type === 'agent_end') {
+    return (ev.v1 || 0); // already in ms
+  }
+  return 0; // instant/dot
+}
+
+function renderTraceWaterfall() {
+  const container = $('trace-waterfall');
+  const ruler = $('trace-ruler');
+  // Gather events
+  let allEvents = [];
+  const sessions = S.activeSession
+    ? { [S.activeSession]: S.traceSessions[S.activeSession] || [] }
+    : S.traceSessions;
+  for (const [, evts] of Object.entries(sessions)) {
+    allEvents.push(...evts);
+  }
+  // Apply filter
+  if (S.traceFilter && TRACE_TYPE_FILTERS[S.traceFilter]) {
+    const allowed = new Set(TRACE_TYPE_FILTERS[S.traceFilter]);
+    allEvents = allEvents.filter(e => allowed.has(e.type));
+  }
+  // Hide heartbeats unless toggled
+  if (!S.showHeartbeats) allEvents = allEvents.filter(e => e.type !== 'heartbeat_tick');
+
+  if (allEvents.length === 0) {
+    container.innerHTML = '<div class="trace-empty"><div class="icon">◉</div><div>no trace events</div><div class="hint">waiting for session data from /api/trace</div></div>';
+    ruler.innerHTML = '';
+    return;
+  }
+
+  // Compute time range
+  const minTs = allEvents[0].ts;
+  const maxTs = allEvents[allEvents.length - 1].ts;
+  const totalMs = Math.max((maxTs - minTs) / 1e6, 1);
+  // Find max duration for scale
+  let maxDur = 0;
+  for (const ev of allEvents) {
+    const dur = _traceEventDuration(ev);
+    if (dur > maxDur) maxDur = dur;
+  }
+  const viewMs = Math.max(totalMs + maxDur * 0.1, 100); // add 10% padding for durations
+
+  // Render ruler
+  const rulerMarks = _computeRulerMarks(viewMs);
+  let rulerHtml = '';
+  for (const ms of rulerMarks) {
+    const pct = (ms / viewMs) * 100;
+    rulerHtml += `<div class="trace-ruler-mark" style="left:${pct}%">${fmtDuration(ms)}</div>`;
+  }
+  ruler.innerHTML = rulerHtml;
+
+  // Render rows
+  let html = '';
+  for (const ev of allEvents) {
+    const offsetMs = (ev.ts - minTs) / 1e6;
+    const dur = _traceEventDuration(ev);
+    const barClass = TRACE_TYPE_COLORS[ev.type] || 'bar-dim';
+    const icon = TYPE_ICONS[ev.type] || '·';
+    const label = _traceEventLabel(ev);
+    const timeStr = fmtTime(ev.ts);
+
+    // bar positioning
+    const leftPct = (offsetMs / viewMs) * 100;
+    let widthPct;
+    if (dur > 0) {
+      widthPct = Math.max((dur / viewMs) * 100, 0.15);
+    } else {
+      widthPct = 0.08; // dot
+    }
+
+    const selClass = (S.zoomedEvent && S.zoomedEvent._feedIdx === ev._feedIdx) ? ' selected' : '';
+    const detail = ev.detail || '';
+    const metric = dur > 0 ? fmtDuration(dur) : '';
+    const tooltipData = `data-ts="${ev.ts}" data-type="${esc(ev.type)}" data-label="${esc(label)}" data-detail="${esc(detail)}" data-metric="${esc(metric)}" data-ok="${ev.ok}" data-provider="${esc(ev.provider||'')}" data-model="${esc(ev.model||'')}"`;
+
+    html += `<div class="trace-row${selClass}" ${tooltipData} onclick="openTraceDossier(this)">
+      <div class="trace-row-label">
+        <span class="tr-icon">${icon}</span>
+        <span class="tr-name" title="${esc(label)}">${esc(label)}</span>
+        <span class="tr-time">${timeStr}</span>
+      </div>
+      <div class="trace-bar-area">
+        <div class="trace-bar ${barClass}" style="left:${leftPct}%;width:${widthPct}%"></div>
+      </div>
+    </div>`;
+  }
+  container.innerHTML = html;
+}
+
+function _computeRulerMarks(totalMs) {
+  // Pick nice intervals: 10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, etc.
+  const steps = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000];
+  let interval = steps[0];
+  for (const s of steps) {
+    if (totalMs / s <= 20) { interval = s; break; }
+    interval = s;
+  }
+  const marks = [];
+  for (let ms = 0; ms <= totalMs; ms += interval) {
+    marks.push(ms);
+  }
+  return marks;
+}
+
+// Tooltip for trace rows
+let _traceTooltipEl = null;
+function _initTraceTooltip() {
+  _traceTooltipEl = document.createElement('div');
+  _traceTooltipEl.className = 'trace-tooltip';
+  document.body.appendChild(_traceTooltipEl);
+  $('trace-waterfall').addEventListener('mousemove', (e) => {
+    const row = e.target.closest('.trace-row');
+    if (!row) { _traceTooltipEl.classList.remove('visible'); return; }
+    const ts = row.dataset.ts;
+    const type = row.dataset.type;
+    const label = row.dataset.label;
+    const detail = row.dataset.detail;
+    const metric = row.dataset.metric;
+    const ok = row.dataset.ok;
+    let ttHtml = `<div class="tt-type">${esc(type)}</div>`;
+    ttHtml += `<div>${esc(label)}</div>`;
+    if (metric) ttHtml += `<div style="color:var(--text-dim)">${esc(metric)}</div>`;
+    if (ok === 'false') ttHtml += `<div style="color:var(--red)">✗ failed</div>`;
+    if (detail) ttHtml += `<div class="tt-detail">${esc(detail.length > 120 ? detail.slice(0,120)+'…' : detail)}</div>`;
+    ttHtml += `<div class="tt-detail">${ts ? fmtTime(Number(ts)) : ''}</div>`;
+    _traceTooltipEl.innerHTML = ttHtml;
+    _traceTooltipEl.classList.add('visible');
+    _traceTooltipEl.style.left = (e.clientX + 12) + 'px';
+    _traceTooltipEl.style.top = (e.clientY + 8) + 'px';
+  });
+  $('trace-waterfall').addEventListener('mouseleave', () => {
+    _traceTooltipEl.classList.remove('visible');
+  });
+}
+
+function openTraceDossier(rowEl) {
+  // Try to find matching event in S.events
+  const ts = Number(rowEl.dataset.ts);
+  const type = rowEl.dataset.type;
+  // search by timestamp+type match in S.events
+  let idx = -1;
+  for (let i = S.events.length - 1; i >= 0; i--) {
+    if (S.events[i].ts === ts && S.events[i].type === type) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx >= 0) {
+    openDossier(idx);
+  }
+}
+
 // ═══ INIT ═══
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.has('demo')) {
@@ -1834,6 +2243,11 @@ if (urlParams.has('demo')) {
 }
 pollStatus();
 setInterval(pollStatus, 5000);
+
+// Start trace polling + init tooltip
+_initTraceTooltip();
+pollTrace();
+setInterval(pollTrace, 1000);
 
 // Update uptime counter
 setInterval(() => {
