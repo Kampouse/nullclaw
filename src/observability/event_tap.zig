@@ -369,6 +369,127 @@ pub const EventTap = struct {
         return fbs.getWritten();
     }
 
+    /// Read events since a given position, grouped by session_hash.
+    /// Returns JSON object: { "session_hash_hex": [events...], ... }
+    /// If session_filter is provided, only return that session's events.
+    pub fn readTraceSinceJson(self: *const EventTap, since_pos: u64, buf: []u8, session_filter: ?[]const u8) []const u8 {
+        var fbs = util.FixedBufferStream.init(buf);
+        fbs.writeAll("{") catch {
+            @memcpy(buf[0..2], "{}");
+            return buf[0..2];
+        };
+
+        const current_write = self.write_pos.load(.acquire);
+        var pos = @max(since_pos, if (current_write > RING_SIZE) current_write - RING_SIZE else 0);
+
+        // Parse session filter to u64
+        const filter_hash: u64 = if (session_filter) |sf| blk: {
+            break :blk std.fmt.parseInt(u64, sf, 16) catch 0;
+        } else 0;
+
+        // Track unique session hashes we've started writing
+        var seen_sessions: [32]u64 = [_]u64{0} ** 32;
+        var seen_event_counts: [32]usize = [_]usize{0} ** 32;
+        var seen_count: usize = 0;
+
+        while (pos < current_write) {
+            const idx = pos % RING_SIZE;
+            const entry = &self.ring[idx];
+            pos += 1;
+
+            // Apply session filter
+            if (filter_hash > 0 and entry.session_hash != filter_hash) continue;
+
+            // Find or start this session group
+            const sh = entry.session_hash;
+            var session_idx: usize = 0;
+            var found = false;
+            for (seen_sessions[0..seen_count], 0..) |s, i| {
+                if (s == sh) {
+                    found = true;
+                    session_idx = i;
+                    break;
+                }
+            }
+            if (!found) {
+                if (seen_count >= seen_sessions.len) break; // too many sessions
+                // Close previous session's array (not before first)
+                if (seen_count > 0) {
+                    fbs.writeAll("\"]") catch break;
+                }
+                session_idx = seen_count;
+                seen_sessions[seen_count] = sh;
+                seen_event_counts[seen_count] = 0;
+                seen_count += 1;
+
+                // Write comma separator between session groups (not before first)
+                if (seen_count > 1) {
+                    fbs.writeAll(",") catch break;
+                }
+                fbs.writeAll("\"") catch break;
+                fbs.print("{x}", .{sh}) catch break;
+                fbs.writeAll("\":[") catch break;
+            }
+
+            // Comma separator between events within a session
+            if (seen_event_counts[session_idx] > 0) {
+                fbs.writeAll(",") catch break;
+            }
+
+            // Write the event (same format as readSinceJson but without surrounding array)
+            fbs.writeAll("{\"ts\":") catch break;
+            fbs.print("{d}", .{entry.timestamp_ns}) catch break;
+            fbs.writeAll(",\"type\":\"") catch break;
+            fbs.writeAll(@tagName(entry.event_type)) catch break;
+            fbs.writeAll("\"") catch break;
+
+            if (entry.session_hash > 0) {
+                fbs.writeAll(",\"session\":") catch break;
+                fbs.print("{d}", .{entry.session_hash}) catch break;
+            }
+            if (entry.provider_len > 0) {
+                fbs.writeAll(",\"provider\":\"") catch break;
+                writeJsonString(&fbs, entry.provider[0..entry.provider_len]) catch break;
+                fbs.writeAll("\"") catch break;
+            }
+            if (entry.model_len > 0) {
+                fbs.writeAll(",\"model\":\"") catch break;
+                writeJsonString(&fbs, entry.model[0..entry.model_len]) catch break;
+                fbs.writeAll("\"") catch break;
+            }
+            if (entry.value1 > 0) {
+                fbs.writeAll(",\"v1\":") catch break;
+                fbs.print("{d}", .{entry.value1}) catch break;
+            }
+            if (entry.value2 > 0) {
+                fbs.writeAll(",\"v2\":") catch break;
+                fbs.print("{d}", .{entry.value2}) catch break;
+            }
+            if (entry.flag) {
+                fbs.writeAll(",\"ok\":true") catch break;
+            }
+            if (entry.detail_len > 0) {
+                fbs.writeAll(",\"detail\":\"") catch break;
+                writeJsonString(&fbs, entry.detail[0..entry.detail_len]) catch break;
+                fbs.writeAll("\"") catch break;
+            }
+            if (entry.content_len > 0) {
+                fbs.writeAll(",\"content\":\"") catch break;
+                writeJsonString(&fbs, entry.content[0..entry.content_len]) catch break;
+                fbs.writeAll("\"") catch break;
+            }
+            fbs.writeAll("}") catch break;
+            seen_event_counts[session_idx] += 1;
+        }
+
+        // Close last session array and outer object
+        if (seen_count > 0) {
+            fbs.writeAll("]") catch {};
+        }
+        fbs.writeAll("}") catch {};
+        return fbs.getWritten();
+    }
+
     /// Write a byte slice as a JSON-escaped string (no surrounding quotes).
     /// Escapes control characters (0x00-0x1F) via \u00XX, plus " and \.
     /// Invalid UTF-8 bytes (lone continuations, overlong sequences, etc.)

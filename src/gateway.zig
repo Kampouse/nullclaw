@@ -2773,7 +2773,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         const target = parts.next() orelse continue;
 
         // Simple routing — control endpoints + descriptor-driven channel webhooks.
-        const ControlRoute = enum { health, ready, webhook, pair, eval, bench, spy, api_status, api_events };
+        const ControlRoute = enum { health, ready, webhook, pair, eval, bench, spy, api_status, api_events, api_trace };
         const control_route_map = std.StaticStringMap(ControlRoute).initComptime(.{
             .{ "/health", .health },
             .{ "/ready", .ready },
@@ -2784,6 +2784,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
             .{ "/spy", .spy },
             .{ "/api/status", .api_status },
             .{ "/api/events", .api_events },
+            .{ "/api/trace", .api_trace },
         });
         const base_path = if (std.mem.indexOfScalar(u8, target, '?')) |qi| target[0..qi] else target;
         const is_post = std.mem.eql(u8, method_str, "POST");
@@ -3106,6 +3107,33 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
                 // Wrap with position metadata so the client can resume
                 const resp = std.fmt.allocPrint(req_allocator, "{{\"pos\":{d},\"events\":{s}}}", .{ current_pos, json }) catch "{\"error\":\"buffer overflow\"}";
+                response_body = resp;
+            },
+            .api_trace => {
+                // Trace endpoint — returns events grouped by session_hash for waterfall view.
+                // Same polling pattern as /api/events but groups events into sessions.
+                const event_tap_mod = @import("observability/event_tap.zig");
+                const tap = event_tap_mod.getTap() orelse {
+                    response_status = "503 Service Unavailable";
+                    response_body = "{\"error\":\"event tap not initialized\"}";
+                    continue;
+                };
+
+                // Parse ?since= parameter
+                const since_param = extractQueryParam(target, "since");
+                const since_pos = if (since_param) |sp|
+                    std.fmt.parseInt(u64, sp, 10) catch 0
+                else
+                    0;
+
+                // Parse optional ?session= filter (hex string of session_hash)
+                const session_param = extractQueryParam(target, "session");
+
+                var event_buf: [131072]u8 = undefined; // 128KB buffer
+                const current_pos = tap.currentPos();
+                const json = tap.readTraceSinceJson(since_pos, &event_buf, session_param);
+
+                const resp = std.fmt.allocPrint(req_allocator, "{{\"pos\":{d},\"sessions\":{s}}}", .{ current_pos, json }) catch "{\"error\":\"buffer overflow\"}";
                 response_body = resp;
             },
         } else {
