@@ -10,7 +10,7 @@
 #   make agent    - start agent mode in background
 #   make clean    - clean all build artifacts
 
-ZIG    := $(shell which zig || echo ~/.local/zig/zig)
+ZIG    := /opt/homebrew/bin/zig
 BIN    := ./zig-out/bin/nullclaw
 PIDFILE := .nullclaw.pid
 LOGFILE := ~/nullclaw.log
@@ -27,6 +27,10 @@ build: $(BIN)
 
 release: OPTIMIZE := -Doptimize=ReleaseSmall
 release: $(BIN)
+
+build-vm: $(BIN)
+	$(ZIG) build -Dvm=true $(OPTIMIZE)
+	codesign --entitlements src/vm/nullclaw.entitlements.plist --force --sign - $(BIN)
 
 $(BIN): spy/dist/index.html
 	$(ZIG) build $(OPTIMIZE)

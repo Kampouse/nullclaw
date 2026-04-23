@@ -112,6 +112,8 @@ pub const file_append = @import("file_append.zig");
 pub const spawn = @import("spawn.zig");
 pub const i2c = @import("i2c.zig");
 pub const spi = @import("spi.zig");
+pub const vm_exec = @import("vm_exec.zig");
+pub const predict = @import("predict.zig");
 pub const path_security = @import("path_security.zig");
 pub const process_util = @import("process_util.zig");
 pub const gork = @import("gork.zig");
@@ -354,6 +356,12 @@ pub fn allTools(
         policy: ?*const @import("../security/policy.zig").SecurityPolicy = null,
         gork_config: ?@import("../config_types.zig").GorkConfig = null,
         repo_dir: ?[]const u8 = null,
+        vm_enabled: bool = false,
+        predict_enabled: bool = false,
+        predict_api_key: ?[]const u8 = null,
+        predict_provider: []const u8 = "openrouter",
+        predict_model: []const u8 = "openai/gpt-4.1-mini",
+        predict_base_url: ?[]const u8 = null,
     },
 ) ![]Tool {
     var list: std.ArrayList(Tool) = .empty;
@@ -556,6 +564,26 @@ pub fn allTools(
         const net = try allocator.create(nostr_email.NostrEmailTool);
         net.* = .{ .config_dir = workspace_dir, .allocator = allocator };
         try list.append(allocator, net.tool());
+    }
+
+    // VM code execution tool (macOS VZ only, compiled with -Dvm=true)
+    if (opts.vm_enabled) {
+        const vet = try allocator.create(vm_exec.VmExecTool);
+        vet.* = .{ .allocator = allocator };
+        try list.append(allocator, vet.tool());
+    }
+
+    // Predict tool (RLM inner LLM — fresh context per call)
+    if (opts.predict_enabled and opts.predict_api_key != null) {
+        const prt = try allocator.create(predict.PredictTool);
+        prt.* = .{
+            .allocator = allocator,
+            .api_key = opts.predict_api_key.?,
+            .provider = opts.predict_provider,
+            .model = opts.predict_model,
+            .base_url = opts.predict_base_url,
+        };
+        try list.append(allocator, prt.tool());
     }
 
     return list.toOwnedSlice(allocator);

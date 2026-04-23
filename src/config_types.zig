@@ -1110,6 +1110,24 @@ pub const BrowserConfig = struct {
     allowed_domains: []const []const u8 = &.{},
 };
 
+// ── Predict (RLM inner LLM) config ─────────────────────────────────
+
+pub const PredictConfig = struct {
+    enabled: bool = false,
+    /// API key for the LLM provider. If null, uses the agent's own provider.
+    api_key: ?[]const u8 = null,
+    /// Provider name (openrouter, openai, anthropic, etc).
+    provider: []const u8 = "openrouter",
+    /// Model to use for predict() calls.
+    model: []const u8 = "openai/gpt-4.1-mini",
+    /// Override base URL (for custom endpoints).
+    base_url: ?[]const u8 = null,
+    /// Temperature for generation (0.0 = deterministic, 1.0 = creative).
+    temperature: f64 = 0.3,
+    /// Max tokens for the response.
+    max_tokens: u32 = 4096,
+};
+
 // ── HTTP request config ─────────────────────────────────────────
 
 pub const HttpRequestConfig = struct {

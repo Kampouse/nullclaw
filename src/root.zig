@@ -83,6 +83,9 @@ pub const skillforge = @import("skillforge.zig");
 pub const tunnel = @import("tunnel.zig");
 pub const voice = @import("voice.zig");
 
+// Phase 5b: VM (sandboxed code execution, macOS VZ only)
+pub const vm = @import("vm.zig");
+
 test {
     // Run tests from all imported modules
     @import("std").testing.refAllDecls(@This());

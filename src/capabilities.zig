@@ -38,6 +38,8 @@ const optional_tool_names = [_][]const u8{
     "hardware_board_info",
     "hardware_memory",
     "i2c",
+    "vm_exec",
+    "predict",
 };
 
 const ChannelMode = enum {
@@ -73,6 +75,8 @@ fn optionalToolEnabledByConfig(cfg: *const Config, name: []const u8) bool {
     if (std.mem.eql(u8, name, "hardware_board_info")) return cfg.hardware.enabled;
     if (std.mem.eql(u8, name, "hardware_memory")) return cfg.hardware.enabled;
     if (std.mem.eql(u8, name, "i2c")) return cfg.hardware.enabled;
+    if (std.mem.eql(u8, name, "vm_exec")) return build_options.enable_vm;
+    if (std.mem.eql(u8, name, "predict")) return cfg.predict.enabled;
     return false;
 }
 

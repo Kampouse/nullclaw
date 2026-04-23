@@ -1458,6 +1458,38 @@ pub fn parseJson(self: *Config, content: []const u8) !void {
         }
     }
 
+    // Predict (RLM inner LLM)
+    if (root.get("predict")) |pr| {
+        if (pr == .object) {
+            if (pr.object.get("enabled")) |v| {
+                if (v == .bool) self.predict.enabled = v.bool;
+            }
+            if (pr.object.get("api_key")) |v| {
+                if (v == .string and v.string.len > 0) {
+                    self.predict.api_key = try self.allocator.dupe(u8, v.string);
+                }
+            }
+            if (pr.object.get("provider")) |v| {
+                if (v == .string) self.predict.provider = try self.allocator.dupe(u8, v.string);
+            }
+            if (pr.object.get("model")) |v| {
+                if (v == .string) self.predict.model = try self.allocator.dupe(u8, v.string);
+            }
+            if (pr.object.get("base_url")) |v| {
+                if (v == .string and v.string.len > 0) {
+                    self.predict.base_url = try self.allocator.dupe(u8, v.string);
+                }
+            }
+            if (pr.object.get("temperature")) |v| {
+                if (v == .float) self.predict.temperature = v.float;
+                if (v == .integer) self.predict.temperature = @floatFromInt(v.integer);
+            }
+            if (pr.object.get("max_tokens")) |v| {
+                if (v == .integer) self.predict.max_tokens = @intCast(v.integer);
+            }
+        }
+    }
+
     // Hardware
     if (root.get("hardware")) |hw| {
         if (hw == .object) {

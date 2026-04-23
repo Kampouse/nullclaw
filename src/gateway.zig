@@ -2665,6 +2665,12 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     .web_search_provider = cfg.http_request.search_provider,
                     .web_search_fallback_providers = cfg.http_request.search_fallback_providers,
                     .browser_enabled = cfg.browser.enabled,
+                    .vm_enabled = build_options.enable_vm,
+                    .predict_enabled = cfg.predict.enabled,
+                    .predict_api_key = cfg.predict.api_key orelse resolved_api_key,
+                    .predict_provider = cfg.predict.provider,
+                    .predict_model = cfg.predict.model,
+                    .predict_base_url = cfg.predict.base_url,
                     .screenshot_enabled = false,
                     .agents = cfg.agents,
                     .fallback_api_key = resolved_api_key,
@@ -2773,7 +2779,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         const target = parts.next() orelse continue;
 
         // Simple routing — control endpoints + descriptor-driven channel webhooks.
-        const ControlRoute = enum { health, ready, webhook, pair, eval, bench, spy, api_status, api_events, api_trace };
+        const ControlRoute = enum { health, ready, webhook, pair, eval, bench, spy, api_status, api_events, api_trace, vm_exec };
         const control_route_map = std.StaticStringMap(ControlRoute).initComptime(.{
             .{ "/health", .health },
             .{ "/ready", .ready },
@@ -2785,6 +2791,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
             .{ "/api/status", .api_status },
             .{ "/api/events", .api_events },
             .{ "/api/trace", .api_trace },
+            .{ "/api/vm/exec", .vm_exec },
         });
         const base_path = if (std.mem.indexOfScalar(u8, target, '?')) |qi| target[0..qi] else target;
         const is_post = std.mem.eql(u8, method_str, "POST");
@@ -3136,6 +3143,51 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                 const resp = std.fmt.allocPrint(req_allocator, "{{\"pos\":{d},\"sessions\":{s}}}", .{ current_pos, json }) catch "{\"error\":\"buffer overflow\"}";
                 response_body = resp;
             },
+            .vm_exec => {
+                // VM code execution — sandboxed Alpine Linux VM via Apple VZ.
+                // First call boots the VM (~5.6s), subsequent calls reuse it (~40-60ms).
+                // No auth required: gateway only listens on 127.0.0.1.
+                if (!build_options.enable_vm) {
+                    response_status = "501 Not Implemented";
+                    response_body = "{\"error\":\"VM backend not enabled (compile with -Dvm=true)\"}";
+                } else if (!is_post) {
+                    response_status = "405 Method Not Allowed";
+                    response_body = "{\"error\":\"method not allowed\"}";
+                } else {
+                    const body = extractBody(raw);
+                    if (body) |b| {
+                        const command = jsonStringField(b, "command") orelse jsonStringField(b, "code") orelse "";
+                        if (command.len == 0) {
+                            response_status = "400 Bad Request";
+                            response_body = "{\"error\":\"missing 'command' field\"}";
+                        } else {
+                            const vm_mod = @import("root.zig").vm;
+                            const manager = vm_mod.getGlobalVmManager(allocator) catch {
+                                response_status = "500 Internal Server Error";
+                                response_body = "{\"error\":\"failed to get VM manager\"}";
+                                continue;
+                            };
+                            const output = manager.execCode(command) catch |err| blk: {
+                                const err_msg = std.fmt.allocPrint(req_allocator, "{{\"error\":\"VM exec failed: {s}\"}}", .{@errorName(err)}) catch "{\"error\":\"VM exec failed\"}";
+                                response_status = "500 Internal Server Error";
+                                response_body = err_msg;
+                                break :blk null;
+                            };
+                            if (output) |out| {
+                                defer allocator.free(out);
+                                var escaped: std.ArrayListUnmanaged(u8) = .empty;
+                                defer escaped.deinit(allocator);
+                                try appendJsonEscaped(&escaped, allocator, out);
+                                const vm_resp = std.fmt.allocPrint(req_allocator, "{{\"output\":\"{s}\",\"exit_code\":0}}", .{escaped.items}) catch "{\"error\":\"response too large\"}";
+                                response_body = vm_resp;
+                            }
+                        }
+                    } else {
+                        response_status = "400 Bad Request";
+                        response_body = "{\"error\":\"missing request body\"}";
+                    }
+                }
+            }, // end .vm_exec
         } else {
             response_status = "404 Not Found";
             response_body = "{\"error\":\"not found\"}";

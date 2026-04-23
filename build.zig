@@ -414,6 +414,9 @@ pub fn build(b: *std.Build) void {
     const enable_tracy = b.option(bool, "tracy", "Enable Tracy profiling (default: false)") orelse false;
     const tracy_on_demand = b.option(bool, "tracy_on_demand", "Tracy on-demand mode (connect from GUI instead of broadcast discovery)") orelse false;
 
+    // Apple Virtualization Framework for VM-based code execution (macOS ARM64 only)
+    const enable_vm = b.option(bool, "vm", "Enable Apple VZ VM backend (default: false, macOS ARM64 only)") orelse false;
+
     const enable_memory_none = engines.enable_memory_none;
     const enable_memory_markdown = engines.enable_memory_markdown;
     const enable_memory_memory = engines.enable_memory_memory;
@@ -507,6 +510,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_channel_irc", enable_channel_irc);
     build_options.addOption(bool, "enable_channel_imessage", enable_channel_imessage);
     build_options.addOption(bool, "enable_channel_email", enable_channel_email);
+    build_options.addOption(bool, "enable_vm", enable_vm);
     build_options.addOption(bool, "enable_channel_lark", enable_channel_lark);
     build_options.addOption(bool, "enable_channel_dingtalk", enable_channel_dingtalk);
     build_options.addOption(bool, "enable_channel_line", enable_channel_line);
@@ -594,6 +598,12 @@ pub fn build(b: *std.Build) void {
                 // the module is available to the executable
                 _ = tm; // Mark as used
             }
+        }
+        // Link Apple Virtualization Framework (pre-compiled static lib)
+        if (enable_vm) {
+            exe.root_module.addObjectFile(b.path("vm/libvz_wrapper.a"));
+            exe.root_module.linkFramework("Virtualization", .{});
+            exe.root_module.linkFramework("Foundation", .{});
         }
     }
     exe.dead_strip_dylibs = true;
