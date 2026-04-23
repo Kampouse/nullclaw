@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NULLCLAW — Spy</title>
+</head>
+<body>
+
+<!-- HEADER -->
+<div id="header">
+  <div class="brand"><span>◉</span> NULLCLAW <span style="color:var(--text-dim)">SPY</span></div>
+  <div id="view-tabs">
+    <div class="vtab active" data-view="feed">FEED</div>
+    <div class="vtab" data-view="trace">TRACE</div>
+  </div>
+  <div class="meta">
+    <span>UPTIME <span class="val" id="uptime">--</span></span>
+    <span>EVENTS <span class="val" id="event-count">0</span></span>
+    <span id="err-badge" style="display:none;cursor:pointer" title="Filter errors">ERR <span class="val" id="err-count">0</span></span>
+  </div>
+  <div class="controls">
+    <input type="text" class="filter-input" id="filter" placeholder="/ filter..." title="Filter events (type /)">
+    <button id="btn-pause" title="Pause feed (.)">⏸</button>
+    <button id="btn-follow" class="active" title="Auto-scroll (F)">↓</button>
+    <button id="btn-clear" title="Clear feed (C)">✕</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+  <!-- FEED PANEL -->
+  <div id="feed-panel">
+    <div id="feed"><div class="connecting" id="connecting">waiting for events...<div style="font-size:10px;opacity:0.5">send a message to nullclaw to see activity</div></div></div>
+    <div id="context-strip" class="collapsed">
+      <div id="context-header">
+        <span class="title" id="context-title">CONTEXT</span>
+        <span class="close-btn" id="context-close">✕</span>
+      </div>
+      <div id="context-body"></div>
+    </div>
+  </div>
+
+  <!-- TRACE PANEL (hidden by default) -->
+  <div id="trace-panel" style="display:none">
+    <div id="trace-sessions"></div>
+    <div id="trace-filters"></div>
+    <div id="trace-files"></div>
+    <div id="trace-ruler"></div>
+    <div id="trace-waterfall"></div>
+  </div>
+
+  <!-- DOSSIER PANEL -->
+  <div id="dossier">
+    <div id="dossier-header">
+      <div>
+        <span class="entity-name" id="entity-name">—</span>
+        <span class="entity-type" id="entity-type"></span>
+      </div>
+      <span id="dossier-close">✕</span>
+    </div>
+    <div id="dossier-tabs">
+      <div class="dtab active" data-tab="overview">OVERVIEW</div>
+      <div class="dtab" data-tab="graph">GRAPH</div>
+      <div class="dtab" data-tab="timeline">TIMELINE</div>
+      <div class="dtab" data-tab="context">CONTEXT</div>
+      <div class="dtab" data-tab="files">FILES</div>
+    </div>
+    <div id="dossier-content">
+      <div class="empty-state" id="dossier-empty">
+        <div class="icon">◉</div>
+        <div>Click any event to inspect</div>
+        <div class="hint">ESC to close · Tab to switch view</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div id="status">
+  <div class="status-channel"><div class="status-dot" id="sse-dot"></div><span class="status-label">POLL</span></div>
+  <span class="status-sep">│</span>
+  <span style="cursor:pointer;color:var(--text-dim);font-size:10px;letter-spacing:1px" id="export-btn" title="Export events as JSON">EXPORT</span>
+  <span class="status-sep">│</span>
+  <span class="status-label">HEALTH</span>
+  <span class="status-val" id="health-status">--</span>
+  <span class="status-sep">│</span>
+  <span class="status-label" id="cost-label">$0.00</span>
+  <span class="status-sep">│</span>
+  <span class="status-label" id="ctx-label">~0 tok</span>
+  <span style="flex:1"></span>
+  <span class="status-label" style="opacity:0.6">j/k navigate · Enter inspect · Esc close · / filter · . pause · F follow · h heartbeats · ? help</span>
+</div>
+
+<!-- SEARCH OVERLAY -->
+<div id="search-overlay">
+  <input type="text" id="search-input" placeholder="search events..." autofocus>
+  <div id="search-results"></div>
+</div>
+
+<!-- HELP OVERLAY -->
+<div id="help-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:300;align-items:center;justify-content:center">
+  <div style="background:var(--bg-card);border:1px solid var(--border-active);border-radius:4px;padding:16px 24px;min-width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="color:var(--cyan);font-size:11px;letter-spacing:1.5px">KEYBOARD SHORTCUTS</span>
+      <span id="help-close" style="color:var(--text-dim);cursor:pointer;font-size:12px;padding:0 4px">✕</span>
+    </div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:11px">
+      <span style="color:var(--text-bright);text-align:right">j / ↓</span><span style="color:var(--text-dim)">Next event</span>
+      <span style="color:var(--text-bright);text-align:right">k / ↑</span><span style="color:var(--text-dim)">Previous event</span>
+      <span style="color:var(--text-bright);text-align:right">Enter</span><span style="color:var(--text-dim)">Open dossier</span>
+      <span style="color:var(--text-bright);text-align:right">Esc</span><span style="color:var(--text-dim)">Close panel / dossier</span>
+      <span style="color:var(--text-bright);text-align:right">/</span><span style="color:var(--text-dim)">Search events</span>
+      <span style="color:var(--text-bright);text-align:right">.</span><span style="color:var(--text-dim)">Pause / resume feed</span>
+      <span style="color:var(--text-bright);text-align:right">F</span><span style="color:var(--text-dim)">Toggle auto-scroll</span>
+      <span style="color:var(--text-bright);text-align:right">C</span><span style="color:var(--text-dim)">Clear feed</span>
+      <span style="color:var(--text-bright);text-align:right">h</span><span style="color:var(--text-dim)">Toggle heartbeats</span>
+      <span style="color:var(--text-bright);text-align:right">Tab</span><span style="color:var(--text-dim)">Cycle dossier tabs</span>
+      <span style="color:var(--text-bright);text-align:right">?</span><span style="color:var(--text-dim)">This help</span>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

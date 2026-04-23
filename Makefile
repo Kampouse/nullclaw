@@ -21,11 +21,14 @@ all: build
 
 # ── Build ──────────────────────────────────────────────
 
-build:
+build: spy-dist
 	$(ZIG) build
 
-release:
+release: spy-dist
 	$(ZIG) build -Doptimize=ReleaseSmall
+
+spy-dist:
+	@cd spy && npm run build 2>&1 | tail -1
 
 # ── Run in background (detached) ──────────────────────
 # These targets use nohup + disown so the calling process
