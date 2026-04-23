@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "generate": "tsx scripts/gen-types.ts",
+    "generate:full": "cd .. && zig run gen_schema.zig && cd spy && tsx scripts/gen-types.ts",
     "preview": "vite preview"
   },
   "devDependencies": {

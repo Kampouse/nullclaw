@@ -1,14 +1,14 @@
 # NullClaw Makefile
 # Usage:
-#   make          - build debug
-#   make release  - build release
+#   make          - build debug (full pipeline, incremental)
+#   make release  - build release (full pipeline, incremental)
 #   make start    - start nullclaw in background (detached, no hang)
 #   make stop     - stop all nullclaw processes
 #   make restart  - rebuild + restart in background
 #   make status   - quick status check
 #   make logs     - tail logs (Ctrl+C to stop)
 #   make agent    - start agent mode in background
-#   make clean    - clean zig build artifacts
+#   make clean    - clean all build artifacts
 
 ZIG    := $(shell which zig || echo ~/.local/zig/zig)
 BIN    := ./zig-out/bin/nullclaw
@@ -21,14 +21,25 @@ all: build
 
 # ── Build ──────────────────────────────────────────────
 
-build: spy-dist
-	$(ZIG) build
+SPY_SRC := $(shell find spy/src -name '*.ts' -o -name '*.tsx' 2>/dev/null)
 
-release: spy-dist
-	$(ZIG) build -Doptimize=ReleaseSmall
+build: $(BIN)
 
-spy-dist:
-	@cd spy && npm run build 2>&1 | tail -1
+release: OPTIMIZE := -Doptimize=ReleaseSmall
+release: $(BIN)
+
+$(BIN): spy/dist/index.html
+	$(ZIG) build $(OPTIMIZE)
+
+spy/dist/index.html: spy/src/generated/types.ts spy/src/generated/render-map.ts $(SPY_SRC)
+	cd spy && npm run build
+
+spy/src/generated/types.ts spy/src/generated/render-map.ts: spy/src/generated/schema.json spy/scripts/gen-types.ts
+	cd spy && npx tsx scripts/gen-types.ts
+
+spy/src/generated/schema.json: gen_schema.zig src/observability/event_tap.zig
+	@mkdir -p spy/dist && echo '<!-- placeholder -->' > spy/dist/index.html
+	$(ZIG) build gen-schema
 
 # ── Run in background (detached) ──────────────────────
 # These targets use nohup + disown so the calling process
@@ -98,4 +109,4 @@ logs:
 
 clean:
 	rm -f $(PIDFILE)
-	$(ZIG) build clean
+	rm -rf zig-out .zig-cache spy/src/generated spy/dist

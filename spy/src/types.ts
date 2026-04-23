@@ -1,35 +1,13 @@
 // ═══ TYPE DEFINITIONS ═══
+// Wire types (EventType, SpyEvent) are auto-generated from schema.json.
+// App-only types (SpyState, Entity, etc.) live here.
 
-export type EventType =
-  | 'agent_start' | 'agent_end'
-  | 'llm_request' | 'llm_response'
-  | 'tool_call_start' | 'tool_call'
-  | 'channel_message'
-  | 'heartbeat_tick'
-  | 'err'
-  | 'turn_complete'
-  | 'tool_iterations_exhausted'
-  | 'http_request';
+export type { EventType, SpyEvent } from './generated/types';
+export type { EventsResponse, TraceResponse, HealthCheck, StatusResponse } from './generated/api';
+
+// ═══ APP-ONLY TYPES ═══
 
 export type FileOpType = 'read' | 'write' | 'patch' | 'append' | 'git';
-
-export interface SpyEvent {
-  type: EventType;
-  ts: number;           // nanoseconds
-  provider?: string;
-  model?: string;
-  v1?: number;          // duration_ms or msg_count
-  v2?: number;          // secondary metric
-  flag?: boolean;       // success flag (alt name for ok)
-  ok?: boolean;
-  detail?: string;
-  content?: string;
-  session?: string;
-  // Runtime-only (assigned client-side)
-  _idx?: number;        // index in S.events
-  _feedIdx?: number;    // cross-ref to S.events index (trace events)
-  _tidx?: number;       // trace index
-}
 
 export interface FileOp {
   path: string;
@@ -43,7 +21,7 @@ export type EntityType = 'provider' | 'model' | 'tool' | 'file' | 'event' | 'cha
 
 export interface Entity {
   type: EntityType;
-  events: SpyEvent[];
+  events: import('./generated/types').SpyEvent[];
   related: Record<string, number>;
   fileOps?: FileOp[];
 }
@@ -55,30 +33,18 @@ export interface ExtractedEntity {
 }
 
 export interface TraceSession {
-  events: SpyEvent[];
+  events: import('./generated/types').SpyEvent[];
 }
 
 export type TraceFilter = 'llm' | 'tool' | 'http' | 'err' | 'msg' | null;
 export type ActiveView = 'feed' | 'trace';
 export type DossierTab = 'overview' | 'graph' | 'timeline' | 'context' | 'files';
 
-export interface HealthCheck {
-  status: string;
-  [key: string]: unknown;
-}
-
-export interface StatusResponse {
-  uptime_ns: number;
-  health?: Record<string, HealthCheck>;
-  context_window?: number;
-  [key: string]: unknown;
-}
-
 export interface SpyState {
-  events: SpyEvent[];
+  events: import('./generated/types').SpyEvent[];
   sincePos: number | null;
   selectedIdx: number;
-  zoomedEvent: SpyEvent | null;
+  zoomedEvent: import('./generated/types').SpyEvent | null;
   paused: boolean;
   following: boolean;
   connected: boolean;
@@ -94,7 +60,7 @@ export interface SpyState {
   showHeartbeats: boolean;
   // trace view
   activeView: ActiveView;
-  traceSessions: Record<string, SpyEvent[]>;
+  traceSessions: Record<string, import('./generated/types').SpyEvent[]>;
   traceSincePos: number | null;
   traceFilter: TraceFilter;
   activeSession: string | null;
@@ -134,7 +100,7 @@ export interface TurnData {
   completed: boolean;
   messages: Array<{ r: string; c: string }>;
   responses: TurnResponse[];
-  events: SpyEvent[];
+  events: import('./generated/types').SpyEvent[];
 }
 
 export interface ToolStat {

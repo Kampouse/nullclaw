@@ -606,6 +606,21 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    // ---------- gen-schema step ----------
+    // Runs gen_schema.zig to produce spy/src/generated/schema.json.
+    // Depends on the install step so it runs after the main build.
+    const gen_schema_exe = b.addExecutable(.{
+        .name = "gen_schema",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("gen_schema.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    const gen_schema_cmd = b.addRunArtifact(gen_schema_exe);
+    const gen_schema_step = b.step("gen-schema", "Generate spy/src/generated/schema.json from Zig types");
+    gen_schema_step.dependOn(&gen_schema_cmd.step);
+
     // macOS host+target only: strip local symbols post-install.
     // Host `strip` cannot process ELF/PE during cross-builds.
     if (optimize != .Debug and builtin.os.tag == .macos and target.result.os.tag == .macos) {
