@@ -93,12 +93,14 @@ const RelaySpinlock = @import("../spinlock.zig").Spinlock;
 
 const RelayHealth = struct {
     const MAX_ENTRIES = 64;
+    const MAX_URL_LEN = 256;
     const BACKOFF_NS_1 = 30 * std.time.ns_per_s;
     const BACKOFF_NS_2 = 60 * std.time.ns_per_s;
     const BACKOFF_NS_3 = 120 * std.time.ns_per_s;
 
     const Entry = struct {
-        url: []const u8 = "",
+        url: [MAX_URL_LEN]u8 = [_]u8{0} ** MAX_URL_LEN,
+        url_len: u16 = 0,
         fail_count: u32 = 0,
         last_fail_ns: u64 = 0,
     };
@@ -107,11 +109,21 @@ const RelayHealth = struct {
     entries: [MAX_ENTRIES]Entry = [_]Entry{.{}} ** MAX_ENTRIES,
     len: u32 = 0,
 
+    fn entrySlice(e: *Entry) []const u8 {
+        return e.url[0..e.url_len];
+    }
+
     fn findEntry(self: *RelayHealth, url: []const u8) ?*Entry {
         for (self.entries[0..self.len]) |*e| {
-            if (std.mem.eql(u8, e.url, url)) return e;
+            if (std.mem.eql(u8, entrySlice(e), url)) return e;
         }
         return null;
+    }
+
+    fn copyUrl(e: *Entry, url: []const u8) void {
+        const n = @min(url.len, MAX_URL_LEN);
+        @memcpy(e.url[0..n], url[0..n]);
+        e.url_len = @intCast(n);
     }
 
     /// Record a connection failure for the given relay URL.
@@ -125,11 +137,9 @@ const RelayHealth = struct {
             e.fail_count += 1;
             e.last_fail_ns = now;
         } else if (self.len < MAX_ENTRIES) {
-            self.entries[self.len] = .{
-                .url = url,
-                .fail_count = 1,
-                .last_fail_ns = now,
-            };
+            copyUrl(&self.entries[self.len], url);
+            self.entries[self.len].fail_count = 1;
+            self.entries[self.len].last_fail_ns = now;
             self.len += 1;
         }
         // If MAX_ENTRIES reached and url not found, silently drop (unlikely).
@@ -267,6 +277,19 @@ pub const NostrTool = struct {
                 try relay_urls.append(allocator, try allocator.dupe(u8, r));
             }
         }
+        // For search, always ensure SEARCH_RELAYS are included — most random
+        // relays don't support NIP-50 and will just timeout.
+        if (std.mem.eql(u8, action, "search")) {
+            for (&SEARCH_RELAYS) |sr| {
+                var found = false;
+                for (relay_urls.items) |existing| {
+                    if (std.mem.eql(u8, existing, sr)) { found = true; break; }
+                }
+                if (!found) {
+                    try relay_urls.append(allocator, try allocator.dupe(u8, sr));
+                }
+            }
+        }
         if (std.mem.eql(u8, action, "identity")) {
             return self.actionIdentity(allocator, sk_buf);
         } else if (std.mem.eql(u8, action, "post")) {
@@ -317,6 +340,9 @@ pub const NostrTool = struct {
         relays: []const []const u8,
         /// One result per relay (written by worker, read after join).
         results: []RelayResult,
+        /// Raw socket fds per relay (written by worker after connect).
+        /// -1 means not yet connected. Used by watchdog to interrupt blocked reads.
+        socket_fds: []std.atomic.Value(i32),
         /// Set to true by main thread when enough results collected — workers should exit early.
         stop_flag: std.atomic.Value(bool),
         /// Number of workers that have finished (connected or failed).
@@ -340,6 +366,9 @@ pub const NostrTool = struct {
         };
         defer client.deinit();
 
+        // Store fd so the watchdog thread can interrupt blocked reads.
+        ctx.socket_fds[relay_index].store(client.getSocketFd(), .monotonic);
+
         // Set read timeout for one-shot query reads.
         client.setReadTimeout(10_000);
 
@@ -355,10 +384,12 @@ pub const NostrTool = struct {
         const timeout_ns: u64 = 10 * std.time.ns_per_s;
         const start = util.nanoTimestamp();
         var eose_received = false;
+        var msg_count: u32 = 0;
 
         while (!eose_received and !ctx.stop_flag.load(.monotonic)) {
             if (util.nanoTimestamp() - start > timeout_ns) break;
             const raw = client.readMessage() catch null orelse break;
+            msg_count += 1;
             defer allocator.free(raw);
             const msg = nostr.parseRelayMessage(allocator, raw) catch continue;
             defer if (msg.event_json) |ej| allocator.free(ej);
@@ -378,6 +409,10 @@ pub const NostrTool = struct {
         }
         client.unsubscribe(sub_id);
 
+        log.info("relay {s}: {d} msgs, {d} events, eose={}", .{
+            relay, msg_count, events.items.len, eose_received,
+        });
+
         ctx.results[relay_index] = .{
             .relay = relay,
             .events = events.items,
@@ -389,6 +424,37 @@ pub const NostrTool = struct {
         _ = ctx.completed_count.fetchAdd(1, .monotonic);
         if (had_events) {
             _ = ctx.event_count.fetchAdd(1, .monotonic);
+        }
+    }
+
+    /// Watchdog thread — sleeps until deadline, then interrupts all workers
+    /// still blocked in read() by calling shutdown(SHUT_RD) on their sockets.
+    /// This is the only reliable way to unblock TLS reads: SO_RCVTIMEO is a
+    /// no-op for TLS (causes Io.Threaded ABRT), and the per-read wall-clock
+    /// check never runs while blocked inside read().
+    fn relayWatchdog(ctx: *RelayQueryContext, timeout_ns: u64) void {
+        const start = util.nanoTimestamp();
+        const check_interval: u64 = 100 * std.time.ns_per_ms; // 100ms polling
+        while (util.nanoTimestamp() - start < timeout_ns) {
+            if (ctx.completed_count.load(.monotonic) >= ctx.relays.len) return;
+            util.sleep(check_interval);
+        }
+        log.warn("watchdog: {d}s deadline reached, interrupting {d} blocked workers", .{
+            timeout_ns / std.time.ns_per_s,
+            ctx.relays.len - ctx.completed_count.load(.monotonic),
+        });
+        interruptAllWorkers(ctx);
+    }
+
+    /// Call shutdown(SHUT_RD) on all connected relay sockets.
+    /// This unblocks workers stuck inside TLS read(), causing them to
+    /// see EOF and exit their read loop cleanly.
+    fn interruptAllWorkers(ctx: *RelayQueryContext) void {
+        for (ctx.socket_fds) |*fd_slot| {
+            const fd = fd_slot.load(.monotonic);
+            if (fd >= 0) {
+                _ = std.posix.system.shutdown(fd, std.posix.SHUT.RD);
+            }
         }
     }
 
@@ -489,11 +555,19 @@ pub const NostrTool = struct {
         defer thread_alloc.free(results);
         @memset(results, RelayResult{ .relay = "", .events = &.{}, .error_msg = null });
 
+        // Per-relay socket fd slots for watchdog interrupt. -1 = not connected.
+        const socket_fds = try thread_alloc.alloc(std.atomic.Value(i32), relays.len);
+        defer thread_alloc.free(socket_fds);
+        for (socket_fds) |*fd| {
+            fd.* = std.atomic.Value(i32).init(-1);
+        }
+
         var ctx = RelayQueryContext{
             .allocator = thread_alloc,
             .filter_json = filter_json,
             .relays = relays,
             .results = results,
+            .socket_fds = socket_fds,
             .stop_flag = std.atomic.Value(bool).init(false),
             .completed_count = std.atomic.Value(usize).init(0),
             .event_count = std.atomic.Value(usize).init(0),
@@ -518,6 +592,12 @@ pub const NostrTool = struct {
             }
         }
 
+        // Spawn watchdog thread to interrupt blocked reads after deadline.
+        // readTimeout() is a no-op for TLS, so without this, workers block
+        // forever on relays that don't respond.
+        const query_timeout_ns: u64 = 10 * std.time.ns_per_s;
+        const watchdog = std.Thread.spawn(.{}, relayWatchdog, .{ &ctx, query_timeout_ns }) catch null;
+
         // Wait loop: poll atomics until we have enough results or all done.
         // When min_results is set, return early once N relays answer with events.
         if (min_results > 0 and min_results < relays.len) {
@@ -530,6 +610,8 @@ pub const NostrTool = struct {
                         event_responders, min_results,
                     });
                     ctx.stop_flag.store(true, .monotonic);
+                    // Interrupt workers still blocked in read().
+                    interruptAllWorkers(&ctx);
                     break;
                 }
                 // All relays finished (success or failure) — can't get more
@@ -541,13 +623,15 @@ pub const NostrTool = struct {
             }
         }
 
-        // Join only threads that were actually spawned (skip indices where
-        // spawn failed and relayQueryThread ran as synchronous fallback).
+        // Join worker threads (watchdog already interrupted blocked ones).
         for (threads, 0..) |t, i| {
             if (thread_spawned[i]) {
                 t.join();
             }
         }
+
+        // Join watchdog (it exits once all workers complete or deadline passes).
+        if (watchdog) |w| w.join();
 
         // Merge results, deduplicate by event ID (back on main thread)
         var all_events: std.ArrayListUnmanaged(nostr.Event) = .empty;

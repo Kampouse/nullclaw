@@ -749,6 +749,12 @@ pub const RelayClient = struct {
         _ = std.posix.system.shutdown(fd, std.posix.SHUT.RD);
     }
 
+    /// Get the raw OS socket file descriptor for this connection.
+    /// Used by the watchdog thread to interrupt blocked reads.
+    pub fn getSocketFd(self: *RelayClient) i32 {
+        return self.client.stream.stream.socket.handle;
+    }
+
     pub fn deinit(self: *RelayClient) void {
         self.client.close(.{}) catch {};
         self.client.deinit();
@@ -870,7 +876,17 @@ pub fn buildFilter(allocator: Allocator, opts: struct {
         if (!first) try buf.appendSlice(allocator, ",");
         first = false;
         try buf.appendSlice(allocator, "\"search\":\"");
-        try buf.appendSlice(allocator, query);
+        // JSON-escape the search query
+        for (query) |ch| {
+            switch (ch) {
+                '"' => try buf.appendSlice(allocator, "\\\""),
+                '\\' => try buf.appendSlice(allocator, "\\\\"),
+                '\n' => try buf.appendSlice(allocator, "\\n"),
+                '\r' => try buf.appendSlice(allocator, "\\r"),
+                '\t' => try buf.appendSlice(allocator, "\\t"),
+                else => try buf.append(allocator, ch),
+            }
+        }
         try buf.appendSlice(allocator, "\"");
     }
 
