@@ -352,6 +352,33 @@ pub fn curlPostTimedStream(
     try http_util.curlPostStream(allocator, url, body, headers, callback, callback_ctx);
 }
 
+/// Strip null bytes and non-printable control characters from LLM response text.
+/// Preserves newlines, tabs, carriage returns, and normal printable ASCII/UTF-8.
+/// Fast path: returns the original slice unchanged if no sanitization needed.
+pub fn sanitizeResponseContent(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    // Fast path: check if sanitization is needed
+    var needs_sanitize = false;
+    for (input) |c| {
+        if (c == 0 or (c < 0x20 and c != '\n' and c != '\r' and c != '\t')) {
+            needs_sanitize = true;
+            break;
+        }
+    }
+    if (!needs_sanitize) return allocator.dupe(u8, input);
+
+    var result = try std.ArrayList(u8).initCapacity(allocator, input.len);
+    errdefer result.deinit(allocator);
+
+    for (input) |c| {
+        switch (c) {
+            0x00, 0x01...0x08, 0x0B, 0x0C, 0x0E...0x1F => {}, // strip control chars
+            0x7F...0x9F => {}, // strip DEL and C1 control chars
+            else => result.appendAssumeCapacity(c),
+        }
+    }
+    return result.toOwnedSlice(allocator);
+}
+
 /// Extract text content from a provider JSON response.
 pub fn extractContent(allocator: std.mem.Allocator, body: []const u8) ![]const u8 {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
@@ -364,10 +391,10 @@ pub fn extractContent(allocator: std.mem.Allocator, body: []const u8) ![]const u
         if (choices.array.items.len > 0) {
             if (choices.array.items[0].object.get("message")) |msg| {
                 if (msg.object.get("content")) |content| {
-                    if (content == .string and content.string.len > 0) return try allocator.dupe(u8, content.string);
+                    if (content == .string and content.string.len > 0) return try sanitizeResponseContent(allocator, content.string);
                 }
                 if (msg.object.get("reasoning_content")) |reasoning| {
-                    if (reasoning == .string and reasoning.string.len > 0) return try allocator.dupe(u8, reasoning.string);
+                    if (reasoning == .string and reasoning.string.len > 0) return try sanitizeResponseContent(allocator, reasoning.string);
                 }
             }
         }
@@ -377,7 +404,7 @@ pub fn extractContent(allocator: std.mem.Allocator, body: []const u8) ![]const u
     if (root_obj.get("content")) |content| {
         if (content.array.items.len > 0) {
             if (content.array.items[0].object.get("text")) |text| {
-                if (text == .string) return try allocator.dupe(u8, text.string);
+                if (text == .string) return try sanitizeResponseContent(allocator, text.string);
             }
         }
     }

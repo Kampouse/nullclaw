@@ -18,8 +18,8 @@ const log = std.log.scoped(.vm_exec_tool);
 pub const VmExecTool = struct {
     allocator: std.mem.Allocator,
 
-    pub const tool_name = "vm_exec";
-    pub const tool_description = "Execute code in a sandboxed Alpine Linux VM with Python 3.12. First call boots the VM (~6s), subsequent calls are fast (~50ms). Use for untrusted code execution.";
+    pub const tool_name = "code_sandbox";
+    pub const tool_description = "Execute code in a sandboxed Alpine Linux VM with Python 3.12. First call boots the VM (~6s), subsequent calls are fast (~50ms). Use for running untrusted code, computations, or any code that needs isolation.";
 
     pub const tool_params =
         \\{"type":"object","properties":{"command":{"type":"string","description":"Shell or Python command to execute in the VM"}},"required":["command"]}

@@ -300,6 +300,9 @@ pub const PooledVmManager = struct {
 
     /// Ensure the VM is booted and environment is ready.
     /// Idempotent — safe to call multiple times.
+    /// Retries up to MAX_BOOT_ATTEMPTS on transient boot failures.
+    const MAX_BOOT_ATTEMPTS: u32 = 2;
+
     pub fn ensureReady(self: *@This()) !void {
         if (self.vm != null and self.vm.?.shell_ready) return;
 
@@ -310,8 +313,30 @@ pub const PooledVmManager = struct {
             self.vm = null;
         }
 
-        // Clean EFI variable store — can get corrupted after VM crash
-        // (unlink not available in Zig 0.16 stdlib; clean externally if needed)
+        // Retry loop — transient VZ failures can produce 0 bytes on serial
+        var attempt: u32 = 0;
+        while (attempt < MAX_BOOT_ATTEMPTS) : (attempt += 1) {
+            if (attempt > 0) {
+                log.info("VM boot retry {d}/{d}...", .{ attempt + 1, MAX_BOOT_ATTEMPTS });
+                // Small delay between retries to let VZ framework clean up
+                std.time.sleep(1 * std.time.ns_per_s);
+            }
+            self.bootVm() catch |err| {
+                log.warn("VM boot attempt {d} failed: {}", .{ attempt + 1, err });
+                // Clean up any partially-created VM
+                if (self.vm) |*v| {
+                    v.destroy();
+                    self.vm = null;
+                }
+                continue;
+            };
+            return; // Success
+        }
+        return error.BootTimeout;
+    }
+
+    /// Internal: create, start, and set up a VM. Sets self.vm on success.
+    fn bootVm(self: *@This()) !void {
 
         // Create VM
         var to_fd: c_int = -1;
@@ -414,9 +439,15 @@ pub const PooledVmManager = struct {
 
     /// Execute code in the VM. Boot + setup happens lazily on first call.
     /// Subsequent calls reuse the same running VM (~40-60ms per exec).
+    /// If exec fails, marks VM as dead so next call re-boots.
     pub fn execCode(self: *@This(), command: []const u8) ![]const u8 {
         try self.ensureReady();
-        return self.vm.?.exec(self.allocator, command);
+        return self.vm.?.exec(self.allocator, command) catch |err| {
+            // Mark VM as dead so ensureReady() will re-create it next time
+            if (self.vm) |*v| v.shell_ready = false;
+            log.warn("VM exec failed ({}), marking dead for re-creation", .{err});
+            return err;
+        };
     }
 };
 

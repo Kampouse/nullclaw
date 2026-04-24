@@ -8,6 +8,7 @@ const AnthropicSseResult = union(enum) {
 
 const std = @import("std");
 const root = @import("root.zig");
+const helpers = @import("helpers.zig");
 const slog = @import("../structured_log.zig");
 
 /// Result of parsing a single SSE line.
@@ -65,7 +66,7 @@ pub fn extractDeltaContent(allocator: std.mem.Allocator, json_str: []const u8) !
     if (content != .string) return null;
     if (content.string.len == 0) return null;
 
-    return try allocator.dupe(u8, content.string);
+    return try helpers.sanitizeResponseContent(allocator, content.string);
 }
 
 /// Run curl in SSE streaming mode and parse output line by line.

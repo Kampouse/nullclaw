@@ -51,7 +51,8 @@ const WELL_KNOWN_RELAYS = [_][]const u8{
 
 /// Relays confirmed to support NIP-50 full-text search.
 /// Tested live — all returned search results for "bitcoin" queries.
-/// Dead relays removed (orly-relay.imwald.eu, nostr.wine, us.nostr.wine).
+/// Dead relays removed (orly-relay.imwald.eu, nostr.wine, us.nostr.wine,
+/// relay2.veganostr.com, nostr.me, social.protest.net).
 const SEARCH_RELAYS = [_][]const u8{
     "wss://relay.noswhere.com",
     "wss://nostrja-kari-nip50.heguro.com",
@@ -59,14 +60,11 @@ const SEARCH_RELAYS = [_][]const u8{
     "wss://cobrafuma.com/relay",
     "wss://relay.gulugulu.moe",
     "wss://relay.spacetomatoes.net",
-    "wss://relay2.veganostr.com",
-    "wss://nostr.me/relay",
     "wss://librepress.libretechsystems.xyz",
     "wss://aeon.libretechsystems.xyz",
     "wss://relay.staging.plebeian.market",
     "wss://relay.cxplay.org",
     "wss://henhouse.social/relay",
-    "wss://social.protest.net/relay",
     "wss://relay.nostrverse.net",
     "wss://cdn.czas.xyz",
     "wss://dm.czas.xyz",
@@ -94,9 +92,9 @@ const RelaySpinlock = @import("../spinlock.zig").Spinlock;
 const RelayHealth = struct {
     const MAX_ENTRIES = 64;
     const MAX_URL_LEN = 256;
-    const BACKOFF_NS_1 = 30 * std.time.ns_per_s;
-    const BACKOFF_NS_2 = 60 * std.time.ns_per_s;
-    const BACKOFF_NS_3 = 120 * std.time.ns_per_s;
+    const BACKOFF_NS_1 = 60 * std.time.ns_per_s;
+    const BACKOFF_NS_2 = 120 * std.time.ns_per_s;
+    const BACKOFF_NS_3 = 300 * std.time.ns_per_s;
 
     const Entry = struct {
         url: [MAX_URL_LEN]u8 = [_]u8{0} ** MAX_URL_LEN,
@@ -595,7 +593,7 @@ pub const NostrTool = struct {
         // Spawn watchdog thread to interrupt blocked reads after deadline.
         // readTimeout() is a no-op for TLS, so without this, workers block
         // forever on relays that don't respond.
-        const query_timeout_ns: u64 = 10 * std.time.ns_per_s;
+        const query_timeout_ns: u64 = 5 * std.time.ns_per_s;
         const watchdog = std.Thread.spawn(.{}, relayWatchdog, .{ &ctx, query_timeout_ns }) catch null;
 
         // Wait loop: poll atomics until we have enough results or all done.

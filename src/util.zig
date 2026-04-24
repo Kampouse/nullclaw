@@ -5,37 +5,23 @@ const slog = @import("structured_log.zig");
 /// This causes OutOfMemory when std.process.run() creates internal ArenaAllocator.
 /// Helper function to create a Threaded Io instance with page_allocator for process spawning.
 /// Use this for any code that needs to spawn child processes.
-/// Global static Io.Threaded instance for process spawning.
-/// This must be global because Io returned by ioBasic() contains pointers to this struct.
-var global_threaded_io: ?std.Io.Threaded = null;
+/// Thread-local static Io.Threaded instance — one per thread, avoids data race
+/// that caused segfault (null vtable in Allocator.zig when multiple threads
+/// raced to initialize a shared global).
+threadlocal var global_threaded_io: ?std.Io.Threaded = null;
+threadlocal var cached_process_io: ?std.Io = null;
 
 pub fn createProcessIo() std.Io {
-    slog.logStructured("DEBUG", "util", "create_process_io_start", .{});
+    if (cached_process_io) |io| return io;
 
-    // Initialize global instance once
-    if (global_threaded_io == null) {
-        slog.logStructured("DEBUG", "util", "init_global_threaded_io", .{});
-        global_threaded_io = std.Io.Threaded{
-            .allocator = std.heap.page_allocator,
-            .stack_size = std.Thread.SpawnConfig.default_stack_size,
-            .async_limit = .nothing,
-            .cpu_count_error = null,
-            .concurrent_limit = .nothing,
-            .old_sig_io = undefined,
-            .old_sig_pipe = undefined,
-            .have_signal_handler = false,
-            .argv0 = .empty,
-            .environ_initialized = true,
-            .environ = .empty,
-            .worker_threads = .init(null),
-            .disable_memory_mapping = false,
-        };
-        slog.logStructured("DEBUG", "util", "global_threaded_io_initialized", .{});
-    }
-    slog.logStructured("DEBUG", "util", "calling_io_basic", .{});
-    const io = global_threaded_io.?.io();
-    slog.logStructured("DEBUG", "util", "returning_io", .{});
-    return io;
+    // Use proper init() — manual struct construction left fields zero-initialized
+    // causing null vtable dereference when another thread called .io() mid-init
+    global_threaded_io = std.Io.Threaded.init(std.heap.page_allocator, .{
+        .async_limit = .nothing,
+        .concurrent_limit = .nothing,
+    });
+    cached_process_io = global_threaded_io.?.io();
+    return cached_process_io.?;
 }
 
 /// Format bytes as human-readable string (e.g. "3.4 MB")

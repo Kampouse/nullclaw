@@ -1126,7 +1126,7 @@ pub const PredictConfig = struct {
     temperature: f64 = 0.3,
     /// Max tokens for the response.
     max_tokens: u32 = 4096,
-    /// Tool names available to the inner predict loop (e.g. ["vm_exec", "web_search"]).
+    /// Tool names available to the inner predict loop (e.g. ["code_sandbox", "web_search"]).
     /// Empty or null = single-shot, no tools.
     tools: []const []const u8 = &.{},
     /// Max inner loop iterations when tools are available.
