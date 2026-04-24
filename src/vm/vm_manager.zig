@@ -401,7 +401,8 @@ pub const PooledVmManager = struct {
         vm.shell_ready = true;
 
         // Mount rootfs using octal-encoded exec (avoids serial mangling)
-        _ = try vm.exec(self.allocator, "mkdir -p /mnt/root && mount -t ext4 /dev/vdb /mnt/root");
+        const mount_out = try vm.exec(self.allocator, "mkdir -p /mnt/root && mount -t ext4 /dev/vdb /mnt/root");
+        defer self.allocator.free(mount_out);
 
         // Verify Python is accessible
         const test_out = try vm.exec(self.allocator, "python3 --version");

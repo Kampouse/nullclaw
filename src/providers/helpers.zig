@@ -359,11 +359,15 @@ pub fn extractContent(allocator: std.mem.Allocator, body: []const u8) ![]const u
     const root_obj = parsed.value.object;
 
     // OpenAI/OpenRouter format: choices[0].message.content
+    // Also check reasoning_content (qwen3, deepseek thinking models)
     if (root_obj.get("choices")) |choices| {
         if (choices.array.items.len > 0) {
             if (choices.array.items[0].object.get("message")) |msg| {
                 if (msg.object.get("content")) |content| {
-                    if (content == .string) return try allocator.dupe(u8, content.string);
+                    if (content == .string and content.string.len > 0) return try allocator.dupe(u8, content.string);
+                }
+                if (msg.object.get("reasoning_content")) |reasoning| {
+                    if (reasoning == .string and reasoning.string.len > 0) return try allocator.dupe(u8, reasoning.string);
                 }
             }
         }

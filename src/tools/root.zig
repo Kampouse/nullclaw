@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const profiling = @import("../profiling.zig");
+const log = std.log.scoped(.tools);
 const memory_mod = @import("../memory/root.zig");
 const Memory = memory_mod.Memory;
 
@@ -362,6 +363,8 @@ pub fn allTools(
         predict_provider: []const u8 = "openrouter",
         predict_model: []const u8 = "openai/gpt-4.1-mini",
         predict_base_url: ?[]const u8 = null,
+        predict_tools: []const []const u8 = &.{},
+        predict_max_rounds: u32 = 3,
     },
 ) ![]Tool {
     var list: std.ArrayList(Tool) = .empty;
@@ -573,8 +576,27 @@ pub fn allTools(
         try list.append(allocator, vet.tool());
     }
 
-    // Predict tool (RLM inner LLM — fresh context per call)
+    // Predict tool (RLM inner LLM — fresh context per call, optional inner loop with tools)
+    // Must be created AFTER all other tools so we can reference them by name.
     if (opts.predict_enabled and opts.predict_api_key != null) {
+        // Collect matching tools by name from the list we've built
+        var inner_tools: std.ArrayListUnmanaged(Tool) = .empty;
+        defer inner_tools.deinit(allocator);
+
+        if (opts.predict_tools.len > 0) {
+            for (opts.predict_tools) |tool_name| {
+                for (list.items) |t| {
+                    if (std.mem.eql(u8, t.name(), tool_name)) {
+                        try inner_tools.append(allocator, t);
+                        break;
+                    }
+                }
+            }
+            if (inner_tools.items.len > 0) {
+                log.info("predict: {d} inner tools available", .{inner_tools.items.len});
+            }
+        }
+
         const prt = try allocator.create(predict.PredictTool);
         prt.* = .{
             .allocator = allocator,
@@ -582,6 +604,8 @@ pub fn allTools(
             .provider = opts.predict_provider,
             .model = opts.predict_model,
             .base_url = opts.predict_base_url,
+            .inner_tools = try inner_tools.toOwnedSlice(allocator),
+            .max_rounds = opts.predict_max_rounds,
         };
         try list.append(allocator, prt.tool());
     }

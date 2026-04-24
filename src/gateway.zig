@@ -2671,6 +2671,8 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     .predict_provider = cfg.predict.provider,
                     .predict_model = cfg.predict.model,
                     .predict_base_url = cfg.predict.base_url,
+                    .predict_tools = cfg.predict.tools,
+                    .predict_max_rounds = cfg.predict.max_rounds,
                     .screenshot_enabled = false,
                     .agents = cfg.agents,
                     .fallback_api_key = resolved_api_key,

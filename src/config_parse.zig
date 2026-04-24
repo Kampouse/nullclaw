@@ -1487,6 +1487,12 @@ pub fn parseJson(self: *Config, content: []const u8) !void {
             if (pr.object.get("max_tokens")) |v| {
                 if (v == .integer) self.predict.max_tokens = @intCast(v.integer);
             }
+            if (pr.object.get("tools")) |v| {
+                if (v == .array) self.predict.tools = try parseStringArray(self.allocator, v.array);
+            }
+            if (pr.object.get("max_rounds")) |v| {
+                if (v == .integer) self.predict.max_rounds = @intCast(v.integer);
+            }
         }
     }
 
