@@ -1543,6 +1543,16 @@ pub fn processIncomingMessage(allocator: std.mem.Allocator, message: []const u8)
         try stdout_buf.appendSlice(allocator, read_buf[0..n]);
     }
 
+    // Close pipes before wait to avoid FD leaks / deadlock
+    if (child.stdout) |*f| {
+        f.close(std.Options.debug_io);
+        child.stdout = null;
+    }
+    if (child.stderr) |*f| {
+        f.close(std.Options.debug_io);
+        child.stderr = null;
+    }
+
     const term = try child.wait(std.Options.debug_io);
     _ = term;
 
@@ -1589,6 +1599,15 @@ pub fn sendTelegramReply(allocator: std.mem.Allocator, bot_token: []const u8, ch
         .stderr = .pipe,
     }) catch return;
 
+    // Close pipes before wait to avoid FD leaks
+    if (curl_child.stdout) |*f| {
+        f.close(io);
+        curl_child.stdout = null;
+    }
+    if (curl_child.stderr) |*f| {
+        f.close(io);
+        curl_child.stderr = null;
+    }
     _ = curl_child.wait(io) catch {};
 }
 

@@ -727,14 +727,14 @@ pub const NucleoFlash = struct {
         const argv = &.{ "probe-rs", "list" };
         var child = std.process.spawn(io, .{
             .argv = argv,
-            .stdout = .pipe,
+            .stdout = .ignore,
             .stderr = .ignore,
         }) catch {
             self.connected = false;
             return Peripheral.PeripheralError.NotConnected;
         };
 
-        // Read stdout from pipe (simplified - just check if process exits successfully)
+        // Check if probe-rs exits successfully
         const term = child.wait(io) catch {
             self.connected = false;
             return Peripheral.PeripheralError.NotConnected;

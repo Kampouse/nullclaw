@@ -1,5 +1,6 @@
 const std = @import("std");
 const io = std.Options.debug_io;
+const log = std.log.scoped(.gemini);
 const platform = @import("../platform.zig");
 const root = @import("root.zig");
 const error_classify = @import("error_classify.zig");
@@ -299,7 +300,9 @@ pub fn tryLoadGeminiCliToken(allocator: std.mem.Allocator) ?GeminiCliCredentials
                 };
 
                 // Persist refreshed token (non-fatal on failure)
-                writeCredentialsJson(allocator, refreshed, path) catch {};
+                writeCredentialsJson(allocator, refreshed, path) catch |err| {
+                    log.warn("failed to persist credentials after refresh: {}", .{err});
+                };
 
                 // Clean up original creds
                 allocator.free(creds.access_token);

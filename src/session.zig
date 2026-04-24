@@ -187,7 +187,9 @@ pub const SessionManager = struct {
         if (self.session_store) |store| {
             const entries = store.loadMessages(self.allocator, session_key) catch &.{};
             if (entries.len > 0) {
-                session.agent.loadHistory(entries) catch {};
+                session.agent.loadHistory(entries) catch |err| {
+                    log.warn("failed to load session history: {}", .{err});
+                };
                 for (entries) |entry| {
                     self.allocator.free(entry.role);
                     self.allocator.free(entry.content);
@@ -575,7 +577,9 @@ const DeltaCollector = struct {
     fn onEvent(ctx_ptr: *anyopaque, event: streaming.Event) void {
         if (event.stage != .chunk or event.text.len == 0) return;
         const self: *DeltaCollector = @ptrCast(@alignCast(ctx_ptr));
-        self.data.appendSlice(self.allocator, event.text) catch {};
+        self.data.appendSlice(self.allocator, event.text) catch |err| {
+            log.warn("streaming append failed: {}", .{err});
+        };
     }
 
     fn deinit(self: *DeltaCollector) void {

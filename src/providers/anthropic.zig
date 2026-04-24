@@ -640,10 +640,7 @@ fn curlPostOAuth(allocator: std.mem.Allocator, url: []const u8, body: []const u8
         .stdout = .pipe,
         .stderr = .inherit,
     });
-    defer {
-        child.kill(io);
-        _ = child.wait(io) catch {};
-    }
+    defer child.kill(io);
 
     // Close stdin
     if (child.stdin) |stdin_file| {

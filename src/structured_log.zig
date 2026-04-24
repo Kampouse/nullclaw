@@ -150,8 +150,8 @@ fn nanoTimestamp() i128 {
 // ── Per-thread trace ID ───────────────────────────────────────────────
 // Set at turn start, cleared at turn end. Auto-included in all slog JSON lines.
 
-var trace_id_buffer: [16]u8 = undefined;
-var trace_id_len: usize = 0;
+threadlocal var trace_id_buffer: [16]u8 = undefined;
+threadlocal var trace_id_len: usize = 0;
 
 pub fn setTraceId(id: []const u8) void {
     const len = @min(id.len, trace_id_buffer.len);

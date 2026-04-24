@@ -25,6 +25,7 @@ const ConnectionPool = struct {
     current_idx: usize = 0,
     error_counts: [3]u32 = [_]u32{ 0, 0, 0 },
     allocator: std.mem.Allocator,
+    mu: std.atomic.Mutex = .unlocked,
 
     const MAX_ERRORS_BEFORE_ROTATION: u32 = 3;
 
@@ -47,7 +48,18 @@ const ConnectionPool = struct {
         }
     }
 
+    inline fn lock(self: *ConnectionPool) void {
+        while (!self.mu.tryLock()) {
+            std.Thread.yield() catch {};
+        }
+    }
+    inline fn unlock(self: *ConnectionPool) void {
+        self.mu.unlock();
+    }
+
     fn getHealthy(self: *ConnectionPool) ?*std.http.Client {
+        self.lock();
+        defer self.unlock();
         // Try all connections in round-robin
         for (0..3) |_| {
             const idx = self.current_idx % 3;
@@ -84,6 +96,8 @@ const ConnectionPool = struct {
     }
 
     fn reportError(self: *ConnectionPool, client_ptr: *std.http.Client) void {
+        self.lock();
+        defer self.unlock();
         for (0..3) |i| {
             if (self.clients[i]) |*c| {
                 if (@intFromPtr(c) == @intFromPtr(client_ptr)) {
@@ -95,6 +109,8 @@ const ConnectionPool = struct {
     }
 
     fn reportSuccess(self: *ConnectionPool, client_ptr: *std.http.Client) void {
+        self.lock();
+        defer self.unlock();
         for (0..3) |i| {
             if (self.clients[i]) |*c| {
                 if (@intFromPtr(c) == @intFromPtr(client_ptr)) {
@@ -106,6 +122,8 @@ const ConnectionPool = struct {
     }
 
     fn reset(self: *ConnectionPool) void {
+        self.lock();
+        defer self.unlock();
         for (0..3) |i| {
             if (self.clients[i]) |*c| {
                 c.deinit();

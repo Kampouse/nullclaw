@@ -384,7 +384,9 @@ fn schedulerThread(allocator: std.mem.Allocator, config: *const Config, state: *
     const poll_secs: u64 = @max(@as(u64, 1), config.reliability.scheduler_poll_secs);
 
     // Initial load from disk (ignore errors — start empty if file missing/corrupt)
-    cron.loadJobs(&scheduler) catch {};
+    cron.loadJobs(&scheduler) catch |err| {
+        log.warn("failed to load cron jobs, starting empty: {}", .{err});
+    };
 
     state.markRunning("scheduler");
     health.markComponentOk("scheduler");
@@ -762,7 +764,9 @@ fn clearInboundProcessingIndicator(
     else
         registry.findByName(channel_name);
     const ch = channel_opt orelse return;
-    ch.stopTyping(target) catch {};
+    ch.stopTyping(target) catch |err| {
+        log.warn("stopTyping failed: {}", .{err});
+    };
 }
 
 const StreamingOutboundCtx = struct {

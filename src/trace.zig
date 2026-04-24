@@ -163,13 +163,17 @@ pub fn init(allocator: std.mem.Allocator, level: Level) void {
     g_level.store(level, .monotonic);
     
     // Fast check - only init Threaded once
-    if (g_threaded_initialized.load(.monotonic)) {
+    if (g_threaded_initialized.load(.acquire)) {
         return;
+    }
+    // Atomically claim initialization; spin until the winner finishes.
+    while (g_threaded_initialized.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
+        std.atomic.spinLoopHint();
+        if (g_threaded_initialized.load(.acquire)) return;
     }
     
     // Initialize Threaded for Io (only once)
     g_threaded = std.Io.Threaded.init(allocator, .{});
-    g_threaded_initialized.store(true, .release);
 }
 
 pub fn initWithFile(allocator: std.mem.Allocator, level: Level, path: []const u8) !void {
@@ -177,9 +181,14 @@ pub fn initWithFile(allocator: std.mem.Allocator, level: Level, path: []const u8
     g_level.store(level, .monotonic);
     
     // Initialize Threaded for Io (only once)
-    if (!g_threaded_initialized.load(.monotonic)) {
-        g_threaded = std.Io.Threaded.init(allocator, .{});
-        g_threaded_initialized.store(true, .release);
+    if (!g_threaded_initialized.load(.acquire)) {
+        while (g_threaded_initialized.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
+            std.atomic.spinLoopHint();
+            if (g_threaded_initialized.load(.acquire)) break;
+        }
+        if (!g_threaded_initialized.load(.acquire)) {
+            g_threaded = std.Io.Threaded.init(allocator, .{});
+        }
     }
     const io = g_threaded.io();
     

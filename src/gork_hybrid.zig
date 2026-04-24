@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const util = @import("util.zig");
+const log = std.log.scoped(.gork_hybrid);
 
 fn getEnvVarOwned(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
     const key_z = try allocator.dupeZ(u8, key);
@@ -23,11 +24,11 @@ pub const Hybrid = @This();
 
 // Global reference to the active Hybrid instance for callback access
 // This is set during init() and cleared during stop()
-var active_hybrid: ?*Hybrid = null;
+var active_hybrid: std.atomic.Value(?*Hybrid) = .init(null);
 
 /// Reset active hybrid reference (for test isolation)
 pub fn resetActiveHybrid() void {
-    active_hybrid = null;
+    active_hybrid.store(null, .release);
 }
 
 // Security constants
@@ -127,7 +128,10 @@ const ArrayListPool = struct {
     }
 
     pub fn deinit(self: *ArrayListPool) void {
-        self.mutex.lock(self.io) catch {};
+        self.mutex.lock(self.io) catch |lock_err| {
+            log.warn("mutex lock failed in ArrayListPool.deinit: {}", .{lock_err});
+            return;
+        };
         defer self.mutex.unlock(self.io);
 
         for (self.available.items) |list| {
@@ -448,7 +452,10 @@ const SeenMessageCache = struct {
     }
 
     fn deinit(self: *SeenMessageCache) void {
-        self.mutex.lock(self.io) catch {};
+        self.mutex.lock(self.io) catch |lock_err| {
+            log.warn("mutex lock failed in SeenMessageCache.deinit: {}", .{lock_err});
+            return;
+        };
         defer self.mutex.unlock(self.io);
 
         // Free all keys
@@ -948,7 +955,7 @@ pub fn init(allocator: Allocator, config: Config, event_callback: *const fn (All
 
 // Store reference for callback access (after init returns)
 pub fn setActiveHybrid(self: *Hybrid) void {
-    active_hybrid = self;
+    active_hybrid.store(self, .release);
 }
 
 /// Start the hybrid system (thread-safe)
@@ -986,7 +993,10 @@ pub fn start(self: *Hybrid) !void {
 
 /// Stop the hybrid system (thread-safe)
 pub fn stop(self: *Hybrid) void {
-    self.mutex.lock(self.io) catch {};
+    self.mutex.lock(self.io) catch |lock_err| {
+        log.warn("mutex lock failed in Hybrid.stop: {}", .{lock_err});
+        return;
+    };
     defer self.mutex.unlock(self.io);
     if (self.state == .stopped) return;
 
@@ -1019,7 +1029,7 @@ pub fn stop(self: *Hybrid) void {
     self.array_pool.deinit();
 
     // Clear global reference
-    active_hybrid = null;
+    active_hybrid.store(null, .release);
 
     self.state = .stopped;
     self.notifyEvent(Event{ .state_changed = .stopped });
@@ -1422,7 +1432,7 @@ pub fn checkReputation(self: *Hybrid, agent_id: []const u8) !bool {
 /// Daemon event callback wrapper (forwards to event_callback with proper cleanup)
 fn daemonEventCallbackWrapper(allocator: Allocator, event: daemon_mod.Event) void {
     // Get the active hybrid instance to forward events
-    const hybrid = active_hybrid orelse {
+    const hybrid = active_hybrid.load(.acquire) orelse {
         // No active hybrid, just log the event
         logDaemonEvent(allocator, event);
         return;
@@ -1494,7 +1504,7 @@ fn logDaemonEvent(allocator: Allocator, event: daemon_mod.Event) void {
 
 /// Poller event callback wrapper - forwards incoming messages to the hybrid's event callback
 fn pollerEventCallbackWrapper(message_json: []const u8) void {
-    _ = active_hybrid orelse {
+    _ = active_hybrid.load(.acquire) orelse {
         std.log.debug("Gork poller event (no active hybrid): {s}", .{message_json});
         return;
     };

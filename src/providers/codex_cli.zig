@@ -101,10 +101,7 @@ pub const CodexCliProvider = struct {
             .stdout = .pipe,
             .stderr = .inherit,
         });
-        defer {
-            child.kill(io);
-            _ = child.wait(io) catch {};
-        }
+        defer child.kill(io);
 
         // Close stdin
         if (child.stdin) |stdin_file| {
@@ -163,10 +160,7 @@ fn checkCliAvailable(allocator: std.mem.Allocator, cli_name: []const u8) !void {
         .stderr = .inherit,
     }) catch return error.NotSupported;
 
-    defer {
-        child.kill(io);
-        _ = child.wait(io) catch {};
-    }
+    defer child.kill(io);
 
     if (child.stdin) |stdin_file| {
         stdin_file.close(io);
@@ -198,10 +192,7 @@ fn checkCliVersion(allocator: std.mem.Allocator, cli_name: []const u8) !void {
         .stderr = .inherit,
     }) catch return error.NotSupported;
 
-    defer {
-        child.kill(io);
-        _ = child.wait(io) catch {};
-    }
+    defer child.kill(io);
 
     if (child.stdin) |stdin_file| {
         stdin_file.close(io);

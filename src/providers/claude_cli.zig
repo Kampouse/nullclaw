@@ -116,10 +116,7 @@ pub const ClaudeCliProvider = struct {
             .stdout = .pipe,
             .stderr = .inherit,
         });
-        defer {
-            child.kill(io);
-            _ = child.wait(io) catch {};
-        }
+        defer child.kill(io);
 
         // Close stdin
         if (child.stdin) |stdin_file| {
@@ -135,6 +132,7 @@ pub const ClaudeCliProvider = struct {
         defer allocator.free(output);
 
         const term = child.wait(io) catch return error.ClaudeExecutionFailed;
+
         switch (term) {
             .exited => |code| {
                 if (code != 0) return error.ClaudeExecutionFailed;
@@ -195,10 +193,7 @@ fn checkCliAvailable(allocator: std.mem.Allocator, cli_name: []const u8) !void {
         .stderr = .inherit,
     }) catch return error.NotSupported;
 
-    defer {
-        child.kill(io);
-        _ = child.wait(io) catch {};
-    }
+    defer child.kill(io);
 
     if (child.stdin) |stdin_file| {
         stdin_file.close(io);
@@ -230,10 +225,7 @@ fn checkCliVersion(allocator: std.mem.Allocator, cli_name: []const u8) !void {
         .stderr = .inherit,
     }) catch return error.NotSupported;
 
-    defer {
-        child.kill(io);
-        _ = child.wait(io) catch {};
-    }
+    defer child.kill(io);
 
     if (child.stdin) |stdin_file| {
         stdin_file.close(io);

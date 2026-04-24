@@ -726,12 +726,16 @@ pub const NostrChannel = struct {
             log.debug("nostr: dropping duplicate NIP-17 rumor {s}", .{rumor.id[0..@min(8, rumor.id.len)]});
             return;
         }
-        self.recordSeenRumor(rumor.id, now_secs) catch {};
+        self.recordSeenRumor(rumor.id, now_secs) catch |err| {
+            log.warn("failed to record seen rumor: {}", .{err});
+        };
 
         log.info("nostr: received NIP-17 DM from {s}", .{rumor.sender});
 
         // Record sender protocol for mirroring.
-        self.recordSenderProtocol(rumor.sender, .nip17) catch {};
+        self.recordSenderProtocol(rumor.sender, .nip17) catch |err| {
+            log.warn("failed to record sender protocol: {}", .{err});
+        };
 
         // Build session key and publish to the event bus.
         var sk_buf: [71]u8 = undefined;
@@ -779,7 +783,9 @@ pub const NostrChannel = struct {
         defer self.allocator.free(plaintext_raw);
         const plaintext = std.mem.trimEnd(u8, plaintext_raw, " \t\r\n");
 
-        self.recordSenderProtocol(sender, .nip04) catch {};
+        self.recordSenderProtocol(sender, .nip04) catch |err| {
+            log.warn("failed to record sender protocol: {}", .{err});
+        };
 
         var sk_buf: [71]u8 = undefined;
         const session_key = buildSessionKey(sender, &sk_buf);

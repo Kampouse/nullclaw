@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const io = std.Options.debug_io;
+const log = std.log.scoped(.openai_codex);
 const root = @import("root.zig");
 const sse = @import("sse.zig");
 const platform = @import("../platform.zig");
@@ -220,7 +221,9 @@ pub const OpenAiCodexProvider = struct {
                 .access_token = new_token.access_token,
                 .refresh_token = new_token.refresh_token,
                 .expires_at = new_token.expires_at,
-            }) catch {};
+            }) catch |err| {
+                log.warn("failed to persist credentials after refresh: {}", .{err});
+            };
 
             return self.access_token.?;
         }

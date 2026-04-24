@@ -342,7 +342,7 @@ pub const PooledVmManager = struct {
     /// Retries up to MAX_BOOT_ATTEMPTS on transient boot failures.
     const MAX_BOOT_ATTEMPTS: u32 = 2;
 
-    pub fn ensureReady(self: *@This()) !void {
+    pub fn ensureReady(self: *@This(), allocator: std.mem.Allocator) !void {
         if (self.vm != null and self.vm.?.shell_ready) return;
 
         // Destroy any existing (dead) VM before creating a new one
@@ -360,7 +360,7 @@ pub const PooledVmManager = struct {
                 // Small delay between retries to let VZ framework clean up
                 util.sleep(1 * std.time.ns_per_s);
             }
-            self.bootVm() catch |err| {
+            self.bootVm(allocator) catch |err| {
                 log.warn("VM boot attempt {d} failed: {}", .{ attempt + 1, err });
                 // Clean up any partially-created VM
                 if (self.vm) |*v| {
@@ -375,7 +375,7 @@ pub const PooledVmManager = struct {
     }
 
     /// Internal: create, start, and set up a VM. Sets self.vm on success.
-    fn bootVm(self: *@This()) !void {
+    fn bootVm(self: *@This(), allocator: std.mem.Allocator) !void {
 
         // Create VM
         var to_fd: c_int = -1;
@@ -383,20 +383,20 @@ pub const PooledVmManager = struct {
 
         const handle = switch (self.config.boot_mode) {
             .direct => blk: {
-                const kernel_z = try self.allocator.dupeZ(u8, self.config.kernel_path);
-                defer self.allocator.free(kernel_z);
+                const kernel_z = try allocator.dupeZ(u8, self.config.kernel_path);
+                defer allocator.free(kernel_z);
                 const initrd_z = if (self.config.initrd_path.len > 0)
-                    try self.allocator.dupeZ(u8, self.config.initrd_path)
+                    try allocator.dupeZ(u8, self.config.initrd_path)
                 else
                     @as([:0]u8, @constCast(&[_:0]u8{0}));
-                defer if (self.config.initrd_path.len > 0) self.allocator.free(initrd_z);
-                const cmdline_z = try self.allocator.dupeZ(u8, self.config.cmdline);
-                defer self.allocator.free(cmdline_z);
+                defer if (self.config.initrd_path.len > 0) allocator.free(initrd_z);
+                const cmdline_z = try allocator.dupeZ(u8, self.config.cmdline);
+                defer allocator.free(cmdline_z);
                 const disk_z = if (self.config.disk_path.len > 0)
-                    try self.allocator.dupeZ(u8, self.config.disk_path)
+                    try allocator.dupeZ(u8, self.config.disk_path)
                 else
                     @as([:0]u8, @constCast(&[_:0]u8{0}));
-                defer if (self.config.disk_path.len > 0) self.allocator.free(disk_z);
+                defer if (self.config.disk_path.len > 0) allocator.free(disk_z);
 
                 break :blk vz_create(
                     self.config.ram_bytes,
@@ -411,18 +411,18 @@ pub const PooledVmManager = struct {
             },
             .efi => blk: {
                 // Allocate all C strings upfront — defer frees them after vz_create_efi returns
-                const esp_z = try self.allocator.dupeZ(u8, self.config.esp_path);
-                defer self.allocator.free(esp_z);
+                const esp_z = try allocator.dupeZ(u8, self.config.esp_path);
+                defer allocator.free(esp_z);
                 const args_z = if (self.config.cmdline.len > 0)
-                    try self.allocator.dupeZ(u8, self.config.cmdline)
+                    try allocator.dupeZ(u8, self.config.cmdline)
                 else
                     @as([:0]u8, @constCast(&[_:0]u8{0}));
-                defer if (self.config.cmdline.len > 0) self.allocator.free(args_z);
+                defer if (self.config.cmdline.len > 0) allocator.free(args_z);
                 const rootfs_z = if (self.config.rootfs_path.len > 0)
-                    try self.allocator.dupeZ(u8, self.config.rootfs_path)
+                    try allocator.dupeZ(u8, self.config.rootfs_path)
                 else
                     @as([:0]u8, @constCast(&[_:0]u8{0}));
-                defer if (self.config.rootfs_path.len > 0) self.allocator.free(rootfs_z);
+                defer if (self.config.rootfs_path.len > 0) allocator.free(rootfs_z);
 
                 break :blk vz_create_efi(
                     self.config.ram_bytes,
@@ -450,8 +450,8 @@ pub const PooledVmManager = struct {
         });
 
         // Wait for shell prompt
-        const output = try vm.readUntil(self.allocator, self.config.shell_prompt, self.config.boot_timeout_ms);
-        defer self.allocator.free(output);
+        const output = try vm.readUntil(allocator, self.config.shell_prompt, self.config.boot_timeout_ms);
+        defer allocator.free(output);
 
         if (std.mem.indexOf(u8, output, self.config.shell_prompt) == null) {
             log.warn("VM boot: shell prompt not found in {d} bytes of output", .{output.len});
@@ -465,12 +465,12 @@ pub const PooledVmManager = struct {
         vm.shell_ready = true;
 
         // Mount rootfs using octal-encoded exec (avoids serial mangling)
-        const mount_out = try vm.exec(self.allocator, "mkdir -p /mnt/root && mount -t ext4 /dev/vdb /mnt/root");
-        defer self.allocator.free(mount_out);
+        const mount_out = try vm.exec(allocator, "mkdir -p /mnt/root && mount -t ext4 /dev/vdb /mnt/root");
+        defer allocator.free(mount_out);
 
         // Verify Python is accessible
-        const test_out = try vm.exec(self.allocator, "python3 --version");
-        defer self.allocator.free(test_out);
+        const test_out = try vm.exec(allocator, "python3 --version");
+        defer allocator.free(test_out);
         log.info("VM ready: {s}", .{test_out});
 
         self.vm = vm;
@@ -482,7 +482,7 @@ pub const PooledVmManager = struct {
     /// The caller-provided allocator is used for all per-call allocations
     /// (NOT self.allocator, which may belong to a different thread).
     pub fn execCode(self: *@This(), caller_allocator: std.mem.Allocator, command: []const u8) ![]const u8 {
-        try self.ensureReady();
+        try self.ensureReady(caller_allocator);
         return self.vm.?.exec(caller_allocator, command) catch |err| {
             // Mark VM as dead so ensureReady() will re-create it next time
             if (self.vm) |*v| v.shell_ready = false;
