@@ -479,9 +479,11 @@ pub const PooledVmManager = struct {
     /// Execute code in the VM. Boot + setup happens lazily on first call.
     /// Subsequent calls reuse the same running VM (~40-60ms per exec).
     /// If exec fails, marks VM as dead so next call re-boots.
-    pub fn execCode(self: *@This(), command: []const u8) ![]const u8 {
+    /// The caller-provided allocator is used for all per-call allocations
+    /// (NOT self.allocator, which may belong to a different thread).
+    pub fn execCode(self: *@This(), caller_allocator: std.mem.Allocator, command: []const u8) ![]const u8 {
         try self.ensureReady();
-        return self.vm.?.exec(self.allocator, command) catch |err| {
+        return self.vm.?.exec(caller_allocator, command) catch |err| {
             // Mark VM as dead so ensureReady() will re-create it next time
             if (self.vm) |*v| v.shell_ready = false;
             log.warn("VM exec failed ({}), marking dead for re-creation", .{err});

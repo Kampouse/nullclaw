@@ -54,7 +54,7 @@ pub const VmExecTool = struct {
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
-        const output = manager.execCode(command) catch |err| {
+        const output = manager.execCode(allocator, command) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "VM exec failed: {s}", .{@errorName(err)});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };

@@ -3169,7 +3169,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                                 response_body = "{\"error\":\"failed to get VM manager\"}";
                                 continue;
                             };
-                            const output = manager.execCode(command) catch |err| blk: {
+                            const output = manager.execCode(allocator, command) catch |err| blk: {
                                 const err_msg = std.fmt.allocPrint(req_allocator, "{{\"error\":\"VM exec failed: {s}\"}}", .{@errorName(err)}) catch "{\"error\":\"VM exec failed\"}";
                                 response_status = "500 Internal Server Error";
                                 response_body = err_msg;
