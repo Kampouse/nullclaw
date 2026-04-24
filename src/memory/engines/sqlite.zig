@@ -28,9 +28,11 @@ pub const SqliteMemory = struct {
     db: ?*c.sqlite3,
     allocator: std.mem.Allocator,
     owns_self: bool = false,
+    mu: std.atomic.Mutex = .unlocked,
 
     // Cached prepared statements — avoid repeated parse+plan overhead.
     // Initialized lazily on first use; finalized in deinit().
+    // These are protected by mu — must hold lock before use.
     stmt_get: ?*c.sqlite3_stmt = null,
     stmt_count: ?*c.sqlite3_stmt = null,
     stmt_forget: ?*c.sqlite3_stmt = null,
@@ -75,6 +77,17 @@ pub const SqliteMemory = struct {
             _ = c.sqlite3_close(db);
             self.db = null;
         }
+    }
+
+    /// Spin-lock helper using std.atomic.Mutex.
+    inline fn lock(self: *Self) void {
+        while (!self.mu.tryLock()) {
+            std.Thread.yield() catch {};
+        }
+    }
+
+    inline fn unlock(self: *Self) void {
+        self.mu.unlock();
     }
 
     fn logExecFailure(self: *Self, context: []const u8, sql: []const u8, rc: c_int, err_msg: [*c]u8) void {
@@ -265,6 +278,8 @@ pub const SqliteMemory = struct {
 
     fn implStore(ptr: *anyopaque, key: []const u8, content: []const u8, category: MemoryCategory, session_id: ?[]const u8) anyerror!void {
         const self_: *Self = @ptrCast(@alignCast(ptr));
+        self_.lock();
+        defer self_.unlock();
 
         const now = getNowTimestamp(self_.allocator) catch return error.StepFailed;
         defer self_.allocator.free(now);
@@ -284,7 +299,11 @@ pub const SqliteMemory = struct {
 
         var stmt: ?*c.sqlite3_stmt = null;
         var rc = c.sqlite3_prepare_v2(self_.db, sql, -1, &stmt, null);
-        if (rc != c.SQLITE_OK) return error.PrepareFailed;
+        if (rc != c.SQLITE_OK) {
+            const err = if (self_.db) |db| std.mem.span(c.sqlite3_errmsg(db)) else "unknown";
+            log.warn("memory store prepare failed: {s} (rc={d})", .{ err, rc });
+            return error.PrepareFailed;
+        }
         defer _ = c.sqlite3_finalize(stmt);
 
         _ = c.sqlite3_bind_text(stmt, 1, id.ptr, @intCast(id.len), SQLITE_STATIC);
@@ -305,6 +324,8 @@ pub const SqliteMemory = struct {
 
     fn implRecall(ptr: *anyopaque, allocator: std.mem.Allocator, query: []const u8, limit: usize, session_id: ?[]const u8) anyerror![]MemoryEntry {
         const self_: *Self = @ptrCast(@alignCast(ptr));
+        self_.lock();
+        defer self_.unlock();
 
         const trimmed = std.mem.trim(u8, query, " \t\n\r");
         if (trimmed.len == 0) return allocator.alloc(MemoryEntry, 0);
@@ -318,6 +339,8 @@ pub const SqliteMemory = struct {
 
     fn implGet(ptr: *anyopaque, allocator: std.mem.Allocator, key: []const u8) anyerror!?MemoryEntry {
         const self_: *Self = @ptrCast(@alignCast(ptr));
+        self_.lock();
+        defer self_.unlock();
 
         // Prefer global (session_id IS NULL) entries, fall back to any matching key
         if (self_.stmt_get == null) {
@@ -342,6 +365,8 @@ pub const SqliteMemory = struct {
 
     fn implList(ptr: *anyopaque, allocator: std.mem.Allocator, category: ?MemoryCategory, session_id: ?[]const u8) anyerror![]MemoryEntry {
         const self_: *Self = @ptrCast(@alignCast(ptr));
+        self_.lock();
+        defer self_.unlock();
 
         var entries: std.ArrayList(MemoryEntry) = .empty;
         errdefer {
@@ -403,6 +428,8 @@ pub const SqliteMemory = struct {
 
     fn implForget(ptr: *anyopaque, key: []const u8, session_id: ?[]const u8) anyerror!bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
+        self_.lock();
+        defer self_.unlock();
 
         // When session_id is null, only delete global entries.
         // When session_id is provided, delete that specific session-scoped entry.
@@ -432,6 +459,8 @@ pub const SqliteMemory = struct {
 
     fn implCount(ptr: *anyopaque) anyerror!usize {
         const self_: *Self = @ptrCast(@alignCast(ptr));
+        self_.lock();
+        defer self_.unlock();
 
         if (self_.stmt_count == null) {
             const sql = "SELECT COUNT(*) FROM memories";
@@ -455,6 +484,9 @@ pub const SqliteMemory = struct {
 
     fn implHealthCheck(ptr: *anyopaque) bool {
         const self_: *Self = @ptrCast(@alignCast(ptr));
+        self_.lock();
+        defer self_.unlock();
+
         var err_msg: [*c]u8 = null;
         const rc = c.sqlite3_exec(self_.db, "SELECT 1", null, null, &err_msg);
         if (err_msg) |msg| c.sqlite3_free(msg);
@@ -491,6 +523,9 @@ pub const SqliteMemory = struct {
     // ── Legacy helpers ─────────────────────────────────────────────
 
     pub fn saveMessage(self: *Self, session_id: []const u8, role_str: []const u8, content: []const u8) !void {
+        self.lock();
+        defer self.unlock();
+
         const sql = "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)";
         var stmt: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
@@ -510,6 +545,9 @@ pub const SqliteMemory = struct {
     /// Load all messages for a session, ordered by creation time.
     /// Caller owns the returned slice and all strings within it.
     pub fn loadMessages(self: *Self, allocator: std.mem.Allocator, session_id: []const u8) ![]MessageEntry {
+        self.lock();
+        defer self.unlock();
+
         const sql = "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC";
         var stmt: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
@@ -546,6 +584,9 @@ pub const SqliteMemory = struct {
 
     /// Delete all messages for a session.
     pub fn clearMessages(self: *Self, session_id: []const u8) !void {
+        self.lock();
+        defer self.unlock();
+
         const sql = "DELETE FROM messages WHERE session_id = ?";
         var stmt: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
@@ -560,6 +601,9 @@ pub const SqliteMemory = struct {
     /// If `session_id` is provided, only entries for that session are removed.
     /// If `session_id` is null, entries are removed globally.
     pub fn clearAutoSaved(self: *Self, session_id: ?[]const u8) !void {
+        self.lock();
+        defer self.unlock();
+
         const sql_scoped = "DELETE FROM memories WHERE key LIKE 'autosave_%' AND session_id = ?1";
         const sql_global = "DELETE FROM memories WHERE key LIKE 'autosave_%'";
         const sql = if (session_id != null) sql_scoped else sql_global;

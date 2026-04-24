@@ -18,6 +18,7 @@
 //!   Exec: ~40-60ms per command (echo, python, etc.)
 
 const std = @import("std");
+const util = @import("../util.zig");
 const log = std.log.scoped(.vm);
 
 // ---- C declarations for VZ wrapper (ObjC compiled separately) ----
@@ -229,12 +230,50 @@ pub const Vm = struct {
         const raw = try self.readUntil(allocator, self.config.shell_prompt, self.config.exec_timeout_ms);
         defer allocator.free(raw);
 
-        // Strip CR characters
+        // Strip CR characters and ANSI escape sequences (CSI: ESC [ ... final_byte)
+        // The VM serial console emits terminal control codes that should not
+        // appear in tool output.
         var cleaned: std.ArrayListUnmanaged(u8) = .empty;
         defer cleaned.deinit(allocator);
         try cleaned.ensureTotalCapacity(allocator, raw.len);
-        for (raw) |ch| {
-            if (ch != '\r') try cleaned.append(allocator, ch);
+        var i: usize = 0;
+        while (i < raw.len) {
+            const ch = raw[i];
+            if (ch == '\r') {
+                // Skip carriage returns
+                i += 1;
+            } else if (ch == 0x1b) {
+                // ESC — skip the entire escape sequence
+                i += 1;
+                if (i < raw.len and raw[i] == '[') {
+                    // CSI sequence: ESC [ (params) final_byte
+                    i += 1;
+                    while (i < raw.len and (raw[i] >= 0x30 and raw[i] <= 0x3f)) {
+                        // Parameter bytes (0-9, ;, <, =, >, ?)
+                        i += 1;
+                    }
+                    while (i < raw.len and (raw[i] >= 0x20 and raw[i] <= 0x2f)) {
+                        // Intermediate bytes
+                        i += 1;
+                    }
+                    if (i < raw.len) {
+                        // Final byte
+                        i += 1;
+                    }
+                } else if (i < raw.len and (raw[i] == '(' or raw[i] == ')')) {
+                    // Character set selection: ESC ( or ESC )
+                    i += 2; // skip designator + charset byte
+                } else {
+                    // Other ESC sequences — skip next byte
+                    if (i < raw.len) i += 1;
+                }
+            } else if (ch < 0x20 and ch != '\n' and ch != '\t') {
+                // Strip other control characters except newline and tab
+                i += 1;
+            } else {
+                try cleaned.append(allocator, ch);
+                i += 1;
+            }
         }
         const text = cleaned.items;
 
@@ -319,7 +358,7 @@ pub const PooledVmManager = struct {
             if (attempt > 0) {
                 log.info("VM boot retry {d}/{d}...", .{ attempt + 1, MAX_BOOT_ATTEMPTS });
                 // Small delay between retries to let VZ framework clean up
-                std.time.sleep(1 * std.time.ns_per_s);
+                util.sleep(1 * std.time.ns_per_s);
             }
             self.bootVm() catch |err| {
                 log.warn("VM boot attempt {d} failed: {}", .{ attempt + 1, err });

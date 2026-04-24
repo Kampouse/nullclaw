@@ -14,8 +14,14 @@ const async_webhook = @import("../webhook/async_handler.zig");
 const io = std.Options.debug_io;
 
 // Connection pool for HTTP clients (improves reliability)
+// Each pooled client owns its own Io.Threaded so the Io.userdata pointer
+// remains valid regardless of which thread calls apiPostAlloc.
 const ConnectionPool = struct {
     clients: [3]?std.http.Client = [_]?std.http.Client{ null, null, null },
+    // Each client needs its own Threaded backend — Io stores a pointer to it
+    // via .userdata, so using thread-local Threaded would crash when the
+    // client is used from a different thread (e.g. supervision loop).
+    backends: [3]?std.Io.Threaded = [_]?std.Io.Threaded{ null, null, null },
     current_idx: usize = 0,
     error_counts: [3]u32 = [_]u32{ 0, 0, 0 },
     allocator: std.mem.Allocator,
@@ -29,10 +35,14 @@ const ConnectionPool = struct {
     }
 
     fn deinit(self: *ConnectionPool) void {
-        for (&self.clients) |*client| {
+        for (&self.clients, &self.backends) |*client, *backend| {
             if (client.*) |*c| {
                 c.deinit();
                 client.* = null;
+            }
+            if (backend.*) |*b| {
+                b.deinit();
+                backend.* = null;
             }
         }
     }
@@ -42,9 +52,13 @@ const ConnectionPool = struct {
         for (0..3) |_| {
             const idx = self.current_idx % 3;
 
-            // Initialize if needed
+            // Initialize if needed — create a dedicated Threaded per client
             if (self.clients[idx] == null) {
-                const http_io = root.http_util.getThreadedIo();
+                self.backends[idx] = std.Io.Threaded.init(self.allocator, .{
+                    .async_limit = .nothing,
+                    .concurrent_limit = .nothing,
+                });
+                const http_io = self.backends[idx].?.io();
                 self.clients[idx] = .{ .allocator = self.allocator, .io = http_io };
                 self.error_counts[idx] = 0;
             }
@@ -97,6 +111,10 @@ const ConnectionPool = struct {
                 c.deinit();
                 self.clients[i] = null;
                 self.error_counts[i] = 0;
+            }
+            if (self.backends[i]) |*b| {
+                b.deinit();
+                self.backends[i] = null;
             }
         }
     }
