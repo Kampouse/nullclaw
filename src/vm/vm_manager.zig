@@ -8,10 +8,13 @@
 //!   Initramfs drops to emergency recovery shell (~ # prompt).
 //!   Rootfs (ext4) mounted at /mnt/root. Python 3.12 available.
 //!
-//! Serial exec protocol:
-//!   Commands are octal-encoded to avoid serial line discipline mangling.
-//!   Written to /tmp/c.sh in the VM, sourced (not spawned) so env persists.
-//!   LD_LIBRARY_PATH and PATH are prepended to every command.
+//! Exec strategies (auto-selected):
+//!   1. Vsock RPC (preferred): Structured JSON request/response over
+//!      virtio-vsock. Guest runs vm-exec-daemon on port 1234.
+//!      Returns {stdout, stderr, exit_code} — no shell mangling.
+//!   2. Serial fallback: Commands octal-encoded to avoid serial line
+//!      discipline mangling. Written to /tmp/c.sh, sourced for env
+//!      persistence. Output parsed between echo markers.
 //!
 //! Performance (measured):
 //!   Boot: ~5.6s (one-time)
@@ -20,6 +23,9 @@
 const std = @import("std");
 const util = @import("../util.zig");
 const log = std.log.scoped(.vm);
+
+/// Guest vsock port for the exec daemon.
+const VSOCK_EXEC_PORT: u32 = 1234;
 
 // ---- C declarations for VZ wrapper (ObjC compiled separately) ----
 
@@ -53,6 +59,10 @@ extern fn vz_stop(vm: *anyopaque) c_int;
 extern fn vz_read(vm: *anyopaque, buf: [*]u8, len: usize, timeout_ms: c_int) isize;
 extern fn vz_write(vm: *anyopaque, buf: [*]const u8, len: usize) isize;
 extern fn vz_destroy(vm: *anyopaque) void;
+
+// Vsock RPC FFI — host↔guest exec bridge
+extern fn vz_vsock_connect(vm: *anyopaque, port: u32, timeout_ms: c_int) c_int;
+extern fn vz_vsock_disconnect(vm: *anyopaque) void;
 
 // ---- Backend enum ----
 
@@ -114,6 +124,8 @@ pub const Vm = struct {
     backend: Backend = .vz,
     /// True after the VM has booted and the environment is set up.
     shell_ready: bool = false,
+    /// True when the guest vsock exec daemon is reachable.
+    vsock_ready: bool = false,
 
     pub fn start(self: *Vm) !void {
         const rc = vz_start(self.handle);
@@ -305,6 +317,116 @@ pub const Vm = struct {
 
         return allocator.dupe(u8, output);
     }
+
+    /// Execute a command via the vsock RPC exec daemon.
+    ///
+    /// Protocol (length-prefixed JSON):
+    ///   Request:  [4B BE length][JSON: {"command":"...","cwd":"...","timeout":N}]
+    ///   Response: [4B BE length][JSON: {"stdout":"...","stderr":"...","exit_code":N}]
+    ///
+    /// Creates a new vsock connection per call (daemon is fork-per-connection).
+    /// Falls back to serial exec if vsock is unavailable.
+    pub fn execVsock(self: *Vm, allocator: std.mem.Allocator, command: []const u8) ![]const u8 {
+        if (!self.shell_ready) return error.ShellNotReady;
+
+        // Connect to guest daemon
+        const fd = vz_vsock_connect(self.handle, VSOCK_EXEC_PORT, 5000);
+        if (fd < 0) return error.VsockConnectFailed;
+        // Note: fd is owned by the ObjC connection object — do NOT close it
+        defer vz_vsock_disconnect(self.handle);
+
+        // Build JSON request with proper string escaping
+        var escaped_cmd: std.ArrayList(u8) = .empty;
+        defer escaped_cmd.deinit(allocator);
+        for (command) |ch| {
+            switch (ch) {
+                '"' => try escaped_cmd.appendSlice(allocator, "\\\""),
+                '\\' => try escaped_cmd.appendSlice(allocator, "\\\\"),
+                '\n' => try escaped_cmd.appendSlice(allocator, "\\n"),
+                '\r' => try escaped_cmd.appendSlice(allocator, "\\r"),
+                '\t' => try escaped_cmd.appendSlice(allocator, "\\t"),
+                else => try escaped_cmd.append(allocator, ch),
+            }
+        }
+        const timeout_s = @max(1, self.config.exec_timeout_ms / 1000);
+        const request = try std.fmt.allocPrint(allocator,
+            "{{\"command\":\"{s}\",\"cwd\":\"/mnt/root\",\"timeout\":{d}}}",
+            .{ escaped_cmd.items, timeout_s },
+        );
+        defer allocator.free(request);
+
+        // Send: 4-byte BE length + JSON body
+        var header_buf: [4]u8 = undefined;
+        std.mem.writeInt(u32, &header_buf, @intCast(request.len), .big);
+        const to_send = [_][]const u8{ &header_buf, request };
+        for (to_send) |chunk| {
+            var remaining = chunk;
+            while (remaining.len > 0) {
+                const n = std.c.write(fd, remaining.ptr, remaining.len);
+                if (n <= 0) return error.VsockWriteFailed;
+                remaining = remaining[@intCast(n)..];
+            }
+        }
+
+        // Read response header: 4-byte BE length
+        var resp_header: [4]u8 = undefined;
+        try readExact(fd, &resp_header, 5000);
+        const resp_len = std.mem.readInt(u32, &resp_header, .big);
+        if (resp_len == 0 or resp_len > 10 * 1024 * 1024) return error.VsockInvalidResponse;
+
+        // Read response body
+        const resp_buf = try allocator.alloc(u8, resp_len);
+        defer allocator.free(resp_buf);
+        try readExact(fd, resp_buf, @max(5000, timeout_s * 1000));
+
+        // Parse JSON response — extract stdout field
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, resp_buf, .{}) catch
+            return error.VsockJsonParseFailed;
+        defer parsed.deinit();
+
+        const root = parsed.value.object;
+        // Concatenate stdout + stderr if both present
+        var result: std.ArrayList(u8) = .empty;
+        errdefer result.deinit(allocator);
+
+        if (root.get("stdout")) |v| {
+            if (v != .string) return error.VsockInvalidResponse;
+            try result.appendSlice(allocator, v.string);
+        }
+        if (root.get("stderr")) |v| {
+            if (v != .string) return error.VsockInvalidResponse;
+            if (v.string.len > 0) {
+                if (result.items.len > 0) try result.append(allocator, '\n');
+                try result.appendSlice(allocator, v.string);
+            }
+        }
+
+        return result.toOwnedSlice(allocator);
+    }
+
+    /// Read exactly `len` bytes from fd, using poll with timeout.
+    fn readExact(fd: std.posix.fd_t, buf: []u8, timeout_ms: u32) !void {
+        var offset: usize = 0;
+        var tv: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&tv, null);
+        const deadline_ms = @as(i64, tv.sec) * 1000 + @divTrunc(@as(i64, @intCast(tv.usec)), 1000) + @as(i64, @intCast(timeout_ms));
+
+        while (offset < buf.len) {
+            _ = std.c.gettimeofday(&tv, null);
+            const now_ms = @as(i64, tv.sec) * 1000 + @divTrunc(@as(i64, @intCast(tv.usec)), 1000);
+            if (now_ms >= deadline_ms) return error.VsockReadTimeout;
+
+            var fds = [_]std.posix.pollfd{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
+            const remaining_ms = @max(1, @as(c_int, @intCast(deadline_ms - now_ms)));
+            const pr = std.posix.poll(&fds, remaining_ms) catch return error.VsockReadFailed;
+            if (pr < 0) return error.VsockReadFailed;
+            if (pr == 0) return error.VsockReadTimeout; // timeout
+
+            const n = std.c.read(fd, buf[offset..].ptr, buf[offset..].len);
+            if (n <= 0) return error.VsockReadFailed;
+            offset += @intCast(n);
+        }
+    }
 };
 
 // ---- VmManager (pooled) ----
@@ -468,10 +590,38 @@ pub const PooledVmManager = struct {
         const mount_out = try vm.exec(allocator, "mkdir -p /mnt/root && mount -t ext4 /dev/vdb /mnt/root");
         defer allocator.free(mount_out);
 
+        // Load vsock kernel modules (needed for exec daemon RPC)
+        // These paths are simple — no special chars that would break serial
+        const kver = "6.12.13-0-virt";
+        const mod_base = "/mnt/root/lib/modules/" ++ kver ++ "/kernel/net/vmw_vsock";
+        _ = vm.exec(allocator, "insmod " ++ mod_base ++ "/vsock.ko") catch |err| {
+            log.warn("vsock module load failed: {}", .{err});
+        };
+        _ = vm.exec(allocator, "insmod " ++ mod_base ++ "/vmw_vsock_virtio_transport_common.ko") catch |err| {
+            log.warn("vsock virtio_common module load failed: {}", .{err});
+        };
+        _ = vm.exec(allocator, "insmod " ++ mod_base ++ "/vmw_vsock_virtio_transport.ko") catch |err| {
+            log.warn("vsock virtio_transport module load failed: {}", .{err});
+        };
+
+        // Start the vsock exec daemon in background
+        _ = vm.exec(allocator, "/mnt/root/usr/bin/vm-exec-daemon &") catch |err| {
+            log.warn("vm-exec-daemon start failed: {}", .{err});
+        };
+        // Brief pause to let daemon initialize
+        util.sleep(200 * std.time.ns_per_ms);
+
         // Verify Python is accessible
         const test_out = try vm.exec(allocator, "python3 --version");
         defer allocator.free(test_out);
         log.info("VM ready: {s}", .{test_out});
+
+        // Probe vsock exec daemon — if reachable, use it for all future execs
+        if (self.probeVsock(&vm)) {
+            log.info("vsock exec daemon reachable on port {d} — using RPC path", .{VSOCK_EXEC_PORT});
+        } else {
+            log.info("vsock exec daemon not reachable — falling back to serial exec", .{});
+        }
 
         self.vm = vm;
     }
@@ -481,14 +631,42 @@ pub const PooledVmManager = struct {
     /// If exec fails, marks VM as dead so next call re-boots.
     /// The caller-provided allocator is used for all per-call allocations
     /// (NOT self.allocator, which may belong to a different thread).
+    ///
+    /// Uses vsock RPC when the guest daemon is available (structured
+    /// stdout/stderr/exit_code), falls back to serial exec otherwise.
     pub fn execCode(self: *@This(), caller_allocator: std.mem.Allocator, command: []const u8) ![]const u8 {
         try self.ensureReady(caller_allocator);
+        const vm = &self.vm.?;
+
+        // Try vsock RPC first (structured, reliable)
+        if (vm.vsock_ready) {
+            const result = vm.execVsock(caller_allocator, command) catch |err| {
+                log.warn("vsock exec failed ({}), falling back to serial", .{err});
+                vm.vsock_ready = false;
+                return self.execSerial(caller_allocator, command);
+            };
+            return result;
+        }
+
+        return self.execSerial(caller_allocator, command);
+    }
+
+    /// Execute via serial (legacy path — octal-encode → printf → source).
+    fn execSerial(self: *@This(), caller_allocator: std.mem.Allocator, command: []const u8) ![]const u8 {
         return self.vm.?.exec(caller_allocator, command) catch |err| {
-            // Mark VM as dead so ensureReady() will re-create it next time
             if (self.vm) |*v| v.shell_ready = false;
-            log.warn("VM exec failed ({}), marking dead for re-creation", .{err});
+            log.warn("VM serial exec failed ({}), marking dead for re-creation", .{err});
             return err;
         };
+    }
+
+    /// Probe the guest vsock exec daemon. Sets vm.vsock_ready on success.
+    fn probeVsock(_: *@This(), vm: *Vm) bool {
+        const fd = vz_vsock_connect(vm.handle, VSOCK_EXEC_PORT, 3000); // 3s timeout
+        if (fd < 0) return false;
+        vz_vsock_disconnect(vm.handle);
+        vm.vsock_ready = true;
+        return true;
     }
 };
 

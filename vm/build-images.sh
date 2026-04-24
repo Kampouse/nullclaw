@@ -93,6 +93,60 @@ else
     ok "Extracted boot files (vmlinuz-virt, initramfs-virt, modloop-virt, BOOTAA64.EFI)"
 fi
 
+# ── Extract vsock modules from modloop ───────────────────────
+#
+# The Alpine virt kernel includes vsock as loadable modules in modloop.
+# We extract them into the rootfs so they can be loaded at boot time
+# for the vsock RPC exec bridge.
+
+VSOCK_MOD_DIR="${SCRIPT_DIR}/vsock_modules"
+if [ -d "${VSOCK_MOD_DIR}" ] && [ -z "${FORCE}" ]; then
+    ok "vsock modules already extracted"
+else
+    log "Extracting vsock modules from modloop..."
+    rm -rf "${VSOCK_MOD_DIR}"
+    if command -v unsquashfs &>/dev/null; then
+        unsquashfs -f -d "${VSOCK_MOD_DIR}" modloop-virt \
+            modules/6.12.13-0-virt/kernel/net/vmw_vsock/vsock.ko \
+            modules/6.12.13-0-virt/kernel/net/vmw_vsock/vmw_vsock_virtio_transport_common.ko \
+            modules/6.12.13-0-virt/kernel/net/vmw_vsock/vmw_vsock_virtio_transport.ko
+        # Clean up squashfs-root meta-dir
+        rm -rf "${SCRIPT_DIR}/squashfs-root"
+        ok "Extracted vsock modules ($(ls "${VSOCK_MOD_DIR}"/modules/*/kernel/net/vmw_vsock/*.ko 2>/dev/null | wc -l | tr -d ' ') files)"
+    else
+        err "unsquashfs not found. Install with: brew install squashfs"
+        exit 1
+    fi
+fi
+
+# ── Build vm-exec-daemon (static C binary) ───────────────────
+#
+# Compiles inside Alpine Docker (aarch64) to match VM architecture.
+# Static linking means zero runtime dependencies.
+
+DAEMON_SRC="${SCRIPT_DIR}/vm_exec_daemon.c"
+DAEMON_BIN="${SCRIPT_DIR}/vm-exec-daemon"
+
+if [ -f "${DAEMON_BIN}" ] && [ -z "${FORCE}" ]; then
+    ok "vm-exec-daemon already compiled ($(du -h "${DAEMON_BIN}" | cut -f1))"
+else
+    log "Compiling vm-exec-daemon (static, aarch64)..."
+    docker run --rm \
+        -v "${SCRIPT_DIR}:/work" \
+        --platform linux/arm64 \
+        alpine:"${ALPINE_VERSION}" \
+        sh -c '
+            apk add --no-cache gcc musl-dev linux-headers > /dev/null 2>&1
+            gcc -static -O2 -Wall -Wextra -o /work/vm-exec-daemon /work/vm_exec_daemon.c
+        '
+    # Verify it's a static aarch64 binary
+    file "${DAEMON_BIN}" | grep -q "statically linked" || {
+        err "vm-exec-daemon is not statically linked"
+        exit 1
+    }
+    ok "Compiled vm-exec-daemon ($(du -h "${DAEMON_BIN}" | cut -f1))"
+fi
+
 # ── Build rootfs ──────────────────────────────────────────────
 #
 # Uses Alpine 3.21.3 container (matching target version) with e2fsprogs
@@ -151,9 +205,46 @@ INITTAB
             # Remove suid binary that causes permission issues
             rm -f "${ROOTFS}/bin/bbsuid"
 
+            # ── Install vsock kernel modules ──
+            MOD_DEST="${ROOTFS}/lib/modules/6.12.13-0-virt/kernel"
+            mkdir -p "${MOD_DEST}/net/vmw_vsock" "${MOD_DEST}/drivers/vhost"
+            cp /work/vsock_modules/modules/6.12.13-0-virt/kernel/net/vmw_vsock/vsock.ko \
+               "${MOD_DEST}/net/vmw_vsock/"
+            cp /work/vsock_modules/modules/6.12.13-0-virt/kernel/net/vmw_vsock/vmw_vsock_virtio_transport_common.ko \
+               "${MOD_DEST}/net/vmw_vsock/"
+            cp /work/vsock_modules/modules/6.12.13-0-virt/kernel/net/vmw_vsock/vmw_vsock_virtio_transport.ko \
+               "${MOD_DEST}/net/vmw_vsock/"
+            # depmod needs the module tree layout
+            mkdir -p "${ROOTFS}/lib/modules/6.12.13-0-virt"
+            chroot "${ROOTFS}" depmod -a 6.12.13-0-virt 2>/dev/null || true
+
+            # ── Install vm-exec-daemon ──
+            cp /work/vm-exec-daemon "${ROOTFS}/usr/bin/vm-exec-daemon"
+            chmod 755 "${ROOTFS}/usr/bin/vm-exec-daemon"
+
+            # ── Add init script to load vsock + start daemon ──
+            cat > "${ROOTFS}/etc/local.d/vsock.start" << "VSOCKINIT"
+#!/bin/sh
+# Load vsock kernel modules (order matters)
+insmod /lib/modules/$(uname -r)/kernel/net/vmw_vsock/vsock.ko 2>/dev/null
+insmod /lib/modules/$(uname -r)/kernel/net/vmw_vsock/vmw_vsock_virtio_transport_common.ko 2>/dev/null
+insmod /lib/modules/$(uname -r)/kernel/net/vmw_vsock/vmw_vsock_virtio_transport.ko 2>/dev/null
+# Start the exec daemon (listens on vsock port 1234)
+/usr/bin/vm-exec-daemon &
+echo "[vsock] exec daemon started on vsock://1234"
+VSOCKINIT
+            chmod 755 "${ROOTFS}/etc/local.d/vsock.start"
+
+            # Enable local service (runs scripts in /etc/local.d/)
+            chroot "${ROOTFS}" rc-update add local default 2>/dev/null || true
+
             # Summary
             echo "=== Python ==="
             chroot "${ROOTFS}" python3 --version 2>&1
+            echo "=== vsock modules ==="
+            ls -la "${ROOTFS}/lib/modules/6.12.13-0-virt/kernel/net/vmw_vsock/" 2>&1
+            echo "=== vm-exec-daemon ==="
+            ls -la "${ROOTFS}/usr/bin/vm-exec-daemon" 2>&1
             echo "=== Staging size ==="
             du -sh "${ROOTFS}"
 
@@ -213,8 +304,13 @@ menuentry "Alpine Virt" {
     initrd /EFI/Linux/initramfs
 }
 GRUBCFG
-            mmd -i /work/esp.img ::boot ::boot/grub
+            mmd -i /work/esp.img ::boot/grub 2>/dev/null || true
             mcopy -i /work/esp.img /tmp/grub.cfg ::boot/grub/grub.cfg
+            # Verify grub.cfg was written
+            if ! mcopy -i /work/esp.img ::boot/grub/grub.cfg /dev/null 2>/dev/null; then
+                echo "FATAL: grub.cfg was not written to ESP!"
+                exit 1
+            fi
 
             # Remove empty loader dirs (unused with GRUB)
             mdel -i /work/esp.img ::loader/loader.conf 2>/dev/null || true

@@ -20,6 +20,8 @@ typedef struct VZWrapper {
     int last_result;
     int running;
     int finalized;
+    // vsock: keep the connection object alive so it owns the fd
+    VZVirtioSocketConnection *vsock_conn;
 } VZWrapper;
 
 @interface VZStateObserver : NSObject <VZVirtualMachineDelegate>
@@ -138,6 +140,11 @@ VZWrapper *vz_create_efi(
             [[VZVirtioEntropyDeviceConfiguration alloc] init];
         w->config.entropyDevices = @[entropy];
 
+        // Vsock device (for host↔guest RPC exec bridge)
+        VZVirtioSocketDeviceConfiguration *vsockCfg =
+            [[VZVirtioSocketDeviceConfiguration alloc] init];
+        w->config.socketDevices = @[vsockCfg];
+
         // Validate
         NSError *err = nil;
         if (![w->config validateWithError:&err]) {
@@ -225,6 +232,11 @@ VZWrapper *vz_create(
             [[VZVirtioEntropyDeviceConfiguration alloc] init];
         w->config.entropyDevices = @[entropy];
 
+        // Vsock device (for host↔guest RPC exec bridge)
+        VZVirtioSocketDeviceConfiguration *vsockCfg =
+            [[VZVirtioSocketDeviceConfiguration alloc] init];
+        w->config.socketDevices = @[vsockCfg];
+
         NSError *err = nil;
         if (![w->config validateWithError:&err]) {
             NSLog(@"vz: config error: %@", err.localizedDescription);
@@ -307,10 +319,78 @@ ssize_t vz_write(VZWrapper *w, const char *buf, size_t len) {
     return (ssize_t)write(w->to_vm_fd, buf, len);
 }
 
+// ---- Vsock RPC ----
+//
+// Connect to a port on the guest's vsock. The guest daemon listens
+// on port 1234 (VMADDR_CID_ANY). Returns the fd for read/write,
+// or -1 on error. The fd is owned by the connection object stored
+// in w->vsock_conn — caller must NOT close it manually.
+//
+// Only one vsock connection at a time; calling again disconnects
+// the previous one.
+
+int vz_vsock_connect(VZWrapper *w, uint32_t port, int timeout_ms) {
+    if (!w || !w->running) return -1;
+
+    // Disconnect any previous connection
+    if (w->vsock_conn) {
+        [w->vsock_conn close];
+        w->vsock_conn = nil;
+    }
+
+    __block VZVirtioSocketConnection *conn = nil;
+    __block NSError *connErr = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+
+    dispatch_async(w->vm_queue, ^{
+        VZSocketDevice *sockDev = w->vm.socketDevices.firstObject;
+        if (!sockDev || ![sockDev isKindOfClass:[VZVirtioSocketDevice class]]) {
+            connErr = [NSError errorWithDomain:@"vz" code:1
+                userInfo:@{NSLocalizedDescriptionKey: @"No vsock device"}];
+            dispatch_semaphore_signal(sem);
+            return;
+        }
+        [(VZVirtioSocketDevice *)sockDev connectToPort:port completionHandler:^(VZVirtioSocketConnection *c, NSError *err) {
+            conn = c;
+            connErr = err;
+            dispatch_semaphore_signal(sem);
+        }];
+    });
+
+    dispatch_time_t deadline = dispatch_time(DISPATCH_TIME_NOW, (int64_t)timeout_ms * NSEC_PER_MSEC);
+    intptr_t waitResult = dispatch_semaphore_wait(sem, deadline);
+
+    if (waitResult != 0) {
+        NSLog(@"vz_vsock_connect: timed out after %dms", timeout_ms);
+        return -1;
+    }
+    if (connErr) {
+        NSLog(@"vz_vsock_connect: %@", connErr.localizedDescription);
+        return -1;
+    }
+    if (!conn || conn.fileDescriptor < 0) {
+        NSLog(@"vz_vsock_connect: connection returned invalid fd");
+        return -1;
+    }
+
+    w->vsock_conn = conn;
+    NSLog(@"vz_vsock_connect: connected to guest port %u, fd=%d", port, conn.fileDescriptor);
+    return conn.fileDescriptor;
+}
+
+void vz_vsock_disconnect(VZWrapper *w) {
+    if (!w) return;
+    if (w->vsock_conn) {
+        [w->vsock_conn close];
+        w->vsock_conn = nil;
+    }
+}
+
 void vz_destroy(VZWrapper *w) {
     if (!w || w->finalized) return;
     w->finalized = 1;
     if (w->running) vz_stop(w);
+    vz_vsock_disconnect(w);
     if (w->to_vm_fd >= 0)  close(w->to_vm_fd);
     if (w->from_vm_fd >= 0) close(w->from_vm_fd);
     free(w);

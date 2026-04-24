@@ -14,6 +14,9 @@ const std = @import("std");
 const util = @import("util.zig");
 const build_options = @import("build_options");
 const health = @import("health.zig");
+
+/// Thread-local buffer for jsonStringField unescaping.
+threadlocal var json_field_buf: [4096]u8 = undefined;
 const Config = @import("config.zig").Config;
 const config_types = @import("config_types.zig");
 const session_mod = @import("session.zig");
@@ -821,6 +824,8 @@ fn jsonWrapChallenge(allocator: std.mem.Allocator, challenge: []const u8) ![]u8 
 }
 
 /// Extract a string field from a JSON blob (minimal parser, no allocations).
+/// Properly unescapes JSON string escapes (\", \\, \n, \r, \t, \/, \uXXXX).
+/// Returns a slice into a thread-local buffer (valid until next call).
 pub fn jsonStringField(json: []const u8, key: []const u8) ?[]const u8 {
     var needle_buf: [256]u8 = undefined;
     const quoted_key = std.fmt.bufPrint(&needle_buf, "\"{s}\"", .{key}) catch return null;
@@ -837,16 +842,33 @@ pub fn jsonStringField(json: []const u8, key: []const u8) ?[]const u8 {
     if (i >= after_key.len or after_key[i] != '"') return null;
     i += 1; // skip opening quote
 
-    // Find closing quote (handle escaped quotes)
-    const start = i;
-    while (i < after_key.len) : (i += 1) {
+    // Copy and unescape into thread-local buffer
+    var out: usize = 0;
+    while (i < after_key.len and out < json_field_buf.len) : (i += 1) {
         if (after_key[i] == '\\' and i + 1 < after_key.len) {
             i += 1;
-            continue;
+            switch (after_key[i]) {
+                '"' => json_field_buf[out] = '"',
+                '\\' => json_field_buf[out] = '\\',
+                'n' => json_field_buf[out] = '\n',
+                'r' => json_field_buf[out] = '\r',
+                't' => json_field_buf[out] = '\t',
+                '/' => json_field_buf[out] = '/',
+                else => {
+                    // Unknown escape — keep as-is (both the backslash and the char)
+                    if (out + 1 < json_field_buf.len) {
+                        json_field_buf[out] = '\\';
+                        out += 1;
+                        json_field_buf[out] = after_key[i];
+                    } else break;
+                },
+            }
+        } else if (after_key[i] == '"') {
+            return json_field_buf[0..out];
+        } else {
+            json_field_buf[out] = after_key[i];
         }
-        if (after_key[i] == '"') {
-            return after_key[start..i];
-        }
+        out += 1;
     }
     return null;
 }
