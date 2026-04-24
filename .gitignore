@@ -37,3 +37,4 @@ run_tracy_build.sh
 
 # Node modules
 node_modules/
+build
