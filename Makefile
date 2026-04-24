@@ -15,7 +15,7 @@ BIN    := ./zig-out/bin/nullclaw
 PIDFILE := .nullclaw.pid
 LOGFILE := ~/nullclaw.log
 
-.PHONY: all release start stop restart status logs agent clean
+.PHONY: all release build-vm vm-images vm-images-force start stop restart status logs agent clean
 
 all: build
 
@@ -28,7 +28,27 @@ build: $(BIN)
 release: OPTIMIZE := -Doptimize=ReleaseSmall
 release: $(BIN)
 
-build-vm: $(BIN)
+VZ_LIB    := vm/libvz_wrapper.a
+VZ_SRC    := src/vm/vz_wrapper.m
+VZ_OBJ    := vm/vz_wrapper.o
+
+# ── VM images ──────────────────────────────────────
+
+vm-images:
+	@bash vm/build-images.sh
+
+vm-images-force:
+	@bash vm/build-images.sh --force
+
+# ── VM static library ──────────────────────────────
+
+$(VZ_LIB): $(VZ_SRC)
+	clang -c -fobjc-arc -framework Virtualization -framework Foundation $(VZ_SRC) -o $(VZ_OBJ)
+	ar rcs $(VZ_LIB) $(VZ_OBJ)
+
+# ── Build with VM ──────────────────────────────────
+
+build-vm: vm-images $(VZ_LIB) $(BIN)
 	$(ZIG) build -Dvm=true $(OPTIMIZE)
 	codesign --entitlements src/vm/nullclaw.entitlements.plist --force --sign - $(BIN)
 

@@ -1,0 +1,27 @@
+# VM artifacts — keep only build-images.sh, vz_wrapper.m, nullclaw.entitlements.plist
+*.img
+*.iso
+*.img.bak
+*.tar.gz
+*.gz
+*.dmg
+*.a
+*.o
+vmlinuz*
+initramfs*
+modloop*
+BOOTAA64.EFI
+custom-initramfs*
+final-initramfs*
+initramfs-original*
+initramfs-latest*
+patched-initramfs*
+vmlinuz-latest*
+vmlinuz-raw
+Image
+test_*.img
+test_*.txt
+rootfs.tar
+alpine-minirootfs*
+fedora-kernel
+ubuntu-kernel.deb

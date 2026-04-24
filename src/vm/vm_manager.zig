@@ -303,6 +303,16 @@ pub const PooledVmManager = struct {
     pub fn ensureReady(self: *@This()) !void {
         if (self.vm != null and self.vm.?.shell_ready) return;
 
+        // Destroy any existing (dead) VM before creating a new one
+        if (self.vm) |*v| {
+            log.info("VM appears dead, destroying before re-creation", .{});
+            v.destroy();
+            self.vm = null;
+        }
+
+        // Clean EFI variable store — can get corrupted after VM crash
+        // (unlink not available in Zig 0.16 stdlib; clean externally if needed)
+
         // Create VM
         var to_fd: c_int = -1;
         var from_fd: c_int = -1;
