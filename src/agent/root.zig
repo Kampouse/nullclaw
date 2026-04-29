@@ -1747,21 +1747,28 @@ pub const Agent = struct {
     // ── Deferred vector sync (queue for post-response processing) ──
 
     /// Queue a vector sync for processing after the LLM response.
-    /// The key and content pointers must remain valid until flushPendingSyncs is called.
+    /// Duplicates key and content so the caller's memory can be freed immediately.
     fn queueVectorSync(self: *Agent, key: []const u8, content: []const u8) void {
         if (self.pending_sync_count < self.pending_sync_keys.len) {
-            self.pending_sync_keys[self.pending_sync_count] = .{ .key = key, .content = content };
+            const key_dup = self.allocator.dupe(u8, key) catch return;
+            const content_dup = self.allocator.dupe(u8, content) catch {
+                self.allocator.free(key_dup);
+                return;
+            };
+            self.pending_sync_keys[self.pending_sync_count] = .{ .key = key_dup, .content = content_dup };
             self.pending_sync_count += 1;
         }
     }
 
     /// Process all queued vector syncs. Called after the LLM response is ready.
     fn flushPendingSyncs(self: *Agent) void {
-        if (self.mem_rt) |rt| {
-            for (self.pending_sync_keys[0..self.pending_sync_count]) |item| {
-                if (item) |sync| {
+        for (self.pending_sync_keys[0..self.pending_sync_count]) |item| {
+            if (item) |sync| {
+                if (self.mem_rt) |rt| {
                     rt.syncVectorAfterStore(self.allocator, sync.key, sync.content);
                 }
+                self.allocator.free(sync.key);
+                self.allocator.free(sync.content);
             }
         }
         self.pending_sync_count = 0;

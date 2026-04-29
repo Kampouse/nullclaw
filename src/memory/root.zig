@@ -510,8 +510,14 @@ pub const MemoryRuntime = struct {
             return;
         }
 
-        const provider = self._embedding_provider orelse return;
-        const vs = self._vector_store orelse return;
+        const provider = self._embedding_provider orelse {
+            log.warn("vector sync skipped: no embedding_provider (key='{s}')", .{key});
+            return;
+        };
+        const vs = self._vector_store orelse {
+            log.warn("vector sync skipped: no vector_store (key='{s}')", .{key});
+            return;
+        };
 
         // Check circuit breaker
         if (self._circuit_breaker) |cb| {
@@ -820,7 +826,12 @@ pub fn initRuntime(
             config.search.model,
             config.search.dimensions,
             config.search.base_url,
-        ) catch break :vec_plane;
+        ) catch |err| {
+            log.warn("vector plane: createEmbeddingProvider failed for provider='{s}' model='{s}': {}", .{
+                config.search.provider, config.search.model, err,
+            });
+            break :vec_plane;
+        };
 
         embed_provider = primary_ep;
 
