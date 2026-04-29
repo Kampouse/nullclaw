@@ -225,6 +225,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const [:0]const u8, io: std.Io)
         .web_search_provider = cfg.http_request.search_provider,
         .web_search_fallback_providers = cfg.http_request.search_fallback_providers,
         .browser_enabled = cfg.browser.enabled,
+        .browser_cdp_endpoint = cfg.browser.cdp_endpoint,
         .mcp_tools = mcp_tools,
         .agents = cfg.agents,
         .fallback_api_key = resolved_api_key,

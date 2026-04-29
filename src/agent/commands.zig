@@ -1647,6 +1647,9 @@ fn handlePollCommand(self: anytype) ![]const u8 {
 }
 
 fn handleStopCommand(self: anytype) ![]const u8 {
+    // Signal the agent loop to stop at the next iteration boundary
+    self.should_stop.store(true, .release);
+
     var cleared_pending = false;
     if (self.pending_exec_command != null) {
         clearPendingExecCommand(self);
@@ -1672,22 +1675,22 @@ fn handleStopCommand(self: anytype) ![]const u8 {
             if (cleared_pending) {
                 return try std.fmt.allocPrint(
                     self.allocator,
-                    "Cleared pending exec approval. {d} running subagent tasks cannot be interrupted in this runtime.",
-                    .{running},
+                    "Cleared pending exec approval. Stop requested — {d} running subagent task{s} will finish on their own.",
+                    .{ running, if (running == 1) "" else "s" },
                 );
             }
             return try std.fmt.allocPrint(
                 self.allocator,
-                "{d} running subagent tasks cannot be interrupted in this runtime.",
-                .{running},
+                "Stop requested — {d} running subagent task{s} will finish on their own.",
+                .{ running, if (running == 1) "" else "s" },
             );
         }
     }
 
     if (cleared_pending) {
-        return try self.allocator.dupe(u8, "Cleared pending exec approval.");
+        return try self.allocator.dupe(u8, "Cleared pending exec approval. Stop requested.");
     }
-    return try self.allocator.dupe(u8, "No active background task to stop.");
+    return try self.allocator.dupe(u8, "Stop requested.");
 }
 
 fn parseJsonStringOwned(allocator: std.mem.Allocator, raw: []const u8) !?[]u8 {

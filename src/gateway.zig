@@ -2706,6 +2706,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
                     .web_search_provider = cfg.http_request.search_provider,
                     .web_search_fallback_providers = cfg.http_request.search_fallback_providers,
                     .browser_enabled = cfg.browser.enabled,
+                    .browser_cdp_endpoint = cfg.browser.cdp_endpoint,
                     .vm_enabled = build_options.enable_vm,
                     .predict_enabled = cfg.predict.enabled,
                     .predict_api_key = cfg.predict.api_key orelse resolved_api_key,
@@ -2822,7 +2823,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
         const target = parts.next() orelse continue;
 
         // Simple routing — control endpoints + descriptor-driven channel webhooks.
-        const ControlRoute = enum { health, ready, webhook, pair, eval, bench, spy, api_status, api_events, api_trace, vm_exec };
+        const ControlRoute = enum { health, ready, webhook, pair, eval, bench, spy, api_status, api_events, api_trace, api_crash, vm_exec };
         const control_route_map = std.StaticStringMap(ControlRoute).initComptime(.{
             .{ "/health", .health },
             .{ "/ready", .ready },
@@ -2834,6 +2835,7 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
             .{ "/api/status", .api_status },
             .{ "/api/events", .api_events },
             .{ "/api/trace", .api_trace },
+            .{ "/api/crash", .api_crash },
             .{ "/api/vm/exec", .vm_exec },
         });
         const base_path = if (std.mem.indexOfScalar(u8, target, '?')) |qi| target[0..qi] else target;
@@ -3185,6 +3187,58 @@ pub fn run(allocator: std.mem.Allocator, host: []const u8, port: u16, config_ptr
 
                 const resp = std.fmt.allocPrint(req_allocator, "{{\"pos\":{d},\"sessions\":{s}}}", .{ current_pos, json }) catch "{\"error\":\"buffer overflow\"}";
                 response_body = resp;
+            },
+            .api_crash => {
+                // Crash detection — returns crash.json from previous run if it exists.
+                // The signal handler in main.zig writes ~/.nullclaw/crash.json on SIGSEGV/SIGBUS/SIGABRT.
+                // Reading this endpoint clears the crash file (one-shot).
+                response_body = "{\"crash\":null}"; // default: no crash
+
+                // Can't use std.fs, std.process, std.posix, std.c, or std.os directly from
+                // gateway.zig because root module exports shadow all those names.
+                // Use explicit extern declarations to avoid variadic calling convention issues.
+                const libc = struct {
+                    extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+                    extern "c" fn open(path: [*:0]const u8, flags: c_int, mode: c_uint) c_int;
+                    extern "c" fn close(fd: c_int) c_int;
+                    extern "c" fn read(fd: c_int, buf: [*]u8, count: usize) isize;
+                    extern "c" fn unlink(path: [*:0]const u8) c_int;
+                };
+
+                const home_c = libc.getenv("HOME");
+                if (home_c != null) {
+                    const home = std.mem.span(home_c.?);
+                    const hlen = home.len;
+                    if (hlen + 18 <= 4096) {
+                        var path_buf: [4096]u8 = undefined;
+                        var path_off: usize = 0;
+                        @memcpy(path_buf[path_off..][0..hlen], home);
+                        path_off += hlen;
+                    @memcpy(path_buf[path_off..][0..10], "/.nullclaw"[0..10]);
+                    path_off += 10;
+                        @memcpy(path_buf[path_off..][0..12], "/crash.json"[0..12]);
+                        path_off += 12;
+                        path_buf[path_off] = 0;
+                        const crash_path = path_buf[0..path_off :0];
+
+                        const fd = libc.open(crash_path, @as(c_int, 0), @as(c_uint, 0));
+                        if (fd >= 0) {
+                            defer _ = libc.close(fd);
+
+                            var read_buf: [4096]u8 = undefined;
+                            const bytes_read = libc.read(fd, @ptrCast(&read_buf), 4096);
+                            if (bytes_read > 0) {
+                                const content = req_allocator.alloc(u8, @intCast(bytes_read)) catch null;
+                                if (content) |buf| {
+                                    @memcpy(buf, read_buf[0..@intCast(bytes_read)]);
+                                    response_body = buf;
+                                }
+                            }
+                            // Delete after reading (one-shot)
+                            _ = libc.unlink(crash_path);
+                        }
+                    }
+                }
             },
             .vm_exec => {
                 // VM code execution — sandboxed Alpine Linux VM via Apple VZ.

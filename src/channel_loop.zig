@@ -713,6 +713,7 @@ pub const ChannelRuntime = struct {
             .web_search_provider = config.http_request.search_provider,
             .web_search_fallback_providers = config.http_request.search_fallback_providers,
             .browser_enabled = config.browser.enabled,
+            .browser_cdp_endpoint = config.browser.cdp_endpoint,
             .vm_enabled = build_options.enable_vm,
             .predict_enabled = config.predict.enabled,
             .predict_api_key = config.predict.api_key orelse resolved_key,
