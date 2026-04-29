@@ -524,6 +524,13 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_tracy", enable_tracy);
     const build_options_module = build_options.createModule();
 
+    // Vendored karlseguin/websocket.zig (standalone, for test executables)
+    const ws_standalone_mod = if (!is_wasi) b.addModule("ws_karlseguin", .{
+        .root_source_file = b.path("lib/websocket-zig/src/root.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    }) else null;
+
     // ---------- library module (importable by consumers) ----------
     const lib_mod: ?*std.Build.Module = if (is_wasi) null else blk: {
         const module = b.addModule("nullclaw", .{
@@ -555,8 +562,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         module.addImport("tls", tls_mod);
-        // websocket client needs tls_zig for TLS connections
-        ws_mod.addImport("tls", tls_mod);
+        // websocket-zig uses std.crypto.tls internally (line 8: const tls = std.crypto.tls)
+        // Do NOT override tls for ws_mod — its API is std.crypto.tls, not tls_zig
 
         // Add Tracy profiler module
         if (tracy_module) |tm| {
@@ -652,6 +659,38 @@ pub fn build(b: *std.Build) void {
 
     // ---------- web_search real test ----------
     if (lib_mod) |mod| {
+        // CDP WebSocket test
+        const cdp_ws_test_exe = b.addExecutable(.{
+            .name = "test_cdp_ws",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test_cdp_ws.zig"),
+                .target = b.graph.host,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "ws_karlseguin", .module = ws_standalone_mod.? },
+                },
+            }),
+        });
+        const cdp_ws_test_step = b.step("test-cdp-ws", "Test CDP WebSocket connection to Lightpanda");
+        const cdp_ws_test_cmd = b.addRunArtifact(cdp_ws_test_exe);
+        cdp_ws_test_step.dependOn(&cdp_ws_test_cmd.step);
+
+        // CDP search test (reproduces the SIGSEGV)
+        const cdp_search_test_exe = b.addExecutable(.{
+            .name = "test_cdp_search",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test_cdp_search.zig"),
+                .target = b.graph.host,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "ws_karlseguin", .module = ws_standalone_mod.? },
+                },
+            }),
+        });
+        const cdp_search_test_step = b.step("test-cdp-search", "Test CDP search flow (DDG)");
+        const cdp_search_test_cmd = b.addRunArtifact(cdp_search_test_exe);
+        cdp_search_test_step.dependOn(&cdp_search_test_cmd.step);
+
         const web_search_test_exe = b.addExecutable(.{
             .name = "test_web_search_real",
             .root_module = b.createModule(.{
