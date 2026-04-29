@@ -36,7 +36,6 @@ pub const VmExecTool = struct {
 
     pub fn execute(self: *VmExecTool, allocator: std.mem.Allocator, args: JsonObjectMap, io: std.Io) !ToolResult {
         _ = io;
-        _ = self;
 
         if (!build_options.enable_vm) {
             return ToolResult.fail("VM backend not enabled (compile with -Dvm=true)");
@@ -48,17 +47,28 @@ pub const VmExecTool = struct {
 
         log.info("vm_exec: {d} bytes", .{command.len});
 
+        // Use the tool's heap allocator (self.allocator) for all VM operations.
+        // The `allocator` parameter is the per-turn arena — using it for VM I/O
+        // can exhaust the arena across iterations (confirmed crash: arena OOM → SIGABRT).
+        // The heap allocator is safe for large/unbounded allocations and persists
+        // across the entire agent session.
+        const heap = self.allocator;
+
         const vm_mod = @import("../vm.zig");
-        const manager = vm_mod.getGlobalVmManager(allocator) catch |err| {
+        const manager = vm_mod.getGlobalVmManager(heap) catch |err| {
             const msg = try std.fmt.allocPrint(allocator, "VM manager init failed: {s}", .{@errorName(err)});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
 
-        const output = manager.execCode(allocator, command) catch |err| {
-            const msg = try std.fmt.allocPrint(allocator, "VM exec failed: {s}", .{@errorName(err)});
+        const output = manager.execCode(heap, command) catch |err| {
+            const err_name = @errorName(err);
+            if (comptime std.mem.eql(u8, err_name, "OutOfMemory")) {
+                log.warn("vm_exec: out of memory", .{});
+            }
+            const msg = try std.fmt.allocPrint(allocator, "VM exec failed: {s}", .{err_name});
             return ToolResult{ .success = false, .output = "", .error_msg = msg, .owns_error_msg = true };
         };
-        defer allocator.free(output);
+        defer heap.free(output);
 
         return ToolResult.okAlloc(allocator, output);
     }

@@ -212,17 +212,21 @@ pub const Vm = struct {
             "export PATH=/mnt/root/usr/bin:/mnt/root/sbin:/usr/sbin:/sbin:/bin:/usr/bin; ";
 
         // Build the full command with env prefix
-        const full_command = try std.mem.concat(allocator, u8, &.{ env_prefix, command });
+        // Guard: OOM here should not crash the process — return a clean error.
+        const full_command = std.mem.concat(allocator, u8, &.{ env_prefix, command }) catch
+            return error.OutOfMemory;
         defer allocator.free(full_command);
 
         // Octal-encode: each byte becomes \NNN
         var encoded: std.ArrayListUnmanaged(u8) = .empty;
         defer encoded.deinit(allocator);
-        try encoded.ensureTotalCapacity(allocator, full_command.len * 4);
+        encoded.ensureTotalCapacity(allocator, full_command.len * 4) catch
+            return error.OutOfMemory;
         for (full_command) |ch| {
             var octal_buf: [4]u8 = undefined;
             const octal = std.fmt.bufPrint(&octal_buf, "\\{o:03}", .{ch}) catch unreachable;
-            try encoded.appendSlice(allocator, octal);
+            encoded.appendSlice(allocator, octal) catch
+                return error.OutOfMemory;
         }
 
         // Build: printf '<encoded>' > /tmp/c.sh; . /tmp/c.sh
@@ -230,10 +234,14 @@ pub const Vm = struct {
         // so that export statements affect the shell that echoes output
         var cmd_buf: std.ArrayListUnmanaged(u8) = .empty;
         defer cmd_buf.deinit(allocator);
-        try cmd_buf.ensureTotalCapacity(allocator, encoded.items.len + 50);
-        try cmd_buf.appendSlice(allocator, "printf '");
-        try cmd_buf.appendSlice(allocator, encoded.items);
-        try cmd_buf.appendSlice(allocator, "' > /tmp/c.sh; . /tmp/c.sh");
+        cmd_buf.ensureTotalCapacity(allocator, encoded.items.len + 50) catch
+            return error.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "printf '") catch
+            return error.OutOfMemory;
+        cmd_buf.appendSlice(allocator, encoded.items) catch
+            return error.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "' > /tmp/c.sh; . /tmp/c.sh") catch
+            return error.OutOfMemory;
 
         // Send the command
         try self.writeLine(cmd_buf.items);
@@ -340,19 +348,25 @@ pub const Vm = struct {
         defer escaped_cmd.deinit(allocator);
         for (command) |ch| {
             switch (ch) {
-                '"' => try escaped_cmd.appendSlice(allocator, "\\\""),
-                '\\' => try escaped_cmd.appendSlice(allocator, "\\\\"),
-                '\n' => try escaped_cmd.appendSlice(allocator, "\\n"),
-                '\r' => try escaped_cmd.appendSlice(allocator, "\\r"),
-                '\t' => try escaped_cmd.appendSlice(allocator, "\\t"),
-                else => try escaped_cmd.append(allocator, ch),
+                '"' => escaped_cmd.appendSlice(allocator, "\\\"") catch
+                    return error.OutOfMemory,
+                '\\' => escaped_cmd.appendSlice(allocator, "\\\\") catch
+                    return error.OutOfMemory,
+                '\n' => escaped_cmd.appendSlice(allocator, "\\n") catch
+                    return error.OutOfMemory,
+                '\r' => escaped_cmd.appendSlice(allocator, "\\r") catch
+                    return error.OutOfMemory,
+                '\t' => escaped_cmd.appendSlice(allocator, "\\t") catch
+                    return error.OutOfMemory,
+                else => escaped_cmd.append(allocator, ch) catch
+                    return error.OutOfMemory,
             }
         }
         const timeout_s = @max(1, self.config.exec_timeout_ms / 1000);
-        const request = try std.fmt.allocPrint(allocator,
+        const request = std.fmt.allocPrint(allocator,
             "{{\"command\":\"{s}\",\"cwd\":\"/mnt/root\",\"timeout\":{d}}}",
             .{ escaped_cmd.items, timeout_s },
-        );
+        ) catch return error.OutOfMemory;
         defer allocator.free(request);
 
         // Send: 4-byte BE length + JSON body
@@ -391,13 +405,16 @@ pub const Vm = struct {
 
         if (root.get("stdout")) |v| {
             if (v != .string) return error.VsockInvalidResponse;
-            try result.appendSlice(allocator, v.string);
+            result.appendSlice(allocator, v.string) catch
+                return error.OutOfMemory;
         }
         if (root.get("stderr")) |v| {
             if (v != .string) return error.VsockInvalidResponse;
             if (v.string.len > 0) {
-                if (result.items.len > 0) try result.append(allocator, '\n');
-                try result.appendSlice(allocator, v.string);
+                if (result.items.len > 0) result.append(allocator, '\n') catch
+                    return error.OutOfMemory;
+                result.appendSlice(allocator, v.string) catch
+                    return error.OutOfMemory;
             }
         }
 
