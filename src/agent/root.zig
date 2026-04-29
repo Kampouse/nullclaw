@@ -17,6 +17,8 @@ const ChatResponse = providers.ChatResponse;
 const ToolSpec = providers.ToolSpec;
 const tools_mod = @import("../tools/root.zig");
 const Tool = tools_mod.Tool;
+const tool_gating = @import("../tools/gating.zig");
+const ToolGate = tool_gating.ToolGate;
 const memory_mod = @import("../memory/root.zig");
 const Memory = memory_mod.Memory;
 const capabilities_mod = @import("../capabilities.zig");
@@ -217,6 +219,9 @@ pub const Agent = struct {
     provider: Provider,
     tools: []const Tool,
     tool_specs: []const ToolSpec,
+    /// Optional tool gate for schema gating (reduces token overhead).
+    /// When null, all tool specs are sent every turn (default behavior).
+    tool_gate: ?ToolGate = null,
     mem: ?Memory,
     session_store: ?memory_mod.SessionStore = null,
     response_cache: ?*cache.ResponseCache = null,
@@ -262,6 +267,10 @@ pub const Agent = struct {
     tts_limit_chars: u32 = 0,
     tts_summary: bool = false,
     tts_audio: bool = false,
+    /// Atomic flag set by /stop to interrupt the current turn's tool loop.
+    /// Checked at the top of each iteration in turn().
+    should_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
     pending_exec_command: ?[]const u8 = null,
     pending_exec_command_owned: bool = false,
     pending_exec_id: u64 = 0,
@@ -381,12 +390,32 @@ pub const Agent = struct {
             };
         }
 
+        // Initialize tool gate if enabled in config
+        var gate: ?ToolGate = null;
+        if (cfg.tool_gating.enabled) {
+            if (ToolGate.init(allocator, tools, .{
+                .top_k = cfg.tool_gating.top_k,
+            })) |g| {
+                gate = g;
+                const est = g.tokenEstimate();
+                log.info("tool gating enabled: top_k={d}, {d} tools total, estimated {d}/{d} tokens per turn (gated/total)", .{
+                    cfg.tool_gating.top_k,
+                    tools.len,
+                    est.gated,
+                    est.total,
+                });
+            } else |err| {
+                log.warn("tool gating init failed: {}, falling back to all specs", .{err});
+            }
+        }
+
         return .{
             .allocator = allocator,
             .io = io,
             .provider = provider_i,
             .tools = tools,
             .tool_specs = specs,
+            .tool_gate = gate,
             .mem = mem,
             .observer = observer_i,
             .model_name = default_model,
@@ -916,13 +945,48 @@ pub const Agent = struct {
         slog.debug("agent", "turn_no_cache_proceeding", .{});
         slog.debugSpan("agent", "pre_call", turn_start_ns);
 
+        // Compute gated tool specs once per turn based on user message relevance.
+        // Falls back to all specs if gating is disabled or init failed.
+        var gated_specs_owned: bool = false;
+        const active_tool_specs: []const ToolSpec = if (self.tool_gate) |*gate| blk: {
+            const specs = gate.gatedSpecs(effective_user_message) catch |err| {
+                log.warn("tool gating failed: {}, using all specs", .{err});
+                break :blk self.tool_specs;
+            };
+            gated_specs_owned = true;
+            log.debug("tool_gating_promoted count={d} total={d}", .{ specs.len, self.tool_specs.len });
+            break :blk specs;
+        } else self.tool_specs;
+        defer {
+            if (gated_specs_owned) {
+                self.allocator.free(active_tool_specs);
+            }
+        }
+
         // Tool call loop — reuse a single arena across iterations (retains pages)
         var iter_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer iter_arena.deinit();
 
+        // Clear any stale stop flag from a previous turn
+        self.should_stop.store(false, .release);
+
         var iteration: u32 = 0;
         var forced_follow_through_count: u32 = 0;
         while (iteration < self.max_tool_iterations) : (iteration += 1) {
+            // Check if /stop was called during this turn
+            if (self.should_stop.load(.acquire)) {
+                self.should_stop.store(false, .release);
+                slog.debug("agent", "turn_stopped_by_user", .{ .iteration = iteration });
+                const stopped_msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "[Stopped after {d} tool iteration{s}]",
+                    .{ iteration, if (iteration == 1) "" else "s" },
+                );
+                const complete_event = ObserverEvent{ .turn_complete = {} };
+                self.observer.recordEvent(&complete_event);
+                return stopped_msg;
+            }
+
             slog.debug("agent", "turn_loop_start", .{ .iteration = iteration + 1, .max_iterations = self.max_tool_iterations });
             _ = iter_arena.reset(.retain_capacity);
             const arena = iter_arena.allocator();
@@ -942,9 +1006,9 @@ pub const Agent = struct {
 
             const timer_start = util.timestampUnix();
             const is_streaming = self.stream_callback != null and self.provider.supportsStreaming();
-            const native_tools_enabled = !is_streaming and self.provider.supportsNativeTools();
+            const native_tools_enabled = self.provider.supportsNativeTools();
 
-            // Call provider: streaming (no retries, no native tools) or blocking with retry
+            // Call provider: streaming (with native tools) or blocking with retry
             var response: ChatResponse = undefined;
             var response_attempt: u32 = 1;
             slog.debug("agent", "turn_calling_provider", .{ .iteration = iteration + 1, .streaming = is_streaming, .native_tools = native_tools_enabled });
@@ -959,7 +1023,7 @@ pub const Agent = struct {
                         .model = self.model_name,
                         .temperature = self.temperature,
                         .max_tokens = self.max_tokens,
-                        .tools = null,
+                        .tools = if (native_tools_enabled) active_tool_specs else null,
                         .timeout_secs = self.message_timeout_secs,
                         .reasoning_effort = self.reasoning_effort,
                     },
@@ -984,7 +1048,7 @@ pub const Agent = struct {
                 slog.debugSpan("agent", "llm_call", llm_ns);
                 response = ChatResponse{
                     .content = stream_result.content,
-                    .tool_calls = &.{},
+                    .tool_calls = stream_result.tool_calls,
                     .usage = stream_result.usage,
                     .model = stream_result.model,
                 };
@@ -999,7 +1063,7 @@ pub const Agent = struct {
                         .model = self.model_name,
                         .temperature = self.temperature,
                         .max_tokens = self.max_tokens,
-                        .tools = if (native_tools_enabled) self.tool_specs else null,
+                        .tools = if (native_tools_enabled) active_tool_specs else null,
                         .timeout_secs = self.message_timeout_secs,
                         .reasoning_effort = self.reasoning_effort,
                     },
@@ -1034,7 +1098,7 @@ pub const Agent = struct {
                                 .model = self.model_name,
                                 .temperature = self.temperature,
                                 .max_tokens = self.max_tokens,
-                                .tools = if (native_tools_enabled) self.tool_specs else null,
+                                .tools = if (native_tools_enabled) active_tool_specs else null,
                                 .timeout_secs = self.message_timeout_secs,
                                 .reasoning_effort = self.reasoning_effort,
                             },
@@ -1054,7 +1118,7 @@ pub const Agent = struct {
                             .model = self.model_name,
                             .temperature = self.temperature,
                             .max_tokens = self.max_tokens,
-                            .tools = if (native_tools_enabled) self.tool_specs else null,
+                            .tools = if (native_tools_enabled) active_tool_specs else null,
                             .timeout_secs = self.message_timeout_secs,
                             .reasoning_effort = self.reasoning_effort,
                         },
@@ -1075,7 +1139,7 @@ pub const Agent = struct {
                                     .model = self.model_name,
                                     .temperature = self.temperature,
                                     .max_tokens = self.max_tokens,
-                                    .tools = if (native_tools_enabled) self.tool_specs else null,
+                                    .tools = if (native_tools_enabled) active_tool_specs else null,
                                     .timeout_secs = self.message_timeout_secs,
                                     .reasoning_effort = self.reasoning_effort,
                                 },
@@ -1187,6 +1251,14 @@ pub const Agent = struct {
             }
 
             slog.debug("agent", "turn_total_parsed_calls", .{ .count = parsed_calls.len });
+
+            // Cap total tool calls per turn to prevent model hallucination bursts
+            // (e.g. qwen3 returning 46 tool calls at once). Default max: 8.
+            const MAX_CALLS_PER_TURN: usize = 8;
+            if (parsed_calls.len > MAX_CALLS_PER_TURN) {
+                log.warn("agent: model returned {d} tool calls, capping to {d}", .{ parsed_calls.len, MAX_CALLS_PER_TURN });
+                parsed_calls = parsed_calls[0..MAX_CALLS_PER_TURN];
+            }
 
             // Determine display text
             // IMPORTANT: When there are tool calls, NEVER show raw response_text to user
@@ -1334,6 +1406,15 @@ pub const Agent = struct {
                 slog.debug("agent", "turn_using_parallel_tool_execution", .{ .count = parsed_calls.len });
                 const parallel_results = try self.executeToolsParallel(arena, parsed_calls, batch_updates_tools_md);
 
+                // Lazy promotion for parallel results
+                if (self.tool_gate != null) {
+                    for (parallel_results) |result| {
+                        if (result.success) {
+                            _ = self.tool_gate.?.forcePromoteByName(result.name);
+                        }
+                    }
+                }
+
                 // Copy results to results_buf
                 for (parallel_results) |result| {
                     try results_buf.append(self.allocator, result);
@@ -1367,6 +1448,14 @@ pub const Agent = struct {
                     } else blk: {
                         break :blk self.executeTool(arena, call);
                     };
+
+                    // Lazy promotion: if the model called a tool that wasn't gated in,
+                    // promote it for future turns so its schema stays available.
+                    if (result.success and self.tool_gate != null) {
+                        if (self.tool_gate.?.forcePromoteByName(call.name)) {
+                            slog.debug("agent", "tool_gating_lazy_promote", .{ .tool = call.name });
+                        }
+                    }
                     const tool_duration: u64 = @as(u64, @intCast(@max(0, util.timestampUnix() - tool_timer)));
 
                     if (self.log_tool_calls) {
