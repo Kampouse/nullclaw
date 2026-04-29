@@ -90,6 +90,7 @@ pub const memory_forget = @import("memory_forget.zig");
 pub const schedule = @import("schedule.zig");
 pub const delegate = @import("delegate.zig");
 pub const browser = @import("browser.zig");
+pub const browser_cdp = @import("browser_cdp.zig");
 pub const image = @import("image.zig");
 pub const composio = @import("composio.zig");
 pub const screenshot = @import("screenshot.zig");
@@ -343,6 +344,7 @@ pub fn allTools(
         web_search_provider: []const u8 = "auto",
         web_search_fallback_providers: []const []const u8 = &.{},
         browser_enabled: bool = false,
+        browser_cdp_endpoint: ?[]const u8 = null,
         screenshot_enabled: bool = false,
         composio_api_key: ?[]const u8 = null,
         browser_open_domains: ?[]const []const u8 = null,
@@ -475,6 +477,7 @@ pub fn allTools(
         const wst = try allocator.create(web_search.WebSearchTool);
         wst.* = .{
             .searxng_base_url = opts.web_search_base_url,
+            .cdp_endpoint = opts.browser_cdp_endpoint,
             .provider = opts.web_search_provider,
             .fallback_providers = opts.web_search_fallback_providers,
             .timeout_secs = opts.http_timeout_secs,
@@ -482,7 +485,7 @@ pub fn allTools(
         try list.append(allocator, wst.tool());
 
         const wft = try allocator.create(web_fetch.WebFetchTool);
-        wft.* = .{ .default_max_chars = tc.web_fetch_max_chars };
+        wft.* = .{ .default_max_chars = tc.web_fetch_max_chars, .cdp_endpoint = opts.browser_cdp_endpoint };
         try list.append(allocator, wft.tool());
 
         // TODO: Add web_scrape tool after fixing compilation errors
@@ -495,6 +498,12 @@ pub fn allTools(
         const bt = try allocator.create(browser.BrowserTool);
         bt.* = .{};
         try list.append(allocator, bt.tool());
+    }
+
+    if (opts.browser_cdp_endpoint) |cdp_endpoint| {
+        const bct = try allocator.create(browser_cdp.BrowserCdpTool);
+        bct.* = .{ .allocator = allocator, .cdp_endpoint = cdp_endpoint };
+        try list.append(allocator, bct.tool());
     }
 
     if (opts.screenshot_enabled) {

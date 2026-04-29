@@ -22,6 +22,7 @@ const search_providers = @import("web_search_providers/root.zig");
 const search_common = search_providers.common;
 const profiling = @import("../profiling.zig");
 const util = @import("../util.zig");
+const log = std.log.scoped(.web_search);
 const Tool = root.Tool;
 const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
@@ -37,6 +38,7 @@ const MAX_PROVIDER_CHAIN: usize = 16;
 
 const SearchProvider = enum {
     auto,
+    browser,
     searxng,
     duckduckgo,
     brave,
@@ -53,6 +55,9 @@ const ProviderSearchError = search_common.ProviderSearchError;
 pub const WebSearchTool = struct {
     /// Optional SearXNG base URL (e.g. https://searx.example.com or .../search).
     searxng_base_url: ?[]const u8 = null,
+    /// Optional CDP endpoint for browser-based search (e.g. ws://127.0.0.1:9222).
+    /// When set, "browser" provider is prepended to the auto chain.
+    cdp_endpoint: ?[]const u8 = null,
     /// Primary provider ("auto" by default).
     provider: []const u8 = "auto",
     /// Fallback providers tried in order when primary fails.
@@ -60,9 +65,9 @@ pub const WebSearchTool = struct {
     timeout_secs: u64 = DEFAULT_TIMEOUT_SECS,
 
     pub const tool_name = "web_search";
-    pub const tool_description = "Search the web. Providers: searxng, duckduckgo(ddg), brave, firecrawl, tavily, perplexity, exa, jina. Configure via http_request.search_provider/search_fallback_providers and API key env vars.";
+    pub const tool_description = "Search the web. Providers: browser (CDP/DuckDuckGo, no API key), searxng, duckduckgo(ddg), brave, firecrawl, tavily, perplexity, exa, jina. Configure via http_request.search_provider/search_fallback_providers and API key env vars.";
     pub const tool_params =
-        \\{"type":"object","properties":{"query":{"type":"string","minLength":1,"description":"Search query"},"count":{"type":"integer","minimum":1,"maximum":10,"default":5,"description":"Number of results (1-10)"},"provider":{"type":"string","description":"Optional provider override (auto,searxng,duckduckgo,ddg,brave,firecrawl,tavily,perplexity,exa,jina)"}},"required":["query"]}
+        \\{"type":"object","properties":{"query":{"type":"string","minLength":1,"description":"Search query"},"count":{"type":"integer","minimum":1,"maximum":10,"default":5,"description":"Number of results (1-10)"},"provider":{"type":"string","description":"Optional provider override (auto,browser,searxng,duckduckgo,ddg,brave,firecrawl,tavily,perplexity,exa,jina)"}},"required":["query"]}
     ;
 
     const vtable = root.ToolVTable(@This());
@@ -90,7 +95,7 @@ pub const WebSearchTool = struct {
 
         var chain_buf: [MAX_PROVIDER_CHAIN]SearchProvider = undefined;
         const chain = buildProviderChain(self, provider_raw, &chain_buf) catch |err| switch (err) {
-            error.InvalidProvider => return ToolResult.fail("Invalid web_search provider. Supported: auto, searxng, duckduckgo(ddg), brave, firecrawl, tavily, perplexity, exa, jina."),
+            error.InvalidProvider => return ToolResult.fail("Invalid web_search provider. Supported: auto, browser, searxng, duckduckgo(ddg), brave, firecrawl, tavily, perplexity, exa, jina."),
             else => return err,
         };
 
@@ -126,6 +131,7 @@ pub const WebSearchTool = struct {
 fn parseProvider(raw: []const u8) ?SearchProvider {
     const trimmed = std.mem.trim(u8, raw, " \t\n\r");
     if (std.ascii.eqlIgnoreCase(trimmed, "auto")) return .auto;
+    if (std.ascii.eqlIgnoreCase(trimmed, "browser")) return .browser;
     if (std.ascii.eqlIgnoreCase(trimmed, "searxng")) return .searxng;
     if (std.ascii.eqlIgnoreCase(trimmed, "duckduckgo") or std.ascii.eqlIgnoreCase(trimmed, "ddg")) return .duckduckgo;
     if (std.ascii.eqlIgnoreCase(trimmed, "brave")) return .brave;
@@ -140,6 +146,7 @@ fn parseProvider(raw: []const u8) ?SearchProvider {
 fn providerName(provider: SearchProvider) []const u8 {
     return switch (provider) {
         .auto => "auto",
+        .browser => "browser",
         .searxng => "searxng",
         .duckduckgo => "duckduckgo",
         .brave => "brave",
@@ -170,6 +177,12 @@ fn buildProviderChain(
 
     const primary = parseProvider(primary_raw) orelse return error.InvalidProvider;
     if (primary == .auto) {
+        // Browser-based search goes first when CDP is available (no API key needed)
+        if (self.cdp_endpoint) |ep| {
+            if (std.mem.trim(u8, ep, " \t\n\r").len > 0) {
+                appendProviderUnique(chain_buf, &len, .browser);
+            }
+        }
         if (self.searxng_base_url) |base_url| {
             if (std.mem.trim(u8, base_url, " \t\n\r").len > 0) {
                 appendProviderUnique(chain_buf, &len, .searxng);
@@ -204,6 +217,12 @@ fn executeWithProvider(
 ) (ProviderSearchError || error{OutOfMemory})!ToolResult {
     switch (provider) {
         .auto => return error.InvalidProvider,
+        .browser => {
+            const endpoint = self.cdp_endpoint orelse return error.ProviderUnavailable;
+            const trimmed = std.mem.trim(u8, endpoint, " \t\n\r");
+            if (trimmed.len == 0) return error.ProviderUnavailable;
+            return searchViaBrowser(allocator, trimmed, query, count);
+        },
         .searxng => {
             const base_url = self.searxng_base_url orelse return error.ProviderUnavailable;
             const trimmed = std.mem.trim(u8, base_url, " \t\n\r");
@@ -269,6 +288,52 @@ pub fn urlEncode(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
 
 fn urlEncodePath(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     return search_common.urlEncodePath(allocator, input);
+}
+
+/// Perform a web search via a CDP-connected browser (DuckDuckGo lite).
+/// Uses the persistent CDP pool to reuse connections across calls.
+fn searchViaBrowser(allocator: std.mem.Allocator, cdp_endpoint: []const u8, query: []const u8, count: usize) (ProviderSearchError || error{OutOfMemory})!ToolResult {
+    const browser_cdp_mod = @import("browser_cdp.zig");
+    const CdpPool = browser_cdp_mod.CdpPool;
+
+    // Acquire a pooled CDP client (creates one on first use, reuses thereafter).
+    const pool = CdpPool.global();
+    const cdp = pool.acquire(std.heap.page_allocator, cdp_endpoint) catch |err| {
+        log.warn("searchViaBrowser: CdpPool.acquire failed: {}", .{err});
+        return error.ProviderUnavailable;
+    };
+    defer pool.release(cdp);
+
+    // Build minimal args JSON with query and count
+    var args_data = std.ArrayList(u8).empty;
+    defer args_data.deinit(allocator);
+
+    try args_data.appendSlice(allocator, "{\"query\":\"");
+    for (query) |ch| {
+        if (ch == '"') {
+            try args_data.appendSlice(allocator, "\\\"");
+        } else if (ch == '\\') {
+            try args_data.appendSlice(allocator, "\\\\");
+        } else {
+            try args_data.append(allocator, ch);
+        }
+    }
+    // Append count parameter
+    try args_data.appendSlice(allocator, "\",\"count\":");
+    const count_str = try std.fmt.allocPrint(allocator, "{d}", .{count});
+    defer allocator.free(count_str);
+    try args_data.appendSlice(allocator, count_str);
+    try args_data.append(allocator, '}');
+
+    const args_obj = root.parseTestArgsArena(allocator, args_data.items) catch {
+        return error.ProviderUnavailable;
+    };
+
+    // Create a temporary BrowserCdpTool and call actionSearch
+    var bct = browser_cdp_mod.BrowserCdpTool{ .allocator = allocator, .cdp_endpoint = cdp_endpoint };
+    return bct.actionSearch(allocator, cdp, args_obj) catch {
+        return error.ProviderUnavailable;
+    };
 }
 
 fn buildSearxngSearchUrl(

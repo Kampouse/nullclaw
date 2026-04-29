@@ -10,6 +10,7 @@ const ToolResult = root.ToolResult;
 const JsonObjectMap = root.JsonObjectMap;
 const net_security = @import("../root.zig").net_security;
 const http_util = @import("../http_util.zig");
+const browser_cdp = @import("browser_cdp.zig");
 
 const log = std.log.scoped(.web_fetch);
 
@@ -19,6 +20,7 @@ const DEFAULT_MAX_CHARS: usize = 50_000;
 /// Web fetch tool — fetches URLs and extracts readable content.
 pub const WebFetchTool = struct {
     default_max_chars: usize = DEFAULT_MAX_CHARS,
+    cdp_endpoint: ?[]const u8 = null,
 
     pub const tool_name = "web_fetch";
     pub const tool_description = "Fetch a web page and extract its text content. Converts HTML to readable text with markdown formatting.";
@@ -48,6 +50,48 @@ pub const WebFetchTool = struct {
             return ToolResult.fail("Only http:// and https:// URLs are allowed");
         }
 
+        const max_chars = parseMaxCharsWithDefault(args, self.default_max_chars);
+        log.debug("web_fetch: max_chars={d}", .{max_chars});
+
+        // If a CDP endpoint is configured, try browser-based fetch first.
+        // Fall back to HTTP on any CDP failure.
+        if (self.cdp_endpoint) |endpoint| {
+            log.info("web_fetch: Trying browser-based fetch via CDP for {s}", .{url});
+            if (fetchViaBrowser(allocator, endpoint, url, max_chars)) |result| {
+                return result;
+            } else |err| {
+                log.warn("web_fetch: Browser fetch failed for {s}: {}, falling back to HTTP", .{ url, err });
+            }
+        }
+
+        return self.fetchViaHttp(allocator, url, max_chars);
+    }
+
+    /// Fetch a URL via CDP (headless browser): navigate, wait for load, extract innerText.
+    fn fetchViaBrowser(allocator: std.mem.Allocator, endpoint: []const u8, url: []const u8, max_chars: usize) !ToolResult {
+        // Use the persistent CDP pool instead of creating a fresh client per call.
+        const pool = browser_cdp.CdpPool.global();
+        const cdp = pool.acquire(std.heap.page_allocator, endpoint) catch |err| {
+            log.warn("web_fetch: CdpPool.acquire failed for {s}: {}", .{ url, err });
+            return err;
+        };
+        defer pool.release(cdp);
+
+        const text = try cdp.fetchPageText(allocator, url);
+        defer allocator.free(text);
+
+        if (text.len == 0) {
+            return ToolResult.ok("");
+        }
+
+        // Truncate if needed
+        const content = if (text.len > max_chars) text[0..max_chars] else text;
+        log.info("web_fetch: Browser fetch extracted {d} chars from {s}", .{content.len, url});
+        return ToolResult.ok(try allocator.dupe(u8, content));
+    }
+
+    /// Fetch a URL via HTTP (curl) and extract readable content.
+    fn fetchViaHttp(_: *WebFetchTool, allocator: std.mem.Allocator, url: []const u8, max_chars: usize) !ToolResult {
         const uri = std.Uri.parse(url) catch {
             log.err("web_fetch: Failed to parse URL: {s}", .{url});
             return ToolResult.fail("Invalid URL format");
@@ -74,9 +118,6 @@ pub const WebFetchTool = struct {
             },
         };
         defer allocator.free(connect_host);
-
-        const max_chars = parseMaxCharsWithDefault(args, self.default_max_chars);
-        log.debug("web_fetch: max_chars={d}", .{max_chars});
 
         // Step 1: Try fetching with markdown Accept header
         const markdown_headers = [_][]const u8{
