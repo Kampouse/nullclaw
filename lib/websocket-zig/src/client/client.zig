@@ -294,16 +294,18 @@ pub const Client = struct {
                 self.close(.{ .code = 1002 }) catch unreachable;
                 return err;
             } orelse {
-                reader.fill(stream) catch |err| switch (err) {
-                    error.WouldBlock => return null,
-                    error.Closed, error.ConnectionResetByPeer, error.NotOpenForReading => {
-                        @atomicStore(bool, &self._closed, true, .monotonic);
-                        return error.Closed;
-                    },
-                    else => {
-                        self.close(.{ .code = 1002 }) catch unreachable;
-                        return err;
-                    },
+                reader.fill(stream) catch |err| {
+                    switch (err) {
+                        error.WouldBlock => return null,
+                        error.Closed, error.ConnectionResetByPeer, error.NotOpenForReading => {
+                            @atomicStore(bool, &self._closed, true, .monotonic);
+                            return error.Closed;
+                        },
+                        else => {
+                            self.close(.{ .code = 1002 }) catch unreachable;
+                            return err;
+                        },
+                    }
                 };
                 continue;
             };
@@ -360,7 +362,6 @@ pub const Client = struct {
 
     pub fn close(self: *Client, opts: CloseOpts) !void {
         if (@atomicRmw(bool, &self._closed, .Xchg, true, .monotonic) == true) {
-            // already closed
             return;
         }
 
@@ -508,7 +509,34 @@ pub const Stream = struct {
                 if (consecutive_zeros >= 3) return error.WouldBlock;
             }
         }
-        return posix.read(self.stream.socket.handle, buf);
+        const n = posix.read(self.stream.socket.handle, buf) catch |err| return err;
+        return n;
+    }
+
+    // Add a traced read variant for debugging
+    pub fn readTrace(self: *Stream, buf: []u8, label: []const u8) !usize {
+        if (self.tls_client) |tls_client| {
+            var w: std.Io.Writer = .fixed(buf);
+            var consecutive_zeros: usize = 0;
+            while (true) {
+                const n = tls_client.client.reader.stream(&w, .limited(buf.len)) catch |err| {
+                    if (err == error.WouldBlock or err == error.ConnectionTimedOut) return err;
+                    return err;
+                };
+                if (n != 0) return n;
+                consecutive_zeros += 1;
+                if (consecutive_zeros >= 3) return error.WouldBlock;
+            }
+        }
+        const fd = self.stream.socket.handle;
+        const n = posix.read(fd, buf) catch |err| return err;
+        const ws_log = std.log.scoped(.ws_trace);
+        if (n > 0) {
+            ws_log.info("{s}: posix.read(fd={d}) returned {d} bytes", .{ label, fd, n });
+        } else if (n == 0) {
+            ws_log.warn("{s}: posix.read(fd={d}) returned 0 — CONNECTION CLOSED", .{ label, fd });
+        }
+        return n;
     }
 
     pub fn writeAll(self: *Stream, data: []const u8) !void {
