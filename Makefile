@@ -13,7 +13,9 @@
 ZIG    := /opt/homebrew/bin/zig
 BIN    := ./zig-out/bin/nullclaw
 PIDFILE := .nullclaw.pid
-LOGFILE := ~/nullclaw.log
+LOGDIR  := $(HOME)/.nullclaw/logs
+LOGFILE := $(LOGDIR)/daemon.log
+LOGSTAMP := $(shell date -u +"%Y-%m-%d_%H%M%S")
 
 .PHONY: all release build-vm vm-images vm-images-force start stop restart status logs agent clean
 
@@ -70,34 +72,42 @@ spy/src/generated/schema.json: gen_schema.zig src/observability/event_tap.zig
 # (e.g. Hermes) never hangs waiting for nullclaw.
 
 start:
-	@BIN='$(BIN)'; LOGFILE=$(LOGFILE); PIDFILE='$(PIDFILE)'; \
+	@BIN='$(BIN)'; LOGDIR=$(LOGDIR); LOGFILE=$(LOGFILE); LOGSTAMP=$(LOGSTAMP); PIDFILE='$(PIDFILE)'; \
 	if pgrep -f "$$BIN" > /dev/null 2>&1; then \
 		echo "Stopping existing instance..."; \
 		pkill -f "$$BIN" 2>/dev/null; sleep 2; pkill -9 -f "$$BIN" 2>/dev/null || true; \
 	fi; \
+	mkdir -p "$$LOGDIR"; \
+	if [ -f "$$LOGFILE" ] && [ -s "$$LOGFILE" ]; then \
+		mv "$$LOGFILE" "$$LOGDIR/daemon.$$LOGSTAMP.log"; \
+		echo "Archived previous log to daemon.$$LOGSTAMP.log"; \
+	fi; \
 	echo "Starting nullclaw in background..."; \
-	nohup $$BIN gateway >> $$LOGFILE 2>&1 & \
+	echo "--- nullclaw gateway started $$(date -u +%Y-%m-%dT%H:%M:%SZ) PID: " > "$$LOGFILE"; \
+	nohup $$BIN gateway >> "$$LOGFILE" 2>&1 & \
+	echo $$! >> "$$LOGFILE"; \
 	echo $$! > $$PIDFILE; \
 	sleep 1; \
 	if pgrep -f "$$BIN" > /dev/null 2>&1; then \
-		echo "Started (PID $$(cat $$PIDFILE))"; \
+		echo "Started (PID $$(cat $$PIDFILE)) — log: $$LOGFILE"; \
 	else \
 		echo "Failed to start — check $$LOGFILE"; \
 		rm -f $$PIDFILE; \
 	fi
 
 agent:
-	@BIN='$(BIN)'; LOGFILE=$(LOGFILE); PIDFILE='$(PIDFILE)'; \
+	@BIN='$(BIN)'; LOGDIR=$(LOGDIR); LOGFILE=$(LOGDIR)/daemon-agent.log; LOGSTAMP=$(LOGSTAMP); PIDFILE='$(PIDFILE)'; \
 	if pgrep -f "$$BIN" > /dev/null 2>&1; then \
 		echo "Stopping existing instance..."; \
 		pkill -f "$$BIN" 2>/dev/null; sleep 2; pkill -9 -f "$$BIN" 2>/dev/null || true; \
 	fi; \
+	mkdir -p "$$LOGDIR"; \
 	echo "Starting nullclaw agent in background..."; \
-	nohup $$BIN agent >> $$LOGFILE 2>&1 & \
+	nohup $$BIN agent >> "$$LOGFILE" 2>&1 & \
 	echo $$! > $$PIDFILE; \
 	sleep 1; \
 	if pgrep -f "$$BIN" > /dev/null 2>&1; then \
-		echo "Started (PID $$(cat $$PIDFILE))"; \
+		echo "Started (PID $$(cat $$PIDFILE)) — log: $$LOGFILE"; \
 	else \
 		echo "Failed to start — check $$LOGFILE"; \
 		rm -f $$PIDFILE; \
