@@ -237,6 +237,9 @@ pub const StreamChatResult = struct {
     content: ?[]const u8 = null,
     usage: TokenUsage = .{},
     model: []const u8 = "",
+    /// Tool calls accumulated from streaming deltas (OpenAI format).
+    /// Populated when the provider streams tool_call deltas alongside text.
+    tool_calls: []const ToolCall = &.{},
 };
 
 /// Tool specification for function-calling APIs.
@@ -432,6 +435,7 @@ pub const Provider = struct {
             .content = response.content,
             .usage = response.usage,
             .model = response.model,
+            .tool_calls = response.tool_calls,
         };
     }
 

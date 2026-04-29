@@ -598,6 +598,10 @@ pub const OpenAiCompatibleProvider = struct {
         var accumulated = std.ArrayListUnmanaged(u8).empty;
         defer accumulated.deinit(allocator);
 
+        // Accumulator for streaming tool call deltas
+        var tc_accum: sse.ToolCallAccumulator = .{};
+        defer tc_accum.deinit(allocator);
+
         // Line buffer for SSE parsing
         var line_buf: [4096]u8 = undefined;
         var line_pos: usize = 0;
@@ -609,7 +613,7 @@ pub const OpenAiCompatibleProvider = struct {
                     if (buffered == 0) break;
                     // Process remaining buffered data
                     const data = try body_reader.take(buffered);
-                    try processStreamChunk(allocator, data, &line_buf, &line_pos, &accumulated, callback, callback_ctx);
+                    try processStreamChunk(allocator, data, &line_buf, &line_pos, &accumulated, callback, callback_ctx, &tc_accum);
                     break;
                 }
                 return err;
@@ -620,14 +624,16 @@ pub const OpenAiCompatibleProvider = struct {
             const data = try body_reader.take(buffered);
             if (data.len == 0) break;
 
-            try processStreamChunk(allocator, data, &line_buf, &line_pos, &accumulated, callback, callback_ctx);
+            try processStreamChunk(allocator, data, &line_buf, &line_pos, &accumulated, callback, callback_ctx, &tc_accum);
         }
 
         slog.logStructured("DEBUG", "compatible", "http_stream_complete", .{});
+        const tool_calls = try tc_accum.build(allocator);
         return .{
             .content = try accumulated.toOwnedSlice(allocator),
             .usage = .{ .total_tokens = 0 },
             .model = "",
+            .tool_calls = tool_calls,
         };
     }
 
@@ -640,6 +646,7 @@ pub const OpenAiCompatibleProvider = struct {
         accumulated: *std.ArrayListUnmanaged(u8),
         callback: root.StreamCallback,
         callback_ctx: *anyopaque,
+        tc_accum: *sse.ToolCallAccumulator,
     ) !void {
         var remaining = data;
         while (std.mem.indexOfScalar(u8, remaining, '\n')) |nl_pos| {
@@ -665,6 +672,9 @@ pub const OpenAiCompatibleProvider = struct {
                     callback(callback_ctx, root.StreamChunk.textDelta(delta));
                     try accumulated.appendSlice(allocator, delta);
                     allocator.free(delta);
+                },
+                .tool_call_delta => |tcd| {
+                    try tc_accum.feed(allocator, tcd);
                 },
                 .done => return,
                 .skip => {},

@@ -19,6 +19,19 @@ pub const SseLineResult = union(enum) {
     done: void,
     /// Line should be skipped (empty, comment, or no content).
     skip: void,
+    /// Tool call delta from OpenAI streaming format.
+    /// `index` identifies which tool call this chunk belongs to.
+    /// `id`, `name` are set only on the first chunk for a given index.
+    /// `arguments` is a fragment to be concatenated with previous fragments.
+    tool_call_delta: ToolCallDelta,
+};
+
+/// A fragment of a tool call received during streaming.
+pub const ToolCallDelta = struct {
+    index: u32,
+    id: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    arguments: []const u8 = "",
 };
 
 /// Parse a single SSE line in OpenAI streaming format.
@@ -26,6 +39,7 @@ pub const SseLineResult = union(enum) {
 /// Handles:
 /// - `data: [DONE]` → `.done`
 /// - `data: {JSON}` → extracts `choices[0].delta.content` → `.delta`
+/// - `data: {JSON}` → extracts `choices[0].delta.tool_calls[]` → `.tool_call_delta`
 /// - Empty lines, comments (`:`) → `.skip`
 pub fn parseSseLine(allocator: std.mem.Allocator, line: []const u8) !SseLineResult {
     // const data_prefix = "data: "; // unused in Zig 0.16.0 stub
@@ -41,6 +55,11 @@ pub fn parseSseLine(allocator: std.mem.Allocator, line: []const u8) !SseLineResu
 
     if (std.mem.eql(u8, data, "[DONE]")) return .done;
 
+    // Try tool_call deltas first (before text delta, since some chunks have both)
+    const tc_delta = try extractToolCallDelta(allocator, data);
+    if (tc_delta) |tcd| return .{ .tool_call_delta = tcd };
+
+    // Try text delta
     const content = try extractDeltaContent(allocator, data) orelse return .skip;
     return .{ .delta = content };
 }
@@ -68,6 +87,158 @@ pub fn extractDeltaContent(allocator: std.mem.Allocator, json_str: []const u8) !
 
     return try helpers.sanitizeResponseContent(allocator, content.string);
 }
+
+/// Extract `choices[0].delta.tool_calls[]` from an OpenAI SSE JSON payload.
+/// Returns the first tool_call delta found, or null if none.
+pub fn extractToolCallDelta(allocator: std.mem.Allocator, json_str: []const u8) !?ToolCallDelta {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_str, .{}) catch
+        return null;
+    defer parsed.deinit();
+
+    const obj = parsed.value.object;
+    const choices = obj.get("choices") orelse return null;
+    if (choices != .array or choices.array.items.len == 0) return null;
+
+    const first = choices.array.items[0];
+    if (first != .object) return null;
+
+    const delta = first.object.get("delta") orelse return null;
+    if (delta != .object) return null;
+
+    const tool_calls = delta.object.get("tool_calls") orelse return null;
+    if (tool_calls != .array or tool_calls.array.items.len == 0) return null;
+
+    // Return the first tool_call delta in this chunk
+    const tc = tool_calls.array.items[0];
+    if (tc != .object) return null;
+    const tc_obj = tc.object;
+
+    const index: u32 = if (tc_obj.get("index")) |idx| blk: {
+        if (idx == .integer) break :blk @intCast(idx.integer);
+        break :blk 0;
+    } else 0;
+
+    const id: ?[]const u8 = if (tc_obj.get("id")) |i| blk: {
+        if (i == .string and i.string.len > 0) break :blk try allocator.dupe(u8, i.string);
+        break :blk null;
+    } else null;
+
+    // Extract function.name and function.arguments
+    var name: ?[]const u8 = null;
+    var arguments: []const u8 = "";
+    if (tc_obj.get("function")) |func| {
+        if (func == .object) {
+            const func_obj = func.object;
+            if (func_obj.get("name")) |n| {
+                if (n == .string and n.string.len > 0) {
+                    name = try allocator.dupe(u8, n.string);
+                }
+            }
+            if (func_obj.get("arguments")) |a| {
+                if (a == .string) {
+                    arguments = try allocator.dupe(u8, a.string);
+                }
+            }
+        }
+    }
+
+    // Only return if we got something useful (id, name, or arguments)
+    if (id == null and name == null and arguments.len == 0) return null;
+
+    return .{
+        .index = index,
+        .id = id,
+        .name = name,
+        .arguments = arguments,
+    };
+}
+
+/// Accumulator for streaming tool call deltas.
+/// OpenAI sends tool calls as fragments across multiple SSE chunks,
+/// keyed by index. This struct collects them into complete ToolCall objects.
+pub const ToolCallAccumulator = struct {
+    const MaxToolCalls = 16;
+
+    /// Per-tool-call state during accumulation.
+    const Slot = struct {
+        id: ?[]const u8 = null,
+        name: ?[]const u8 = null,
+        arguments: std.ArrayListUnmanaged(u8) = .empty,
+        has_data: bool = false,
+    };
+
+    slots: [MaxToolCalls]Slot = [_]Slot{.{}} ** MaxToolCalls,
+    count: u32 = 0,
+
+    pub fn deinit(self: *ToolCallAccumulator, allocator: std.mem.Allocator) void {
+        for (&self.slots, 0..) |*slot, i| {
+            if (i >= self.count) break;
+            if (slot.id) |id| allocator.free(id);
+            if (slot.name) |name| allocator.free(name);
+            slot.arguments.deinit(allocator);
+        }
+    }
+
+    /// Feed a tool call delta into the accumulator.
+    pub fn feed(self: *ToolCallAccumulator, allocator: std.mem.Allocator, delta: ToolCallDelta) !void {
+        if (delta.index >= MaxToolCalls) return;
+        const slot = &self.slots[delta.index];
+        if (!slot.has_data) {
+            slot.has_data = true;
+            if (delta.index >= self.count) self.count = delta.index + 1;
+        }
+        if (delta.id) |id| {
+            if (slot.id) |old_id| allocator.free(old_id);
+            slot.id = id; // ownership transferred
+        }
+        if (delta.name) |name| {
+            if (slot.name) |old_name| allocator.free(old_name);
+            slot.name = name; // ownership transferred
+        }
+        if (delta.arguments.len > 0) {
+            try slot.arguments.appendSlice(allocator, delta.arguments);
+            // Note: delta.arguments is owned by caller (parseSseLine), but extractToolCallDelta
+            // always allocates a copy, so we don't free it here — caller must free it.
+            allocator.free(delta.arguments);
+        }
+    }
+
+    /// Assemble accumulated deltas into a slice of ToolCall.
+    pub fn build(self: *ToolCallAccumulator, allocator: std.mem.Allocator) ![]const root.ToolCall {
+        if (self.count == 0) return &.{};
+
+        var list: std.ArrayListUnmanaged(root.ToolCall) = .empty;
+        errdefer {
+            for (list.items) |tc| {
+                allocator.free(tc.id);
+                allocator.free(tc.name);
+                allocator.free(tc.arguments);
+            }
+            list.deinit(allocator);
+        }
+
+        for (&self.slots, 0..) |*slot, i| {
+            if (i >= self.count) break;
+            if (!slot.has_data) continue;
+
+            const id = slot.id orelse try allocator.dupe(u8, "unknown");
+            const name = slot.name orelse try allocator.dupe(u8, "");
+            const args = try slot.arguments.toOwnedSlice(allocator);
+
+            try list.append(allocator, .{
+                .id = id,
+                .name = name,
+                .arguments = args,
+            });
+
+            // Prevent double-free in deinit since we transferred ownership
+            slot.id = null;
+            slot.name = null;
+        }
+
+        return try list.toOwnedSlice(allocator);
+    }
+};
 
 /// Run curl in SSE streaming mode and parse output line by line.
 ///
@@ -135,6 +306,10 @@ pub fn curlStream(
     var total_tokens: u32 = 0;
     var line_count: usize = 0;
 
+    // Accumulator for streaming tool call deltas
+    var tc_accum: ToolCallAccumulator = .{};
+    defer tc_accum.deinit(allocator);
+
     // Read and parse SSE events
     slog.logStructured("DEBUG", "sse", "read_loop_start", .{});
     var line_buf: [4096]u8 = undefined;
@@ -171,6 +346,9 @@ pub fn curlStream(
                 total_tokens += @intCast((delta.len + 3) / 4);
                 allocator.free(delta);
             },
+            .tool_call_delta => |tcd| {
+                try tc_accum.feed(allocator, tcd);
+            },
             .done => {
                 // Send final chunk
                 slog.logStructured("DEBUG", "sse", "received_done", .{});
@@ -184,12 +362,14 @@ pub fn curlStream(
 
     slog.logStructured("DEBUG", "sse", "loop_exited", .{});
     const owned_content = try accumulated_content.toOwnedSlice(allocator);
-    slog.logStructured("DEBUG", "sse", "building_result", .{.tokens = total_tokens});
+    const tool_calls = try tc_accum.build(allocator);
+    slog.logStructured("DEBUG", "sse", "building_result", .{ .tokens = total_tokens, .tool_calls = tool_calls.len });
     slog.logStructured("DEBUG", "sse", "returning_result", .{});
     return .{
         .content = owned_content,
         .usage = .{ .total_tokens = total_tokens },
         .model = "",
+        .tool_calls = tool_calls,
     };
 }
 pub fn parseAnthropicSseLine(allocator: std.mem.Allocator, line: []const u8, current_event: []const u8) !AnthropicSseResult {
