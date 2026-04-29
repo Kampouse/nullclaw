@@ -7,6 +7,9 @@ const async_session = yc.async_session;
 // Zig 0.16.0 compatibility layer
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
+    // Write to crash file FIRST (async-signal-safe, before any stdio that might fail)
+    crash.writePanic(msg, ret_addr);
+
     // Use debug_io for panic output in Zig 0.16.0
     var buffer: [1024]u8 = undefined;
     const stderr = std.debug.lockStderr(&buffer);
@@ -33,6 +36,397 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_
     stderr.file_writer.interface.writeAll("\n") catch {};
     std.process.exit(1);
 }
+
+// ═══════════════════════════════════════════════════
+// Crash handler — writes ~/.nullclaw/crash.json on SIGSEGV/SIGBUS/SIGABRT
+// so the next process instance can detect and report the crash.
+// All signal handler functions MUST be async-signal-safe: no allocator, no stdio.
+// ═══════════════════════════════════════════════════
+
+const crash = struct {
+    const c = std.c;
+    const posix = std.posix;
+
+    // macOS signal constants (not in Zig's posix.zig for 0.16)
+    const SA_RESETHAND: c_uint = 0x4;
+    const SA_SIGINFO: c_uint = 0x40;
+
+    // JSON buffer — stack-allocated, fits in signal handler context
+    const BUF_SIZE = 2048;
+    const PATH_SIZE = 512;
+    const CRASH_HIST_MAX = 2048;
+
+    // Keep original handlers so we can chain to them
+    var orig_sigsegv: c.Sigaction = undefined;
+    var orig_sigbus: c.Sigaction = undefined;
+    var orig_sigabrt: c.Sigaction = undefined;
+    var installed = false;
+
+    // Async-signal-safe: convert integer to decimal string, returns length
+    fn intToBuf(buf: []u8, val: usize) usize {
+        if (val == 0) {
+            buf[0] = '0';
+            return 1;
+        }
+        var v = val;
+        var i: usize = 0;
+        var tmp: [20]u8 = undefined;
+        while (v > 0) : (v /= 10) {
+            tmp[i] = @intCast('0' + @mod(v, 10));
+            i += 1;
+        }
+        for (0..i) |j| {
+            buf[j] = tmp[i - 1 - j];
+        }
+        return i;
+    }
+
+    // Async-signal-safe: hex to buf (no 0x prefix)
+    fn hexToBuf(buf: []u8, val: usize, pad: usize) usize {
+        const hex = "0123456789abcdef";
+        var v = val;
+        var tmp: [16]u8 = undefined;
+        var i: usize = 0;
+        if (v == 0) {
+            tmp[0] = '0';
+            i = 1;
+        }
+        while (v > 0) : (v >>= 4) {
+            tmp[i] = hex[v & 0xf];
+            i += 1;
+        }
+        const pad_count = if (pad > i) pad - i else 0;
+        for (0..pad_count) |j| {
+            buf[j] = '0';
+        }
+        for (0..i) |j| {
+            buf[pad_count + j] = tmp[i - 1 - j];
+        }
+        return pad_count + i;
+    }
+
+    // Async-signal-safe: write crash info to ~/.nullclaw/crash.json
+    fn writeCrashFile(sig: c_int, info: ?*const c.siginfo_t, ctx: ?*const anyopaque) void {
+        _ = ctx;
+        var buf: [BUF_SIZE]u8 = undefined;
+        var off: usize = 0;
+
+        const pid = c.getpid();
+        // Get current time
+        var tv: c.timeval = undefined;
+        _ = c.gettimeofday(&tv, null);
+        const now_sec = tv.sec;
+        const hours: usize = @intCast(@mod(@divTrunc(now_sec, 3600), 24));
+        const mins: usize = @intCast(@mod(@divTrunc(now_sec, 60), 60));
+        const secs: usize = @intCast(@mod(now_sec, 60));
+
+        // Build ISO date from epoch (async-signal-safe, no gmtime)
+        const epoch_days: usize = @intCast(@divTrunc(now_sec, 86400));
+        var y: usize = 1970;
+        var rem_days = epoch_days;
+        while (true) {
+            const is_leap = @mod(y, 4) == 0 and (@mod(y, 100) != 0 or @mod(y, 400) == 0);
+            const days_in_year: usize = if (is_leap) 366 else 365;
+            if (rem_days < days_in_year) break;
+            rem_days -= days_in_year;
+            y += 1;
+        }
+        const leap = @mod(y, 4) == 0 and (@mod(y, 100) != 0 or @mod(y, 400) == 0);
+        const md = [12]usize{ 31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+        var m: usize = 0;
+        while (m < 12) : (m += 1) {
+            if (rem_days < md[m]) break;
+            rem_days -= md[m];
+        }
+        const day = rem_days + 1;
+
+        // Helper: append string literal to buffer
+        const W = struct {
+            fn w(b: *[BUF_SIZE]u8, o: *usize, s: []const u8) void {
+                @memcpy(b[o.*..][0..s.len], s);
+                o.* += s.len;
+            }
+            fn w1(b: *[BUF_SIZE]u8, o: *usize, ch: u8) void {
+                b[o.*] = ch;
+                o.* += 1;
+            }
+            fn wPad2(b: *[BUF_SIZE]u8, o: *usize, val: usize) void {
+                if (val < 10) {
+                    b[o.*] = '0';
+                    o.* += 1;
+                }
+                o.* += intToBuf(b[o.*..], val);
+            }
+        };
+
+        // Build JSON
+        W.w(&buf, &off, "{\"pid\":");
+        off += intToBuf(buf[off..], @intCast(pid));
+        W.w(&buf, &off, ",\"signal\":");
+        off += intToBuf(buf[off..], @intCast(@abs(sig)));
+
+        W.w(&buf, &off, ",\"timestamp\":\"");
+        off += intToBuf(buf[off..], y);
+        W.w1(&buf, &off, '-');
+        W.wPad2(&buf, &off, m + 1);
+        W.w1(&buf, &off, '-');
+        W.wPad2(&buf, &off, day);
+        W.w1(&buf, &off, 'T');
+        W.wPad2(&buf, &off, hours);
+        W.w1(&buf, &off, ':');
+        W.wPad2(&buf, &off, mins);
+        W.w1(&buf, &off, ':');
+        W.wPad2(&buf, &off, secs);
+        W.w1(&buf, &off, 'Z');
+        W.w1(&buf, &off, '"');
+
+        // Fault address and code from siginfo (macOS: flat struct)
+        if (info) |si| {
+            const fault_addr: usize = @intFromPtr(si.addr);
+            W.w(&buf, &off, ",\"fault_addr\":\"0x");
+            off += hexToBuf(buf[off..], fault_addr, 12);
+            W.w1(&buf, &off, '"');
+
+            W.w(&buf, &off, ",\"code\":");
+            off += intToBuf(buf[off..], @intCast(@abs(si.code)));
+        }
+
+        W.w(&buf, &off, "}\n");
+
+        // Build path: $HOME/.nullclaw/crash.json
+        var path_buf: [PATH_SIZE]u8 = undefined;
+        var path_off: usize = 0;
+        const home = c.getenv("HOME") orelse return;
+        const hlen = std.mem.len(home);
+        if (hlen + 18 > PATH_SIZE) return;
+        @memcpy(path_buf[path_off..][0..hlen], home);
+        path_off += hlen;
+        @memcpy(path_buf[path_off..][0..10], "/.nullclaw"[0..10]);
+        path_off += 10;
+        @memcpy(path_buf[path_off..][0..12], "/crash.json"[0..12]);
+        path_off += 12;
+        path_buf[path_off] = 0;
+        const path = path_buf[0..path_off :0];
+
+        // open + write + close are async-signal-safe
+        const fd = c.open(path, c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(c_uint, 0o644));
+        if (fd >= 0) {
+            _ = c.write(fd, buf[0..off].ptr, off);
+            _ = c.close(fd);
+        }
+
+        // Also append to crash history (never deleted by the gateway)
+        appendCrashHistory(buf[0..off], off);
+    }
+
+    // Async-signal-safe: append crash line to ~/.nullclaw/crashes.log
+    fn appendCrashHistory(json_bytes: []const u8, len: usize) void {
+        var path_buf: [PATH_SIZE]u8 = undefined;
+        var path_off: usize = 0;
+        const home = c.getenv("HOME") orelse return;
+        const hlen = std.mem.len(home);
+        // Need room for "/.nullclaw/crashes.log\0" = 21 chars
+        if (hlen + 21 > PATH_SIZE) return;
+        @memcpy(path_buf[path_off..][0..hlen], home);
+        path_off += hlen;
+        @memcpy(path_buf[path_off..][0..10], "/.nullclaw"[0..10]);
+        path_off += 10;
+        @memcpy(path_buf[path_off..][0..12], "/crashes.log"[0..12]);
+        path_off += 12;
+        path_buf[path_off] = 0;
+        const path = path_buf[0..path_off :0];
+
+        // O_APPEND is async-signal-safe — use raw open since Zig's c.O doesn't have .APPEND
+        const O_APPEND: c_int = 0x0008; // macOS
+        const O_WRONLY: c_int = 0x0001;
+        const O_CREAT: c_int = 0x0200;
+        const raw_flags = O_WRONLY | O_CREAT | O_APPEND;
+        const open_fn = struct {
+            extern "c" fn open(path: [*:0]const u8, flags: c_int, mode: c_uint) c_int;
+        }.open;
+        const fd = open_fn(path, raw_flags, 0o644);
+        if (fd >= 0) {
+            _ = c.write(fd, json_bytes.ptr, len);
+            _ = c.close(fd);
+        }
+    }
+
+    // Write panic info to crash file + crash history (called from panic handler, no allocator)
+    pub fn writePanic(msg: []const u8, ret_addr: ?usize) void {
+        const pid = c.getpid();
+        var tv: c.timeval = undefined;
+        _ = c.gettimeofday(&tv, null);
+        const now_sec = tv.sec;
+
+        // Simple timestamp (UTC) — reuse the same logic as writeCrashFile but inline
+        const epoch_days: usize = @intCast(@divTrunc(now_sec, 86400));
+        var y: usize = 1970;
+        var rem_days = epoch_days;
+        while (true) {
+            const is_leap = @mod(y, 4) == 0 and (@mod(y, 100) != 0 or @mod(y, 400) == 0);
+            const days_in_year: usize = if (is_leap) 366 else 365;
+            if (rem_days < days_in_year) break;
+            rem_days -= days_in_year;
+            y += 1;
+        }
+        const leap = @mod(y, 4) == 0 and (@mod(y, 100) != 0 or @mod(y, 400) == 0);
+        const md = [12]usize{ 31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+        var m: usize = 0;
+        while (m < 12) : (m += 1) {
+            if (rem_days < md[m]) break;
+            rem_days -= md[m];
+        }
+        const day = rem_days + 1;
+        const hours: usize = @intCast(@mod(@divTrunc(now_sec, 3600), 24));
+        const mins: usize = @intCast(@mod(@divTrunc(now_sec, 60), 60));
+        const secs: usize = @intCast(@mod(now_sec, 60));
+
+        var buf: [BUF_SIZE]u8 = undefined;
+        var off: usize = 0;
+
+        const W = struct {
+            fn w(b: *[BUF_SIZE]u8, o: *usize, s: []const u8) void {
+                const len = @min(s.len, b.len - o.*);
+                @memcpy(b[o.*..][0..len], s[0..len]);
+                o.* += len;
+            }
+            fn wPad2(b: *[BUF_SIZE]u8, o: *usize, val: usize) void {
+                if (val < 10) {
+                    b[o.*] = '0';
+                    o.* += 1;
+                }
+                o.* += intToBuf(b[o.*..], val);
+            }
+        };
+
+        W.w(&buf, &off, "{\"pid\":");
+        off += intToBuf(buf[off..], @intCast(pid));
+        W.w(&buf, &off, ",\"signal\":0,\"type\":\"panic\"");
+        W.w(&buf, &off, ",\"timestamp\":\"");
+        off += intToBuf(buf[off..], y);
+        buf[off] = '-'; off += 1;
+        W.wPad2(&buf, &off, m + 1);
+        buf[off] = '-'; off += 1;
+        W.wPad2(&buf, &off, day);
+        buf[off] = 'T'; off += 1;
+        W.wPad2(&buf, &off, hours);
+        buf[off] = ':'; off += 1;
+        W.wPad2(&buf, &off, mins);
+        buf[off] = ':'; off += 1;
+        W.wPad2(&buf, &off, secs);
+        buf[off] = '"'; off += 1;
+
+        // Truncate panic message to fit
+        W.w(&buf, &off, ",\"message\":\"");
+        const max_msg = BUF_SIZE - off - 20;
+        const msg_len = @min(msg.len, max_msg);
+        @memcpy(buf[off..][0..msg_len], msg[0..msg_len]);
+        off += msg_len;
+        W.w(&buf, &off, "\"");
+
+        if (ret_addr) |addr| {
+            W.w(&buf, &off, ",\"ret_addr\":\"0x");
+            off += hexToBuf(buf[off..], addr, 12);
+            buf[off] = '"'; off += 1;
+        }
+
+        W.w(&buf, &off, "}\n");
+
+        // Write to crash.json (overwrite)
+        var path_buf: [PATH_SIZE]u8 = undefined;
+        var path_off: usize = 0;
+        const home = c.getenv("HOME") orelse return;
+        const hlen = std.mem.len(home);
+        if (hlen + 18 > PATH_SIZE) return;
+        @memcpy(path_buf[path_off..][0..hlen], home);
+        path_off += hlen;
+        @memcpy(path_buf[path_off..][0..10], "/.nullclaw"[0..10]);
+        path_off += 10;
+        @memcpy(path_buf[path_off..][0..12], "/crash.json"[0..12]);
+        path_off += 12;
+        path_buf[path_off] = 0;
+        const path = path_buf[0..path_off :0];
+        const fd = c.open(path, c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(c_uint, 0o644));
+        if (fd >= 0) {
+            _ = c.write(fd, buf[0..off].ptr, off);
+            _ = c.close(fd);
+        }
+
+        // Also append to crash history
+        appendCrashHistory(buf[0..off], off);
+    }
+
+    fn signalHandler(sig: c.SIG, info: ?*const c.siginfo_t, ctx: ?*const anyopaque) callconv(.c) void {
+        const sig_int: c_int = @intCast(@intFromEnum(sig));
+        writeCrashFile(sig_int, info, ctx);
+
+        // SA_RESETHAND already reset us to default — just re-raise to get the default behavior
+        // (which is crash + macOS crash reporter)
+        _ = c.raise(sig);
+    }
+
+    pub fn install() void {
+        if (installed) return;
+
+        // Zero-init sigset (macOS: darwin.sigset_t, typically u32)
+        const empty_mask: c.sigset_t = std.mem.zeroes(c.sigset_t);
+
+        const sa = c.Sigaction{
+            .handler = .{ .sigaction = signalHandler },
+            .mask = empty_mask,
+            .flags = SA_RESETHAND | SA_SIGINFO,
+        };
+
+        // Save original handlers, install ours
+        posix.sigaction(c.SIG.SEGV, &sa, &orig_sigsegv);
+        posix.sigaction(c.SIG.BUS, &sa, &orig_sigbus);
+        posix.sigaction(c.SIG.ABRT, &sa, &orig_sigabrt);
+
+        installed = true;
+    }
+
+    /// Check if a crash file exists from a previous run. Returns null if not.
+    /// Caller owns the returned slice (allocated with provided allocator).
+    pub fn readCrashFile(allocator: std.mem.Allocator) ?[]const u8 {
+        var path_buf: [PATH_SIZE]u8 = undefined;
+        var path_off: usize = 0;
+        const home = c.getenv("HOME") orelse return null;
+        const hlen = std.mem.len(home);
+        if (hlen + 18 > PATH_SIZE) return null;
+        @memcpy(path_buf[path_off..][0..hlen], home);
+        path_off += hlen;
+        @memcpy(path_buf[path_off..][0..10], "/.nullclaw"[0..10]);
+        path_off += 10;
+        @memcpy(path_buf[path_off..][0..12], "/crash.json"[0..12]);
+        path_off += 12;
+        path_buf[path_off] = 0;
+        const path = path_buf[0..path_off :0];
+
+        const file = std.fs.openFileAbsolute(path, .{}) catch return null;
+        defer file.close();
+        const stat = file.stat() catch return null;
+        if (stat.size == 0 or stat.size > 4096) return null;
+        return file.readToEndAlloc(allocator, 4096) catch null;
+    }
+
+    /// Delete the crash file after it has been read.
+    pub fn deleteCrashFile() void {
+        var path_buf: [PATH_SIZE]u8 = undefined;
+        var path_off: usize = 0;
+        const home = c.getenv("HOME") orelse return;
+        const hlen = std.mem.len(home);
+        if (hlen + 18 > PATH_SIZE) return null;
+        @memcpy(path_buf[path_off..][0..hlen], home);
+        path_off += hlen;
+        @memcpy(path_buf[path_off..][0..10], "/.nullclaw"[0..10]);
+        path_off += 10;
+        @memcpy(path_buf[path_off..][0..12], "/crash.json"[0..12]);
+        path_off += 12;
+        path_buf[path_off] = 0;
+        const path = path_buf[0..path_off :0];
+        std.fs.deleteFileAbsolute(path) catch {};
+    }
+};
 
 const log = std.log.scoped(.main);
 
@@ -92,6 +486,9 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     if (comptime builtin.os.tag == .windows) {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
+
+    // Install crash signal handlers early (before any threads/allocations)
+    crash.install();
 
     // Wrap system allocator with Tracy for memory profiling
     var tracy_alloc = yc.profiling.alloc(std.heap.smp_allocator);
@@ -1825,6 +2222,7 @@ fn runSignalChannel(allocator: std.mem.Allocator, args: []const []const u8, conf
         .web_search_provider = config.http_request.search_provider,
         .web_search_fallback_providers = config.http_request.search_fallback_providers,
         .browser_enabled = config.browser.enabled,
+        .browser_cdp_endpoint = config.browser.cdp_endpoint,
         .screenshot_enabled = false,
         .mcp_tools = mcp_tools,
         .agents = config.agents,
@@ -2201,6 +2599,7 @@ fn runTelegramChannel(allocator: std.mem.Allocator, args: []const []const u8, co
         .web_search_provider = config.http_request.search_provider,
         .web_search_fallback_providers = config.http_request.search_fallback_providers,
         .browser_enabled = config.browser.enabled,
+        .browser_cdp_endpoint = config.browser.cdp_endpoint,
         .screenshot_enabled = false,
         .mcp_tools = mcp_tools,
         .agents = config.agents,
