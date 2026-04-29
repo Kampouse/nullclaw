@@ -26,7 +26,8 @@ const READ_TIMEOUT_MS: i32 = 1000;
 /// SSE connection that maintains a persistent HTTP connection for streaming
 pub const SseConnection = struct {
     allocator: std.mem.Allocator,
-    client: std.http.Client,
+    client: *std.http.Client,
+        /// Shared thread-local HTTP client (not owned — do not deinit).
     request: ?std.http.Client.Request,
     /// The body reader for streaming response data
     body_reader: ?*std.Io.Reader,
@@ -48,10 +49,9 @@ pub const SseConnection = struct {
 
     /// Initialize a new SSE connection (not yet connected)
     pub fn init(allocator: std.mem.Allocator, url: []const u8) SseConnection {
-        const io = root.http_util.getThreadedIo();
         return .{
             .allocator = allocator,
-            .client = std.http.Client{ .allocator = allocator, .io = io },
+            .client = root.http_util.getThreadLocalHttpClient(),
             .request = null,
             .body_reader = null,
             .url = url,
@@ -68,17 +68,12 @@ pub const SseConnection = struct {
     pub fn deinit(self: *SseConnection) void {
         self.body_reader = null;
         self.body_consumed = false;
-        // SKIP: req.deinit() - crashes in Zig 0.16.0 with ThreadedIo
-        // The request uses thread-local Io which should not be deinited during
-        // normal operation. Resources will be cleaned up on thread exit.
-        // if (self.request) |*req| {
-        //     req.deinit();
-        //     self.request = null;
-        // }
-        self.request = null;
-        // SKIP: self.client.deinit() - crashes in Zig 0.16.0 with ThreadedIo
-        // The client uses thread-local Io which should not be deinited during
-        // normal operation. Resources will be cleaned up on thread exit.
+        // Deinit the request to release its TCP socket FD.
+        // The client is a shared thread-local pointer — do NOT deinit it.
+        if (self.request) |*req| {
+            req.deinit();
+            self.request = null;
+        }
         if (self.last_event_id) |id| self.allocator.free(id);
         self.last_event_id = null;
     }
