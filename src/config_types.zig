@@ -154,6 +154,16 @@ pub const ToolsConfig = struct {
     web_fetch_max_chars: u32 = 100_000,
 };
 
+/// Tool gating configuration — reduces token overhead by only promoting
+/// relevant tool schemas per turn (arXiv:2604.21816 pattern).
+pub const ToolGatingConfig = struct {
+    /// Enable tool gating. When false, all tool schemas are sent every turn.
+    enabled: bool = false,
+    /// Maximum number of tools to promote beyond the always-include set.
+    /// Set to 0 to only send always-include tools.
+    top_k: u32 = 12,
+};
+
 /// Gork P2P agent collaboration configuration
 pub const GorkConfig = struct {
     /// Enable Gork hybrid system (daemon + polling fallback)
@@ -1106,6 +1116,7 @@ pub const BrowserConfig = struct {
     native_headless: bool = true,
     native_webdriver_url: []const u8 = "http://127.0.0.1:9515",
     native_chrome_path: ?[]const u8 = null,
+    cdp_endpoint: []const u8 = "ws://127.0.0.1:9222",
     computer_use: BrowserComputerUseConfig = .{},
     allowed_domains: []const []const u8 = &.{},
 };

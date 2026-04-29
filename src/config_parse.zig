@@ -802,6 +802,18 @@ pub fn parseJson(self: *Config, content: []const u8) !void {
         }
     }
 
+    // Tool gating
+    if (root.get("tool_gating")) |tg| {
+        if (tg == .object) {
+            if (tg.object.get("enabled")) |v| {
+                if (v == .bool) self.tool_gating.enabled = v.bool;
+            }
+            if (tg.object.get("top_k")) |v| {
+                if (v == .integer) self.tool_gating.top_k = @intCast(v.integer);
+            }
+        }
+    }
+
     // Memory
     if (root.get("memory")) |mem| {
         if (mem == .object) {
@@ -1424,6 +1436,9 @@ pub fn parseJson(self: *Config, content: []const u8) !void {
             }
             if (br.object.get("session_name")) |v| {
                 if (v == .string) self.browser.session_name = try self.allocator.dupe(u8, v.string);
+            }
+            if (br.object.get("cdp_endpoint")) |v| {
+                if (v == .string) self.browser.cdp_endpoint = try self.allocator.dupe(u8, v.string);
             }
             if (br.object.get("allowed_domains")) |v| {
                 if (v == .array) self.browser.allowed_domains = try parseStringArray(self.allocator, v.array);

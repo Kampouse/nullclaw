@@ -79,6 +79,7 @@ pub const PredictConfig = config_types.PredictConfig;
 pub const IdentityConfig = config_types.IdentityConfig;
 pub const CostConfig = config_types.CostConfig;
 pub const PeripheralBoardConfig = config_types.PeripheralBoardConfig;
+pub const ToolGatingConfig = config_types.ToolGatingConfig;
 pub const PeripheralsConfig = config_types.PeripheralsConfig;
 pub const HardwareConfig = config_types.HardwareConfig;
 pub const SandboxConfig = config_types.SandboxConfig;
@@ -146,6 +147,7 @@ pub const Config = struct {
     hardware: HardwareConfig = .{},
     security: SecurityConfig = .{},
     tools: ToolsConfig = .{},
+    tool_gating: ToolGatingConfig = .{},
     gork: GorkConfig = .{},
     session: SessionConfig = .{},
 
@@ -777,6 +779,7 @@ pub const Config = struct {
             .native_headless = self.browser.native_headless,
             .native_webdriver_url = self.browser.native_webdriver_url,
             .native_chrome_path = self.browser.native_chrome_path,
+            .cdp_endpoint = self.browser.cdp_endpoint,
             .allowed_domains = self.browser.allowed_domains,
         }, .{})});
         try w.print("  \"http_request\": {f},\n", .{std.json.fmt(.{
@@ -840,6 +843,8 @@ pub const Config = struct {
             }
         }
         try w.print("\n  }},\n", .{});
+
+        try w.print("  \"tool_gating\": {f},\n", .{std.json.fmt(self.tool_gating, .{})});
 
         try w.print("  \"hardware\": {f},\n", .{std.json.fmt(self.hardware, .{})});
         try w.print("  \"session\": {f}\n", .{std.json.fmt(self.session, .{})});
